@@ -26,7 +26,7 @@ The wizard keeps the same broad experience across both databases:
 - provide query input
 - review results
 - select rows
-- export Excel and peptide text files
+- export Excel and peptide FASTA files
 
 ## Supported Databases
 
@@ -122,7 +122,7 @@ The program keeps all runtime artifacts next to the executable so nothing is sca
 
 - `output/`
   - exported `.xlsx`
-  - exported `.txt`
+  - exported `.fasta`
   - detailed run reports
 - `.cache/`
   - Phytozome persistent caches
@@ -164,7 +164,7 @@ flowchart TD
     D --> E[Enter query input]
     E --> F[Review results]
     F --> G[Select rows]
-    G --> H[Export Excel and peptide text]
+    G --> H[Export Excel and peptide FASTA]
 ```
 
 ## Step-By-Step Tutorial
@@ -390,21 +390,21 @@ This is useful when you have a long batch and the remaining tables are straightf
 Each BLAST query can generate:
 
 - `<name>.xlsx`
-- `<name>.txt`
+- `<name>.fasta`
 
 The `.xlsx` file contains:
 
 - the selected BLAST rows
 - top metadata such as gene name, gene ID, and source report URL when available
 
-The `.txt` file contains:
+The `.fasta` file contains:
 
 - the query sequence first
 - then peptide sequences for selected hits
 
 Real example:
 
-If your query is `OsMADS1` from rice, the query header in the text export looks like:
+If your query is `OsMADS1` from rice, the query header in the FASTA export looks like:
 
 ```text
 >O.sativa Japonica Group|LOC_Os03g11614.1 (OsMADS1)

@@ -46,7 +46,6 @@ type Prompter struct {
 }
 
 type FamilySearchProvider func(keyword string, scope []model.SpeciesCandidate) []model.SpeciesCandidate
-type FamilyChoiceLabelLoader func(query string, visible []model.SpeciesCandidate, refresh func([]model.SpeciesCandidate))
 
 var BlastFilterSuggest func(BlastFilterRequest) (BlastFilterSuggestion, error)
 
@@ -583,6 +582,10 @@ type BlastRunView struct {
 	Rows []model.BlastResultRow
 }
 
+type BlastRunSelectionOptions struct {
+	OriginalRunCount int
+}
+
 type BlastQueryItemView struct {
 	RawInput     string
 	LabelName    string
@@ -594,13 +597,15 @@ type BlastQueryItemView struct {
 }
 
 type ExportSettings struct {
-	BaseName      string
-	FolderName    string
-	WriteReport   bool
-	WriteText     bool
-	WriteExcel    bool
-	WriteRawExcel bool
-	UsePhgoHeader bool
+	BaseName              string
+	FolderName            string
+	WriteReport           bool
+	WriteText             bool
+	WriteExcel            bool
+	WriteRawExcel         bool
+	FastaHeaderMode       model.FastaHeaderMode
+	UsePhgoHeader         bool
+	PrependOnlyFirstQuery bool
 }
 
 type BlastFilterSettingsResult struct {
@@ -858,85 +863,29 @@ func (p *Prompter) ChooseBlastTargetDatabase() (string, error) {
 // (1-based) or the program name (case-insensitive). Returns the selected
 // program string as given in the `programs` slice.
 func (p *Prompter) ChooseBlastProgram(programs []string) (string, error) {
-	defaultProgram := ""
-	if len(programs) > 0 {
-		defaultProgram = programs[0]
-	}
+	choices := make([]tui.Choice, 0, len(programs))
+	seen := map[string]struct{}{}
 	for _, program := range programs {
-		if strings.EqualFold(strings.TrimSpace(program), "blastp") {
-			defaultProgram = program
-			break
+		program = strings.TrimSpace(program)
+		if program == "" {
+			continue
 		}
-	}
-	groups := make([]tui.ChoiceGroup, 0, 3)
-	currentGroup := -1
-	addGroup := func(label string, description string) {
-		groups = append(groups, tui.ChoiceGroup{
-			Label:       p.t(label),
-			Description: p.t(description),
-			Choices:     []tui.Choice{},
+		key := strings.ToLower(program)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		choices = append(choices, tui.Choice{
+			Value:       program,
+			Label:       program,
+			Description: p.t(blastProgramDescription(program)),
 		})
-		currentGroup = len(groups) - 1
 	}
-	addProgram := func(program string) {
-		for _, candidate := range programs {
-			if strings.EqualFold(candidate, program) {
-				if currentGroup < 0 {
-					addGroup("Other programs", "Additional BLAST programs detected for this species.")
-				}
-				label := candidate
-				description := p.t(blastProgramDescription(candidate))
-				if strings.EqualFold(candidate, defaultProgram) {
-					label += " (default)"
-					description = strings.TrimSpace(description + " | default")
-				}
-				groups[currentGroup].Choices = append(groups[currentGroup].Choices, tui.Choice{
-					Value:       candidate,
-					Label:       label,
-					Description: description,
-				})
-				return
-			}
-		}
-	}
-	addGroup("Start with nucleotide", "Use when your query is DNA/RNA or a nucleotide FASTA sequence.")
-	addProgram("blastn")
-	addProgram("blastx")
-	addGroup("Start with protein", "Use when your query is an amino-acid/protein sequence.")
-	addProgram("tblastn")
-	addProgram("blastp")
-	for _, program := range programs {
-		found := false
-		for _, group := range groups {
-			for _, choice := range group.Choices {
-				if strings.EqualFold(choice.Value, program) {
-					found = true
-					break
-				}
-			}
-			if found {
-				break
-			}
-		}
-		if !found {
-			if len(groups) == 0 || groups[len(groups)-1].Label != p.t("Other programs") {
-				addGroup("Other programs", "Additional BLAST programs detected for this species.")
-			}
-			label := program
-			description := p.t(blastProgramDescription(program))
-			if strings.EqualFold(program, defaultProgram) {
-				label += " (default)"
-				description = strings.TrimSpace(description + " | default")
-			}
-			groups[len(groups)-1].Choices = append(groups[len(groups)-1].Choices, tui.Choice{Value: program, Label: label, Description: description})
-		}
-	}
-	result, err := tui.RunGroupedChoicePage(tui.GroupedChoicePage{
+	result, err := tui.RunChoicePage(tui.ChoicePage{
 		Path:        p.tuiPath("Startup", "Species", "BLAST program selection"),
 		Title:       p.t("BLAST program selection:"),
-		Description: p.t("Programs are grouped by query type. Choose the program that matches your query and target database."),
-		Groups:      groups,
-		Initial:     defaultProgram,
+		Description: p.t("Choose the BLAST program that matches your query and target database."),
+		Choices:     choices,
 		AllowBack:   true,
 		AllowHome:   p.allowHome(true),
 		ConfirmText: tui.ButtonSelect,
@@ -2824,11 +2773,11 @@ func (p *Prompter) SearchAndSelectFamily(candidates []model.SpeciesCandidate, se
 			}
 		}
 		return out
-	}, nil)
+	})
 }
 
-func (p *Prompter) SearchAndSelectFamilyWithProvider(candidates []model.SpeciesCandidate, searchFn FamilySearchProvider, loader FamilyChoiceLabelLoader) (model.SpeciesCandidate, error) {
-	if candidate, ok, err := p.searchAndSelectFamilyHierarchical(candidates, searchFn, loader); ok || err != nil {
+func (p *Prompter) SearchAndSelectFamilyWithProvider(candidates []model.SpeciesCandidate, searchFn FamilySearchProvider) (model.SpeciesCandidate, error) {
+	if candidate, ok, err := p.searchAndSelectFamilyHierarchical(candidates, searchFn); ok || err != nil {
 		return candidate, err
 	}
 	candidates = append([]model.SpeciesCandidate(nil), candidates...)
@@ -2869,39 +2818,6 @@ func (p *Prompter) SearchAndSelectFamilyWithProvider(candidates []model.SpeciesC
 			}
 			return out
 		},
-		OnVisibleChoices: func(query string, visible []tui.Choice, refreshChoices func([]tui.Choice)) {
-			if loader == nil {
-				return
-			}
-			visibleCandidates := make([]model.SpeciesCandidate, 0, len(visible))
-			for _, choice := range visible {
-				if candidate, ok := choiceByKey[choice.Value]; ok {
-					visibleCandidates = append(visibleCandidates, candidate)
-				}
-			}
-			loader(query, visibleCandidates, func(updated []model.SpeciesCandidate) {
-				updatedByKey := updateFamilyCandidateStore(candidates, updated)
-				out := make([]tui.Choice, 0, len(updated))
-				for _, candidate := range updated {
-					for key, original := range choiceByKey {
-						if familyCandidateStableKey(original) == familyCandidateStableKey(candidate) {
-							if replacement, ok := updatedByKey[familyCandidateStableKey(original)]; ok {
-								choiceByKey[key] = replacement
-							} else {
-								choiceByKey[key] = candidate
-							}
-							out = append(out, tui.Choice{
-								Value:       key,
-								Label:       choiceByKey[key].DisplayLabel(),
-								Description: strings.TrimSpace(choiceByKey[key].JBrowseName + targetIDLabel(choiceByKey[key].ProteomeID)),
-							})
-							break
-						}
-					}
-				}
-				refreshChoices(out)
-			})
-		},
 	})
 	if err != nil {
 		return model.SpeciesCandidate{}, err
@@ -2919,7 +2835,7 @@ func (p *Prompter) SearchAndSelectFamilyWithProvider(candidates []model.SpeciesC
 	return candidate, nil
 }
 
-func (p *Prompter) searchAndSelectFamilyHierarchical(candidates []model.SpeciesCandidate, searchFn FamilySearchProvider, loader FamilyChoiceLabelLoader) (model.SpeciesCandidate, bool, error) {
+func (p *Prompter) searchAndSelectFamilyHierarchical(candidates []model.SpeciesCandidate, searchFn FamilySearchProvider) (model.SpeciesCandidate, bool, error) {
 	candidates = append([]model.SpeciesCandidate(nil), candidates...)
 	hasHierarchy := false
 	childrenByParent := make(map[string][]model.SpeciesCandidate)
@@ -2973,38 +2889,6 @@ func (p *Prompter) searchAndSelectFamilyHierarchical(candidates []model.SpeciesC
 				filteredChoices, _ := familyChoicesFromCandidates(filtered)
 				return filteredChoices
 			},
-			OnVisibleChoices: func(query string, visible []tui.Choice, refreshChoices func([]tui.Choice)) {
-				if loader == nil {
-					return
-				}
-				visibleCandidates := make([]model.SpeciesCandidate, 0, len(visible))
-				for _, choice := range visible {
-					if candidate, ok := choiceByValue[choice.Value]; ok {
-						visibleCandidates = append(visibleCandidates, candidate)
-					}
-				}
-				loader(query, visibleCandidates, func(updated []model.SpeciesCandidate) {
-					updatedByKey := updateFamilyCandidateStore(candidates, updated)
-					updateFamilyCandidateSlice(roots, updatedByKey)
-					for key := range childrenByParent {
-						updateFamilyCandidateSlice(childrenByParent[key], updatedByKey)
-					}
-					updateFamilyCandidateSlice(current, updatedByKey)
-					for _, candidate := range updated {
-						value := strings.TrimSpace(candidate.GroupKey)
-						if value == "" {
-							value = strings.TrimSpace(candidate.JBrowseName)
-						}
-						if replacement, ok := updatedByKey[familyCandidateStableKey(candidate)]; ok {
-							choiceByValue[value] = replacement
-						} else {
-							choiceByValue[value] = candidate
-						}
-					}
-					updatedChoices, _ := familyChoicesFromCandidates(updated)
-					refreshChoices(updatedChoices)
-				})
-			},
 		})
 		if err != nil {
 			return model.SpeciesCandidate{}, true, err
@@ -3047,23 +2931,6 @@ func familyCandidateStableKey(candidate model.SpeciesCandidate) string {
 	}, "|")))
 }
 
-func updateFamilyCandidateSlice(candidates []model.SpeciesCandidate, updatedByKey map[string]model.SpeciesCandidate) {
-	for i := range candidates {
-		if replacement, ok := updatedByKey[familyCandidateStableKey(candidates[i])]; ok {
-			candidates[i] = replacement
-		}
-	}
-}
-
-func updateFamilyCandidateStore(candidates []model.SpeciesCandidate, updated []model.SpeciesCandidate) map[string]model.SpeciesCandidate {
-	updatedByKey := make(map[string]model.SpeciesCandidate, len(updated))
-	for _, candidate := range updated {
-		updatedByKey[familyCandidateStableKey(candidate)] = candidate
-	}
-	updateFamilyCandidateSlice(candidates, updatedByKey)
-	return updatedByKey
-}
-
 func familyChoicesFromCandidates(candidates []model.SpeciesCandidate) ([]tui.Choice, map[string]model.SpeciesCandidate) {
 	choices := make([]tui.Choice, 0, len(candidates))
 	choiceByValue := make(map[string]model.SpeciesCandidate, len(candidates))
@@ -3075,9 +2942,6 @@ func familyChoicesFromCandidates(candidates []model.SpeciesCandidate) ([]tui.Cho
 		label := strings.TrimSpace(candidate.GenomeLabel)
 		if label == "" {
 			label = strings.TrimSpace(candidate.JBrowseName)
-		}
-		if labelName := strings.TrimSpace(candidate.LabelName); labelName != "" {
-			label += " [" + labelName + "]"
 		}
 		if candidate.HasChildren {
 			label += " [group]"
@@ -3515,6 +3379,10 @@ func (p *Prompter) SelectBlastRowsWithOptions(rows []model.BlastResultRow, backT
 }
 
 func (p *Prompter) SelectBlastRuns(runs []BlastRunView, backTarget error) (BlastRowSelection, error) {
+	return p.SelectBlastRunsWithOptions(runs, backTarget, BlastRunSelectionOptions{})
+}
+
+func (p *Prompter) SelectBlastRunsWithOptions(runs []BlastRunView, backTarget error, options BlastRunSelectionOptions) (BlastRowSelection, error) {
 	items := make([]tui.BlastRunItem, 0, len(runs))
 	tableKeyParts := make([]string, 0, len(runs))
 	for i, run := range runs {
@@ -3553,20 +3421,20 @@ func (p *Prompter) SelectBlastRuns(runs []BlastRunView, backTarget error) (Blast
 	filterCleared := false
 	for {
 		result, err := tui.RunBlastRunSelectionPage(tui.BlastRunSelectionPage{
-			Path:          p.blastTUIPath("BLAST input", "BLAST results", "Row selection"),
-			Title:         "BLAST row selection",
-			Description:   "Choose a BLAST query on the left and review its result rows on the right.",
-			Items:         items,
-			AllowFilter:   blastRunsHaveAllExternalReferences(runs),
-			FilterText:    tui.ButtonFilter,
-			AllowBack:     true,
-			AllowHome:     p.allowHome(true),
-			ConfirmText:   tui.ButtonView,
-			GenerateText:  tui.ButtonExport,
-			DetailAction:  "blast",
-			DoneAllText:   tui.ButtonExportAll,
-			State:         p.blastRunStates[stateKey],
-			AliasColumnID: "label_name",
+			Path:             p.blastTUIPath("BLAST input", "BLAST results", "Row selection"),
+			Title:            "BLAST row selection",
+			Description:      "Choose a BLAST query on the left and review its result rows on the right.",
+			Items:            items,
+			ForceExportScope: options.OriginalRunCount > 1,
+			AllowFilter:      blastRunsHaveAllExternalReferences(runs),
+			FilterText:       tui.ButtonFilter,
+			AllowBack:        true,
+			AllowHome:        p.allowHome(true),
+			ConfirmText:      tui.ButtonView,
+			GenerateText:     tui.ButtonExport,
+			DetailAction:     "blast",
+			State:            p.blastRunStates[stateKey],
+			AliasColumnID:    "label_name",
 			LoadAliases: func(runIndex int, rowIndex int) tui.RowAliasChoices {
 				if runIndex < 0 || runIndex >= len(runs) || rowIndex < 0 || rowIndex >= len(runs[runIndex].Rows) {
 					return tui.RowAliasChoices{}
@@ -3930,6 +3798,10 @@ func (p *Prompter) selectBlastRows(rows []model.BlastResultRow, allowDoneAll boo
 	filterSettings := p.blastFilterSettings
 	filterApplied := anyPromptBool(filterFlags)
 	filterCleared := false
+	exportHint := "Ctrl+G exports selected rows"
+	if allowDoneAll {
+		exportHint = "Ctrl+G opens export scope for current or all tables"
+	}
 	for {
 		result, err := tui.RunRowSelectionPage(tui.RowSelectionPage{
 			Path:          p.blastTUIPath("BLAST input", "BLAST results", "Row selection"),
@@ -3948,8 +3820,7 @@ func (p *Prompter) selectBlastRows(rows []model.BlastResultRow, allowDoneAll boo
 			ConfirmText:   tui.ButtonView,
 			GenerateText:  tui.ButtonExport,
 			DetailAction:  "blast",
-			DoneAllText:   tui.ButtonExportAll,
-			Hints:         []string{"Ctrl+G exports selected rows"},
+			Hints:         []string{exportHint},
 			State:         p.rowStates[stateKey],
 			AliasColumnID: "label_name",
 			LoadAliases: func(rowIndex int) tui.RowAliasChoices {
@@ -4890,7 +4761,16 @@ func (p *Prompter) ExportBaseName(label string, backTarget error) (string, error
 
 }
 
+type ExportSettingsOptions struct {
+	ShowFamilyQueryPrepend bool
+	PrependOnlyFirstQuery  bool
+}
+
 func (p *Prompter) ExportSettings(label string, allowFolder bool, allowEmptyFileName bool, mentionBlastHeaderFallback bool, backTarget error) (ExportSettings, error) {
+	return p.ExportSettingsWithOptions(label, allowFolder, allowEmptyFileName, mentionBlastHeaderFallback, backTarget, ExportSettingsOptions{})
+}
+
+func (p *Prompter) ExportSettingsWithOptions(label string, allowFolder bool, allowEmptyFileName bool, mentionBlastHeaderFallback bool, backTarget error, options ExportSettingsOptions) (ExportSettings, error) {
 	promptLabel := strings.TrimSpace(label)
 	if promptLabel == "" {
 		promptLabel = "Export file name"
@@ -4900,21 +4780,24 @@ func (p *Prompter) ExportSettings(label string, allowFolder bool, allowEmptyFile
 		message = "Enter export settings before generating files. If this BLAST query has no label name, this file name will also be used inside the FASTA title header; using a gene label name is recommended."
 	}
 	result, err := tui.RunExportSettingsModal(tui.ExportSettingsPage{
-		Path:           p.tuiPath("Startup", "Export", "Settings"),
-		Title:          p.t("Export settings"),
-		Message:        p.t(message),
-		FileLabel:      p.t(promptLabel),
-		FolderLabel:    p.t("Output folder"),
-		AllowFolder:    allowFolder,
-		AllowEmptyFile: allowEmptyFileName,
-		ReportLabel:    p.t("Data analysis report (PDF)"),
-		AllowBack:      true,
-		AllowHome:      p.allowHome(true),
-		ConfirmText:    tui.ButtonExport,
-		WriteText:      true,
-		WriteExcel:     true,
-		WriteRawExcel:  false,
-		UsePhgoHeader:  true,
+		Path:                   p.tuiPath("Startup", "Export", "Settings"),
+		Title:                  p.t("Export settings"),
+		Message:                p.t(message),
+		FileLabel:              p.t(promptLabel),
+		FolderLabel:            p.t("Output folder"),
+		AllowFolder:            allowFolder,
+		AllowEmptyFile:         allowEmptyFileName,
+		ReportLabel:            p.t("Data analysis report (PDF)"),
+		AllowBack:              true,
+		AllowHome:              p.allowHome(true),
+		ConfirmText:            tui.ButtonExport,
+		WriteText:              true,
+		WriteExcel:             true,
+		WriteRawExcel:          false,
+		FastaHeaderMode:        string(model.FastaHeaderModePhgo),
+		UsePhgoHeader:          true,
+		ShowFamilyQueryPrepend: options.ShowFamilyQueryPrepend,
+		PrependOnlyFirstQuery:  options.PrependOnlyFirstQuery,
 	})
 	if err != nil {
 		return ExportSettings{}, err
@@ -4927,13 +4810,15 @@ func (p *Prompter) ExportSettings(label string, allowFolder bool, allowEmptyFile
 		return ExportSettings{}, fmt.Errorf("file name cannot be empty")
 	}
 	return ExportSettings{
-		BaseName:      name,
-		FolderName:    sanitizeFileName(result.FolderName),
-		WriteReport:   result.WriteReport,
-		WriteText:     result.WriteText,
-		WriteExcel:    result.WriteExcel,
-		WriteRawExcel: result.WriteRawExcel,
-		UsePhgoHeader: result.UsePhgoHeader,
+		BaseName:              name,
+		FolderName:            sanitizeFileName(result.FolderName),
+		WriteReport:           result.WriteReport,
+		WriteText:             result.WriteText,
+		WriteExcel:            result.WriteExcel,
+		WriteRawExcel:         result.WriteRawExcel,
+		FastaHeaderMode:       model.NormalizeFastaHeaderMode(model.FastaHeaderMode(result.FastaHeaderMode), result.UsePhgoHeader),
+		UsePhgoHeader:         result.UsePhgoHeader,
+		PrependOnlyFirstQuery: result.PrependOnlyFirstQuery,
 	}, nil
 }
 

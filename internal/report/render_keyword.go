@@ -136,7 +136,7 @@ func renderTiming(r *pdfReportRenderer, data ReportData) {
 	r.table([]string{"Event", "Timestamp", "Meaning"}, rows, []float64{120, 170, 217})
 	r.durationBars(data.Keyword.GenerationSteps)
 	r.paragraph(performanceInterpretation(data.Keyword.GenerationSteps), 8.8, colorText, pageWidth-marginLeft-marginRight)
-	r.paragraph("The duration visualization is based only on measured generation steps. It is intended to expose performance characteristics such as Excel writing, peptide text handling, hashing, and PDF rendering without mixing those measurements with earlier unrelated application activity.", 8.8, colorMuted, pageWidth-marginLeft-marginRight)
+	r.paragraph("The duration visualization is based only on measured generation steps. It is intended to expose performance characteristics such as Excel writing, peptide FASTA handling, hashing, and PDF rendering without mixing those measurements with earlier unrelated application activity.", 8.8, colorMuted, pageWidth-marginLeft-marginRight)
 }
 
 func renderDataSource(r *pdfReportRenderer, data ReportData) {
@@ -290,7 +290,7 @@ func renderColumns(r *pdfReportRenderer, k KeywordReportData) {
 func renderExportLog(r *pdfReportRenderer, k KeywordReportData) {
 	r.chapterHeading("Chapter 11. Export Settings And Generation Log")
 	r.paragraph("Export settings show what the user requested for the current file-generation action. The generation log then records measured file-writing and verification steps with timestamps, duration, status, and details.", 9.2, colorText, pageWidth-marginLeft-marginRight)
-	r.paragraph("A single export action can generate several artifacts, such as a selected workbook, raw workbook, peptide text file, and this report. The report treats that whole action as one audited event instead of creating separate reports for each file.", 8.8, colorText, pageWidth-marginLeft-marginRight)
+	r.paragraph("A single export action can generate several artifacts, such as a selected workbook, raw workbook, peptide FASTA file, and this report. The report treats that whole action as one audited event instead of creating separate reports for each file.", 8.8, colorText, pageWidth-marginLeft-marginRight)
 	r.subheading("Export settings")
 	r.table([]string{"Setting", "Value", "Effect"}, sortedRowsFromNameValues(k.ExportSettings), []float64{140, 122, 245})
 	r.subheading("Generation log")
@@ -313,20 +313,20 @@ func renderExportLog(r *pdfReportRenderer, k KeywordReportData) {
 func renderSequenceAudit(r *pdfReportRenderer, k KeywordReportData) {
 	r.chapterHeading("Chapter 12. Sequence Export Audit")
 	if !k.Sequences.Requested {
-		r.paragraph("Peptide text export was not requested for this export action, so sequence-export details are not applicable. The report does not fetch sequences merely to populate this chapter.", 9.2, colorText, pageWidth-marginLeft-marginRight)
+		r.paragraph("Peptide FASTA export was not requested for this export action, so sequence-export details are not applicable. The report does not fetch sequences merely to populate this chapter.", 9.2, colorText, pageWidth-marginLeft-marginRight)
 		return
 	}
 	r.paragraph("The sequence audit records peptide records already fetched or available during the export. Completeness is stated as written, skipped, or unavailable based on the sequence status captured by the workflow.", 9.2, colorText, pageWidth-marginLeft-marginRight)
 	seq := k.Sequences
-	r.subheading("Text file format")
+	r.subheading("FASTA file format")
 	r.table([]string{"Field", "Value"}, [][]string{
-		{"Text file type", valueOr(seq.TextFileType, "FASTA-style peptide sequence text export")},
+		{"FASTA file type", valueOr(seq.TextFileType, "peptide FASTA export")},
 		{"Header label mode", valueOr(seq.HeaderLabelMode, "not available in this run")},
 	}, []float64{118, 389})
 	r.paragraph("The header-label mode states whether the exported FASTA headers carried label_name values, transcript IDs, sequence IDs, or a mixture of those forms. This is especially important when different keyword searches produce different header readability.", 8.8, colorMuted, pageWidth-marginLeft-marginRight)
 	r.cards([]NameValue{
 		{Name: "requested", Value: strconv.Itoa(seq.RequestedCount), Explanation: "selected rows needing sequence"},
-		{Name: "written", Value: strconv.Itoa(seq.WrittenCount), Explanation: "records in text file"},
+		{Name: "written", Value: strconv.Itoa(seq.WrittenCount), Explanation: "records in FASTA file"},
 		{Name: "skipped", Value: strconv.Itoa(seq.SkippedCount), Explanation: "missing or failed"},
 		{Name: "aa characters", Value: strconv.Itoa(seq.TotalCharacters), Explanation: "sum of written lengths"},
 	})

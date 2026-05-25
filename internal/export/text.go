@@ -18,7 +18,7 @@ import (
 func WriteProteinSequencesText(path string, records []model.ProteinSequenceRecord) error {
 	file, err := os.Create(path)
 	if err != nil {
-		return fmt.Errorf("create text file: %w", err)
+		return fmt.Errorf("create FASTA file: %w", err)
 	}
 	defer func() {
 		_ = file.Close()
@@ -28,22 +28,22 @@ func WriteProteinSequencesText(path string, records []model.ProteinSequenceRecor
 	for idx, record := range records {
 		if idx > 0 {
 			if _, err := writer.WriteString("\n\n"); err != nil {
-				return fmt.Errorf("write text separator: %w", err)
+				return fmt.Errorf("write FASTA separator: %w", err)
 			}
 		}
 		if _, err := writer.WriteString(record.Header); err != nil {
-			return fmt.Errorf("write text header: %w", err)
+			return fmt.Errorf("write FASTA header: %w", err)
 		}
 		if _, err := writer.WriteString("\n"); err != nil {
-			return fmt.Errorf("write text newline: %w", err)
+			return fmt.Errorf("write FASTA newline: %w", err)
 		}
 		if _, err := writer.WriteString(record.Sequence); err != nil {
-			return fmt.Errorf("write text sequence: %w", err)
+			return fmt.Errorf("write FASTA sequence: %w", err)
 		}
 	}
 
 	if err := writer.Flush(); err != nil {
-		return fmt.Errorf("flush text file: %w", err)
+		return fmt.Errorf("flush FASTA file: %w", err)
 	}
 	return nil
 }

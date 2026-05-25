@@ -42,30 +42,6 @@ func (c *Client) ResolveTAIRKeywordRowLabelCandidates(ctx context.Context, row m
 	return nil, ""
 }
 
-func (c *Client) ResolveTAIRFamilyCandidateLabelCandidates(ctx context.Context, version model.SpeciesCandidate, candidate model.SpeciesCandidate) ([]string, string) {
-	familyKey := strings.TrimSpace(firstNonEmpty(candidate.GroupKey, candidate.JBrowseName))
-	if familyKey == "" {
-		return nil, ""
-	}
-	rows, err := c.SearchFamilyKeywordRows(ctx, version, familyKey)
-	if err != nil || len(rows) == 0 {
-		return nil, ""
-	}
-	aliases := make([]string, 0, len(rows)*3)
-	sourceType := ""
-	for _, row := range rows {
-		rowAliases, rowSource := c.ResolveTAIRKeywordRowLabelCandidates(ctx, row)
-		if sourceType == "" && strings.TrimSpace(rowSource) != "" {
-			sourceType = strings.TrimSpace(rowSource)
-		}
-		aliases = append(aliases, rowAliases...)
-	}
-	if aliases = uniqueStrings(aliases); len(aliases) > 0 {
-		return aliases, sourceType
-	}
-	return nil, ""
-}
-
 func (c *Client) resolveTAIRViaPhytozomeRow(ctx context.Context, row model.KeywordResultRow) ([]string, string) {
 	species, ok := tairReferencePhytozomeSpecies()
 	if !ok {

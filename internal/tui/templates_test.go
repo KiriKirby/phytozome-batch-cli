@@ -55,6 +55,33 @@ func TestBlastSettingsModalHeightsFitCurrentContent(t *testing.T) {
 	}
 }
 
+func TestBlastRunSelectionShowsExportScopeFromOriginalQueryCount(t *testing.T) {
+	if blastRunSelectionShowsExportScope(BlastRunSelectionPage{Items: []BlastRunItem{{}}}) {
+		t.Fatal("single visible table without original multi-query context should not show export scope")
+	}
+	if !blastRunSelectionShowsExportScope(BlastRunSelectionPage{Items: []BlastRunItem{{}, {}}}) {
+		t.Fatal("multiple visible tables should show export scope")
+	}
+	if !blastRunSelectionShowsExportScope(BlastRunSelectionPage{Items: []BlastRunItem{{}}, ForceExportScope: true}) {
+		t.Fatal("original multi-query context must show export scope even after merging to one visible table")
+	}
+}
+
+func TestSelectFirstChoiceStartsAtFirstSelectableItem(t *testing.T) {
+	list := tview.NewList()
+	choices := []Choice{
+		{Label: "First", Value: "first"},
+		{Label: "Second", Value: "second"},
+	}
+	for _, choice := range choices {
+		list.AddItem(choice.Label, choice.Description, 0, nil)
+	}
+	selectFirstChoice(list, choices)
+	if got := list.GetCurrentItem(); got != 0 {
+		t.Fatalf("current item = %d, want first selectable item 0", got)
+	}
+}
+
 func TestRowSelectionAliasOverlayHeightUsesDetailModalMaximum(t *testing.T) {
 	if got := rowSelectionAliasOverlayHeight(1); got != 12 {
 		t.Fatalf("small alias overlay height = %d, want 12", got)

@@ -99,11 +99,13 @@ func TestBuildBlastOutputDisplayNameDoesNotNormalizeArabidopsisLabel(t *testing.
 
 func TestExportSettingsFromPromptKeepsFileTypeToggles(t *testing.T) {
 	settings := exportSettingsFromPrompt(prompt.ExportSettings{
-		WriteReport:   true,
-		WriteText:     true,
-		WriteExcel:    false,
-		WriteRawExcel: true,
-		UsePhgoHeader: true,
+		WriteReport:           true,
+		WriteText:             true,
+		WriteExcel:            false,
+		WriteRawExcel:         true,
+		FastaHeaderMode:       model.FastaHeaderModePhgo,
+		UsePhgoHeader:         true,
+		PrependOnlyFirstQuery: true,
 	}, "C4H", "out")
 
 	if settings.BaseName != "C4H" || settings.OutputDir != "out" || !settings.WriteReport {
@@ -115,6 +117,12 @@ func TestExportSettingsFromPromptKeepsFileTypeToggles(t *testing.T) {
 	if !settings.UsePhgoHeader {
 		t.Fatalf("phgo header toggle not preserved: %#v", settings)
 	}
+	if settings.FastaHeaderMode != model.FastaHeaderModePhgo {
+		t.Fatalf("FASTA header mode not preserved: %#v", settings)
+	}
+	if !settings.PrependOnlyFirstQuery {
+		t.Fatalf("family FASTA query prepend setting not preserved: %#v", settings)
+	}
 }
 
 func TestFilesSummaryIncludesRawText(t *testing.T) {
@@ -124,8 +132,8 @@ func TestFilesSummaryIncludesRawText(t *testing.T) {
 		RawTextPath:  filepath.Join("out", "PAL_raw.fasta"),
 	})
 
-	if !strings.Contains(summary, "Raw text") || !strings.Contains(summary, "PAL_raw.fasta") {
-		t.Fatalf("raw text missing from files summary:\n%s", summary)
+	if !strings.Contains(summary, "Raw FASTA") || !strings.Contains(summary, "PAL_raw.fasta") {
+		t.Fatalf("raw FASTA missing from files summary:\n%s", summary)
 	}
 }
 
@@ -133,7 +141,7 @@ func TestInspectBlastGeneratedFilesIncludesRawText(t *testing.T) {
 	dir := t.TempDir()
 	rawTextPath := filepath.Join(dir, "PAL_raw.fasta")
 	if err := os.WriteFile(rawTextPath, []byte(">PAL1\nMAAA\n"), 0o600); err != nil {
-		t.Fatalf("write raw text fixture: %v", err)
+		t.Fatalf("write raw FASTA fixture: %v", err)
 	}
 
 	files, err := inspectBlastGeneratedFilesList(context.Background(), []exportFileResult{{RawTextPath: rawTextPath}}, report.NewGeneratedFileInspector())
@@ -143,8 +151,8 @@ func TestInspectBlastGeneratedFilesIncludesRawText(t *testing.T) {
 	if len(files) != 1 {
 		t.Fatalf("generated file count = %d, want 1", len(files))
 	}
-	if files[0].Name != "PAL_raw.fasta" || files[0].Type != "raw BLAST peptide text" {
-		t.Fatalf("raw text file metadata not captured: %#v", files[0])
+	if files[0].Name != "PAL_raw.fasta" || files[0].Type != "raw BLAST peptide FASTA" {
+		t.Fatalf("raw FASTA file metadata not captured: %#v", files[0])
 	}
 }
 
@@ -152,7 +160,7 @@ func TestInspectKeywordGeneratedFilesIncludesRawText(t *testing.T) {
 	dir := t.TempDir()
 	rawTextPath := filepath.Join(dir, "keyword_raw.fasta")
 	if err := os.WriteFile(rawTextPath, []byte(">hit\nMAAA\n"), 0o600); err != nil {
-		t.Fatalf("write raw text fixture: %v", err)
+		t.Fatalf("write raw FASTA fixture: %v", err)
 	}
 
 	files, err := inspectKeywordGeneratedFiles(context.Background(), exportFileResult{RawTextPath: rawTextPath}, report.SequenceAudit{}, report.NewGeneratedFileInspector())
@@ -162,8 +170,8 @@ func TestInspectKeywordGeneratedFilesIncludesRawText(t *testing.T) {
 	if len(files) != 1 {
 		t.Fatalf("generated file count = %d, want 1", len(files))
 	}
-	if files[0].Name != "keyword_raw.fasta" || files[0].Type != "raw peptide text" {
-		t.Fatalf("raw keyword text file metadata not captured: %#v", files[0])
+	if files[0].Name != "keyword_raw.fasta" || files[0].Type != "raw peptide FASTA" {
+		t.Fatalf("raw keyword FASTA file metadata not captured: %#v", files[0])
 	}
 }
 
@@ -624,21 +632,21 @@ func TestBuildPromptFamilyBlastPreviewKeepsUngroupedItems(t *testing.T) {
 	}
 }
 
-func TestBlastTXTHeaderLabelPrefersLabelName(t *testing.T) {
+func TestBlastFastaHeaderLabelPrefersLabelName(t *testing.T) {
 	item := blastQueryItem{LabelName: "AtPAL1"}
-	if got := blastTXTHeaderLabel(item, "CustomFileName"); got != "AtPAL1" {
-		t.Fatalf("txt header label = %q, want label name", got)
+	if got := blastFastaHeaderLabel(item, "CustomFileName"); got != "AtPAL1" {
+		t.Fatalf("FASTA header label = %q, want label name", got)
 	}
 }
 
-func TestBlastTXTHeaderLabelFallsBackToFileName(t *testing.T) {
+func TestBlastFastaHeaderLabelFallsBackToFileName(t *testing.T) {
 	item := blastQueryItem{}
-	if got := blastTXTHeaderLabel(item, "CustomFileName"); got != "CustomFileName" {
-		t.Fatalf("txt header label = %q, want file name", got)
+	if got := blastFastaHeaderLabel(item, "CustomFileName"); got != "CustomFileName" {
+		t.Fatalf("FASTA header label = %q, want file name", got)
 	}
 }
 
-func TestFamilyTXTHeaderLabelPrefersQueryIdentityBeforeFallback(t *testing.T) {
+func TestFamilyFastaHeaderLabelPrefersQueryIdentityBeforeFallback(t *testing.T) {
 	source := &model.QuerySequenceSource{
 		LabelName:    "",
 		Aliases:      "ATPAL1; PAL1",
@@ -646,20 +654,42 @@ func TestFamilyTXTHeaderLabelPrefersQueryIdentityBeforeFallback(t *testing.T) {
 		TranscriptID: "AT2G37040.1",
 		ProteinID:    "AT2G37040.1",
 	}
-	if got := familyTXTHeaderLabel(source, "PAL"); got != "ATPAL1" {
-		t.Fatalf("familyTXTHeaderLabel()=%q want ATPAL1", got)
+	if got := familyFastaHeaderLabel(source, "PAL"); got != "ATPAL1" {
+		t.Fatalf("familyFastaHeaderLabel()=%q want ATPAL1", got)
 	}
 }
 
-func TestFamilyTXTQueryIndexesRespectPrependOnlyFirstQuery(t *testing.T) {
+func TestFamilyFastaQueryIndexesRespectPrependOnlyFirstQuery(t *testing.T) {
 	sources := []*model.QuerySequenceSource{{LabelName: "PAL1"}, {LabelName: "PAL2"}, {LabelName: "PAL3"}}
-	firstOnly := familyTXTQueryIndexes(sources, model.FamilyBlastSettings{PrependOnlyFirstQuery: true})
+	firstOnly := familyFastaQueryIndexes(sources, model.FamilyBlastSettings{PrependOnlyFirstQuery: true})
 	if len(firstOnly) != 1 || firstOnly[0] != 0 {
 		t.Fatalf("first-only indexes = %#v", firstOnly)
 	}
-	all := familyTXTQueryIndexes(sources, model.FamilyBlastSettings{PrependOnlyFirstQuery: false})
+	all := familyFastaQueryIndexes(sources, model.FamilyBlastSettings{PrependOnlyFirstQuery: false})
 	if len(all) != 3 || all[0] != 0 || all[2] != 2 {
 		t.Fatalf("all indexes = %#v", all)
+	}
+}
+
+func TestFamilyExportQueryPrependOptionOnlyForFamilyItems(t *testing.T) {
+	single := blastQueryItem{QuerySource: &model.QuerySequenceSource{LabelName: "PAL1"}}
+	if show, _ := familyExportQueryPrependOptionForItem(single); show {
+		t.Fatal("single-query export should not show family FASTA prepend option")
+	}
+	singleFamily := blastQueryItem{
+		QuerySource:    &model.QuerySequenceSource{LabelName: "PAL1"},
+		FamilySettings: model.FamilyBlastSettings{Enabled: true},
+	}
+	if show, _ := familyExportQueryPrependOptionForItem(singleFamily); !show {
+		t.Fatal("family export should show family FASTA prepend option even with one query source")
+	}
+	family := blastQueryItem{
+		FamilySources:  []*model.QuerySequenceSource{{LabelName: "PAL1"}, {LabelName: "PAL2"}},
+		FamilySettings: model.FamilyBlastSettings{Enabled: true, PrependOnlyFirstQuery: true},
+	}
+	show, initial := familyExportQueryPrependOptionForItem(family)
+	if !show || !initial {
+		t.Fatalf("family export option = show %v initial %v, want true true", show, initial)
 	}
 }
 
@@ -774,6 +804,47 @@ func TestApplyOriginalHeadersRestoresOriginalHeader(t *testing.T) {
 	}
 }
 
+func TestApplyKeywordMinimalHeadersUsesPrimaryIDOnly(t *testing.T) {
+	rows := []model.KeywordResultRow{{
+		SequenceHeaderLabel: "Arabidopsis thaliana TAIR10",
+		TranscriptID:        "AT2G37040.1",
+		SequenceID:          "AT2G37040.1",
+		GeneIdentifier:      "AT2G37040",
+	}}
+	records := []model.ProteinSequenceRecord{{
+		Header:         ">Arabidopsis thaliana TAIR10|AT2G37040.1 (PAL1)",
+		OriginalHeader: ">Arabidopsis thaliana TAIR10|AT2G37040.1 (PAL1)",
+		SourceKey:      keywordSequenceRecordSourceKey(rows[0]),
+		Sequence:       "MPEPTIDE",
+	}}
+	got := applyKeywordMinimalHeaders(records, rows)
+	if got[0].Header != ">AT2G37040.1" {
+		t.Fatalf("header = %q, want minimal primary ID", got[0].Header)
+	}
+}
+
+func TestApplyBlastMinimalHeadersHandlesPrependedQueryAndHits(t *testing.T) {
+	source := &model.QuerySequenceSource{
+		TranscriptID: "AT2G37040.1",
+		Sequence:     "MPEPTIDE",
+	}
+	rows := []model.BlastResultRow{{
+		Protein:    "Sp9509d020g000340_T001",
+		SequenceID: "fallback",
+	}}
+	records := []model.ProteinSequenceRecord{
+		{Header: ">Arabidopsis thaliana TAIR10|AT2G37040.1 (PAL1)", OriginalHeader: ">Arabidopsis thaliana TAIR10|AT2G37040.1 (PAL1)", SourceKey: querySequenceRecordSourceKey(source), Sequence: "MPEPTIDE"},
+		{Header: ">Spirodela polyrhiza|Sp9509d020g000340_T001 (C4H)", OriginalHeader: ">Spirodela polyrhiza|Sp9509d020g000340_T001 (C4H)", SourceKey: blastSequenceRecordSourceKey(rows[0]), Sequence: "MPEPTIDE"},
+	}
+	got := applyBlastMinimalHeaders(records, rows, []*model.QuerySequenceSource{source}, 1)
+	if got[0].Header != ">AT2G37040.1" {
+		t.Fatalf("query header = %q, want minimal query ID", got[0].Header)
+	}
+	if got[1].Header != ">Sp9509d020g000340_T001" {
+		t.Fatalf("hit header = %q, want minimal hit ID", got[1].Header)
+	}
+}
+
 func TestBlastProteinSequenceHeaderPrefersBestAvailableIdentifier(t *testing.T) {
 	tests := []struct {
 		name string
@@ -880,6 +951,22 @@ func TestBlastPhgoHeaderIncludesHitAndBlastSourceMetadata(t *testing.T) {
 	want := ">phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\7"
 	if got != want {
 		t.Fatalf("blastPhgoHeader()=%q want %q", got, want)
+	}
+}
+
+func TestParsePhgoFastaHeaderKeepsBackslashDelimitedGroups(t *testing.T) {
+	parsed, ok := parsePhgoFastaHeader("phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\7")
+	if !ok {
+		t.Fatal("expected phgo header to parse")
+	}
+	if parsed.Species != "Sp7498" || parsed.LabelName != "C4H" || parsed.GeneID != "Sp7498_C4H_001" {
+		t.Fatalf("self group parsed incorrectly: %#v", parsed)
+	}
+	if parsed.BlastSourceLabelName != "PAL1" || parsed.BlastSourceGeneID != "AT2G37040" {
+		t.Fatalf("source group parsed incorrectly: %#v", parsed)
+	}
+	if !parsed.HasRowPart || parsed.RowNumber != 7 {
+		t.Fatalf("table group parsed incorrectly: %#v", parsed)
 	}
 }
 

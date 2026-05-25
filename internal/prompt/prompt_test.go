@@ -190,13 +190,17 @@ func TestBlastRowsDefaultBackTargetReturnsToQueryInput(t *testing.T) {
 
 func TestExportSettingsStructSupportsDefaultPhgoHeaderPreference(t *testing.T) {
 	settings := ExportSettings{
-		WriteText:     true,
-		WriteExcel:    true,
-		WriteRawExcel: false,
-		UsePhgoHeader: true,
+		WriteText:       true,
+		WriteExcel:      true,
+		WriteRawExcel:   false,
+		FastaHeaderMode: model.FastaHeaderModePhgo,
+		UsePhgoHeader:   true,
 	}
 	if !settings.UsePhgoHeader {
 		t.Fatalf("expected phgo header preference to be enabled in export settings test fixture: %#v", settings)
+	}
+	if settings.FastaHeaderMode != model.FastaHeaderModePhgo {
+		t.Fatalf("expected phgo header mode in export settings test fixture: %#v", settings)
 	}
 }
 

@@ -121,11 +121,11 @@ func SampleKeywordReportData() ReportData {
 			},
 			Columns: sampleKeywordColumns("lemna", true, nil),
 			ExportSettings: []NameValue{
-				{Name: "File base name", Value: "spirodela_lignin_keyword", Explanation: "Base name used for selected Excel, raw Excel, peptide text, and raw peptide text outputs."},
+				{Name: "File base name", Value: "spirodela_lignin_keyword", Explanation: "Base name used for selected Excel, raw Excel, peptide FASTA, and raw peptide FASTA outputs."},
 				{Name: "Output folder", Value: session.OutputDir, Explanation: "Destination folder for the current export action."},
 				{Name: "Write selected Excel", Value: "true", Explanation: "Selected rows are written to the main workbook."},
-				{Name: "Write raw Excel and raw text", Value: "true", Explanation: "All current rows are written to _raw.xlsx, and _raw.txt is also written when text export is enabled."},
-				{Name: "Write peptide text", Value: "true", Explanation: "Peptide sequences are written for selected rows with sequence IDs."},
+				{Name: "Write raw Excel and raw FASTA", Value: "true", Explanation: "All current rows are written to _raw.xlsx, and _raw.fasta is also written when FASTA export is enabled."},
+				{Name: "Write peptide FASTA", Value: "true", Explanation: "Peptide sequences are written for selected rows with sequence IDs."},
 				{Name: "Write report PDF", Value: "true", Explanation: "This PDF is generated once for the export action."},
 			},
 			GenerationSteps: sampleSteps(exportStart, now),
@@ -392,11 +392,11 @@ func SampleBlastReportData() ReportData {
 			Columns:            sampleBlastColumns("lemna", "BLASTP", true, true),
 			ExportSettings: []NameValue{
 				{Name: "Export mode", Value: "Family BLAST single group", Explanation: "One family group was exported from three executed query runs."},
-				{Name: "File base name", Value: "PAL", Explanation: "Family name used for selected Excel, raw Excel, TXT, raw TXT, and report context."},
+				{Name: "File base name", Value: "PAL", Explanation: "Family name used for selected Excel, raw Excel, FASTA, raw FASTA, and report context."},
 				{Name: "Output folder", Value: session.OutputDir, Explanation: "Destination folder for this sample BLAST export action."},
 				{Name: "Write selected Excel", Value: "true", Explanation: "Selected rows are written to the main workbook."},
-				{Name: "Write raw Excel and raw text", Value: "true", Explanation: "All current family rows are written to _raw.xlsx, and all current peptide records are written to _raw.txt."},
-				{Name: "Write peptide text", Value: "true", Explanation: "Selected hit peptides and prepended query sequences are written to TXT."},
+				{Name: "Write raw Excel and raw FASTA", Value: "true", Explanation: "All current family rows are written to _raw.xlsx, and all current peptide records are written to _raw.fasta."},
+				{Name: "Write peptide FASTA", Value: "true", Explanation: "Selected hit peptides and prepended query sequences are written to FASTA."},
 				{Name: "Write report PDF", Value: "true", Explanation: "One PDF report is written for this export action."},
 				{Name: "rowNumbers", Value: "available", Explanation: "Selected Excel row numbers preserve original review table row identities."},
 				{Name: "filterFlags", Value: "available", Explanation: "Excel row coloring mirrors final filter suggestion flags where supported."},
@@ -408,7 +408,7 @@ func SampleBlastReportData() ReportData {
 				WrittenCount:    14,
 				SkippedCount:    1,
 				TotalCharacters: 9478,
-				TextFileType:    "BLAST peptide TXT with prepended query sequences and selected hit peptide records",
+				TextFileType:    "BLAST peptide FASTA with prepended query sequences and selected hit peptide records",
 				HeaderLabelMode: "family member query headers use the best available query label; hit records append selected row label_name",
 				Records: []SequenceRecord{
 					{Row: 0, SearchTerm: "query:PAL1", Label: "PAL1", SequenceID: "AT2G37040.1", Transcript: "AT2G37040.1", Status: "written", Length: 711, Source: "prepended query sequence record"},
@@ -572,8 +572,8 @@ func sampleFiles(now time.Time, outputDir string) []GeneratedFile {
 	return []GeneratedFile{
 		sampleFile(now, outputDir, "spirodela_lignin_keyword.xlsx", "selected Excel", "selected keyword rows exported as the main review workbook", 28541),
 		sampleFile(now, outputDir, "spirodela_lignin_keyword_raw.xlsx", "raw Excel", "all current keyword rows exported for audit comparison", 49322),
-		sampleFile(now, outputDir, "spirodela_lignin_keyword_raw.txt", "raw peptide text", "all current keyword peptide records exported for audit comparison", 18452),
-		sampleFile(now, outputDir, "spirodela_lignin_keyword.txt", "peptide text", "peptide FASTA-style sequence records for selected rows", 7148),
+		sampleFile(now, outputDir, "spirodela_lignin_keyword_raw.fasta", "raw peptide FASTA", "all current keyword peptide records exported for audit comparison", 18452),
+		sampleFile(now, outputDir, "spirodela_lignin_keyword.fasta", "peptide FASTA", "peptide FASTA sequence records for selected rows", 7148),
 	}
 }
 
@@ -581,8 +581,8 @@ func sampleBlastFiles(now time.Time, outputDir string) []GeneratedFile {
 	return []GeneratedFile{
 		sampleFile(now, outputDir, "PAL.xlsx", "selected BLAST Excel", "selected Family BLAST rows exported after filter-assisted review", 38428),
 		sampleFile(now, outputDir, "PAL_raw.xlsx", "raw BLAST Excel", "all current Family BLAST rows exported for audit comparison", 81240),
-		sampleFile(now, outputDir, "PAL_raw.txt", "raw BLAST peptide text", "all current Family BLAST peptide records exported for audit comparison", 39812),
-		sampleFile(now, outputDir, "PAL.txt", "BLAST peptide text", "prepended PAL query sequences plus selected target peptide records", 18244),
+		sampleFile(now, outputDir, "PAL_raw.fasta", "raw BLAST peptide FASTA", "all current Family BLAST peptide records exported for audit comparison", 39812),
+		sampleFile(now, outputDir, "PAL.fasta", "BLAST peptide FASTA", "prepended PAL query sequences plus selected target peptide records", 18244),
 	}
 }
 
@@ -650,7 +650,7 @@ func sampleBlastQualityChecks() []QualityCheck {
 		{Name: "InterPro status availability", Result: "warning", Count: "10 of 12 selected rows", Rule: "warn when InterPro requested but status is blank", Explanation: "Two selected rows lack InterPro conserved-region status.", Source: "InterPro enrichment"},
 		{Name: "Family merge audit available", Result: "pass", Count: "2 merge records", Rule: "warn when merged best-ranked rows are not recorded", Explanation: "Sample family merge records show chosen row and reason.", Source: "Family BLAST state"},
 		{Name: "Filter/final selection difference visible", Result: "pass", Count: "2 rescued / 5 user removed", Rule: "warn when filter flags or final selection is missing", Explanation: "Sample report can compare filter suggestions with final user selection.", Source: "filter flags + selection"},
-		{Name: "Peptide text sequence completeness", Result: "warning", Count: "14 written / 15 requested", Rule: "warn when written < requested", Explanation: "One selected target sequence was unavailable in sample export state.", Source: "sequence audit"},
+		{Name: "Peptide FASTA sequence completeness", Result: "warning", Count: "14 written / 15 requested", Rule: "warn when written < requested", Explanation: "One selected target sequence was unavailable in sample export state.", Source: "sequence audit"},
 	}
 }
 
@@ -709,10 +709,10 @@ func sampleBlastSteps(start time.Time, now time.Time) []GenerationStep {
 		makeStep("Resolve BLAST export directory", 54, "ok", "output folder resolved before file writing"),
 		makeStep("Write selected BLAST Excel", 842, "ok", "12 selected Family BLAST rows written with rowNumbers/filterFlags"),
 		makeStep("Write raw BLAST Excel", 1395, "ok", "27 current Family BLAST rows written for audit comparison"),
-		makeStep("Write raw Family BLAST peptide text", 686, "ok", "all current family hit records written to PAL_raw.txt"),
+		makeStep("Write raw Family BLAST peptide FASTA", 686, "ok", "all current family hit records written to PAL_raw.fasta"),
 		makeStep("Fetch/use BLAST peptide sequences", 5380, "warning", "14 sequence records available, 1 selected hit unavailable"),
-		makeStep("Prepend query sequence records", 88, "ok", "3 family member query records prepended to TXT output"),
-		makeStep("Write BLAST peptide text", 477, "ok", "query records plus selected hit records written"),
+		makeStep("Prepend query sequence records", 88, "ok", "3 family member query records prepended to FASTA output"),
+		makeStep("Write BLAST peptide FASTA", 477, "ok", "query records plus selected hit records written"),
 		makeStep("Capture file metadata and hashes", 221, "ok", "4 generated data files inspected in sample data"),
 		makeStep("Render BLAST report PDF", now.Sub(cursor).Milliseconds(), "ok", "PDF report rendered from structured BLAST sample data"),
 	}
@@ -846,9 +846,9 @@ func sampleSteps(start time.Time, now time.Time) []GenerationStep {
 		makeStep("Resolve output directory", 42, "ok", "output directory resolved from application path"),
 		makeStep("Write selected Excel", 731, "ok", "11 selected rows written"),
 		makeStep("Write raw Excel", 1048, "ok", "23 current rows written"),
-		makeStep("Write raw peptide text", 502, "ok", "all current keyword peptide records written to _raw.txt"),
+		makeStep("Write raw peptide FASTA", 502, "ok", "all current keyword peptide records written to _raw.fasta"),
 		makeStep("Use peptide sequences", 4260, "warning", "10 written, 1 skipped because sequence ID was unavailable"),
-		makeStep("Write peptide text", 388, "ok", "10 records written"),
+		makeStep("Write peptide FASTA", 388, "ok", "10 records written"),
 		makeStep("Capture file metadata", 96, "ok", "4 generated files inspected in sample data"),
 		makeStep("Compute hashes", 183, "ok", "SHA-256, SHA-1, and MD5 captured"),
 		makeStep("Render report PDF", now.Sub(cursor).Milliseconds(), "ok", "PDF report was written from completed sample export data"),

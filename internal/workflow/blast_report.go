@@ -217,8 +217,8 @@ func inspectBlastGeneratedFilesList(ctx context.Context, files []exportFileResul
 		fileSpecs := []fileSpec{
 			{fileSet.ExcelPath, "selected BLAST Excel", "selected BLAST rows exported as the main review workbook"},
 			{fileSet.RawExcelPath, "raw BLAST Excel", "all current BLAST rows exported for audit comparison"},
-			{fileSet.RawTextPath, "raw BLAST peptide text", "all current BLAST peptide sequence records exported for audit comparison"},
-			{fileSet.TextPath, "BLAST peptide text", "BLAST peptide sequence records already produced by text export"},
+			{fileSet.RawTextPath, "raw BLAST peptide FASTA", "all current BLAST peptide FASTA records exported for audit comparison"},
+			{fileSet.TextPath, "BLAST peptide FASTA", "BLAST peptide FASTA records already produced by FASTA export"},
 		}
 		for _, spec := range fileSpecs {
 			if strings.TrimSpace(spec.path) == "" {
@@ -821,7 +821,7 @@ func blastFamilyReportBatch(runs []blastQueryRun) *report.FamilyBlastReport {
 		{Name: "Detect families from query names automatically", Value: fmt.Sprintf("%t", familySettings.GroupByDetectedPrefix), Explanation: "Shared query-name prefixes and source aliases were used to propose family groups."},
 		{Name: "Merge rows that hit the same target gene/protein", Value: fmt.Sprintf("%t", familySettings.MergeRowsByTarget), Explanation: "Rows hitting the same normalized target inside a family are merged into one review/export row."},
 		{Name: "When merged, keep the strongest member hit", Value: fmt.Sprintf("%t", familySettings.KeepBestHitPerTarget), Explanation: "When several family members hit the same target, the best-ranked row represents that target."},
-		{Name: "TXT export: include only the first query sequence", Value: fmt.Sprintf("%t", familySettings.PrependOnlyFirstQuery), Explanation: "If false, every family-member query sequence is prepended in family order."},
+		{Name: "FASTA query records: prepend first query only", Value: fmt.Sprintf("%t", familySettings.PrependOnlyFirstQuery), Explanation: "If false, every family-member query sequence is prepended in family order."},
 		{Name: "minimum queries in a family", Value: strconv.Itoa(maxInt(familySettings.MinimumGroupSize, 2)), Explanation: "Minimum number of related queries required before a family review/export unit is formed."},
 		{Name: "Remove leading species-style prefix", Value: fmt.Sprintf("%t", familySettings.StripLeadingSpeciesPrefix), Explanation: "Generic leading species-style prefixes are removed before family-name detection."},
 		{Name: "Remove trailing member number", Value: fmt.Sprintf("%t", familySettings.StripTrailingQueryIndex), Explanation: "Trailing member numbers such as 1/2/3 are removed before grouping."},
@@ -1727,9 +1727,9 @@ func blastQualityChecks(prepared []blastQueryItem, runs []blastQueryRun, selecte
 		checks = append(checks, qualityCheck("InterPro status availability", countBlastRowsWhere(selectedRows, func(row model.BlastResultRow) bool { return strings.TrimSpace(row.InterProConservedRegionStatus) == "" }) == 0, fmt.Sprintf("%d missing of %d", countBlastRowsWhere(selectedRows, func(row model.BlastResultRow) bool { return strings.TrimSpace(row.InterProConservedRegionStatus) == "" }), len(selectedRows)), "warn when InterPro was enabled but selected rows lack status", "Conserved-region status is needed for reference-aware filtering.", "InterPro enrichment"))
 	}
 	if settings.WriteText {
-		checks = append(checks, qualityCheck("BLAST peptide text completeness", sequenceAudit.SkippedCount == 0, fmt.Sprintf("%d written / %d requested", sequenceAudit.WrittenCount, sequenceAudit.RequestedCount), "warn when written < requested", "Sequence export is complete only when each requested selected row and query record produced a sequence record.", "sequence export state"))
+		checks = append(checks, qualityCheck("BLAST peptide FASTA completeness", sequenceAudit.SkippedCount == 0, fmt.Sprintf("%d written / %d requested", sequenceAudit.WrittenCount, sequenceAudit.RequestedCount), "warn when written < requested", "Sequence export is complete only when each requested selected row and query record produced a sequence record.", "sequence export state"))
 	} else {
-		checks = append(checks, report.QualityCheck{Name: "BLAST peptide text completeness", Result: "not applicable", Count: "not requested", Rule: "text export was not requested", Explanation: "No sequence fetching was performed for report generation.", Source: "export settings"})
+		checks = append(checks, report.QualityCheck{Name: "BLAST peptide FASTA completeness", Result: "not applicable", Count: "not requested", Rule: "FASTA export was not requested", Explanation: "No sequence fetching was performed for report generation.", Source: "export settings"})
 	}
 	return checks
 }
@@ -1772,12 +1772,13 @@ func blastColumnNeedsContextMeaning(header string) bool {
 
 func blastExportSettings(baseName string, outputDir string, settings exportSettings, rowNumbers []int, filterFlags []bool) []report.NameValue {
 	return []report.NameValue{
-		{Name: "File base name", Value: baseName, Explanation: "Base name used for selected Excel, raw Excel, peptide text, raw peptide text, and report outputs."},
+		{Name: "File base name", Value: baseName, Explanation: "Base name used for selected Excel, raw Excel, peptide FASTA, raw peptide FASTA, and report outputs."},
 		{Name: "Output folder", Value: outputDir, Explanation: "Destination directory for this BLAST export action."},
-		{Name: "Family TXT prepend mode", Value: "first family query only / all family queries when disabled", Explanation: "Family BLAST controls whether TXT prepends only the first family-member query sequence or every family-member query sequence in family order."},
+		{Name: "Family FASTA prepend first query only", Value: fmt.Sprintf("%t", settings.PrependOnlyFirstQuery), Explanation: "When Family BLAST export is active, this controls whether FASTA export prepends only the first family-member query sequence or every family-member query sequence in family order."},
 		{Name: "Write selected Excel", Value: fmt.Sprintf("%t", settings.WriteExcel), Explanation: "Selected BLAST rows are written to the main workbook when true."},
-		{Name: "Write raw Excel and raw text", Value: fmt.Sprintf("%t", settings.WriteRawExcel), Explanation: "All current BLAST rows are written to _raw.xlsx, and _raw.txt is also written when text export is enabled."},
-		{Name: "Write peptide text", Value: fmt.Sprintf("%t", settings.WriteText), Explanation: "Peptide sequences are fetched during normal export and written only when true."},
+		{Name: "Write raw Excel and raw FASTA", Value: fmt.Sprintf("%t", settings.WriteRawExcel), Explanation: "All current BLAST rows are written to _raw.xlsx, and _raw.fasta is also written when FASTA export is enabled."},
+		{Name: "Write peptide FASTA", Value: fmt.Sprintf("%t", settings.WriteText), Explanation: "Peptide sequences are fetched during normal export and written only when true."},
+		{Name: "FASTA header mode", Value: fastaHeaderModeDisplay(settings), Explanation: "Controls whether FASTA records use phgo headers, source-original headers, or only the primary ID."},
 		{Name: "Write report PDF", Value: fmt.Sprintf("%t", settings.WriteReport), Explanation: "One PDF report is written for the current export action when true."},
 		{Name: "rowNumbers", Value: availabilityText(len(rowNumbers) > 0), Explanation: "Selected workbook can preserve original review table row identities."},
 		{Name: "filterFlags", Value: availabilityText(len(filterFlags) > 0), Explanation: "Excel row coloring mirrors final filter suggestion flags where supported."},
@@ -1936,7 +1937,7 @@ func buildBlastSequenceAudit(rows []model.BlastResultRow, records []model.Protei
 		RequestedCount:  len(rows) + countQuerySourcesWithSequence(querySources),
 		WrittenCount:    len(records),
 		SkippedCount:    maxInt(0, len(rows)+countQuerySourcesWithSequence(querySources)-len(records)),
-		TextFileType:    "BLAST peptide text export with query sequence records when available",
+		TextFileType:    "BLAST peptide FASTA export with query sequence records when available",
 		HeaderLabelMode: "query records use the best available query label; hit records use selected BLAST row identifiers and label_name when available",
 		TotalCharacters: 0,
 		Records:         make([]report.SequenceRecord, 0, len(records)),
@@ -1987,7 +1988,7 @@ func buildBlastSequenceAudit(rows []model.BlastResultRow, records []model.Protei
 		audit.TotalCharacters += len(record.Sequence)
 		label := blastSequenceRecordLabel(record.Header)
 		kind := blastSequenceRecordKind(record, querySources)
-		source := "sequence record produced during normal BLAST text export"
+		source := "sequence record produced during normal BLAST FASTA export"
 		state := addState(label, kind, source)
 		state.written++
 		state.totalLen += len(record.Sequence)

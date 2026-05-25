@@ -132,8 +132,8 @@ func inspectKeywordGeneratedFiles(ctx context.Context, files exportFileResult, s
 	specs := []fileSpec{
 		{files.ExcelPath, "selected Excel", "selected keyword rows exported as the main workbook"},
 		{files.RawExcelPath, "raw Excel", "all current keyword rows exported for audit comparison"},
-		{files.RawTextPath, "raw peptide text", "all current keyword peptide sequence records exported for audit comparison"},
-		{files.TextPath, "peptide text", keywordTextFileRole(sequenceAudit)},
+		{files.RawTextPath, "raw peptide FASTA", "all current keyword peptide FASTA records exported for audit comparison"},
+		{files.TextPath, "peptide FASTA", keywordTextFileRole(sequenceAudit)},
 	}
 	out := make([]report.GeneratedFile, 0, len(specs))
 	filtered := make([]fileSpec, 0, len(specs))
@@ -608,7 +608,7 @@ func keywordQualityChecks(groups []model.KeywordSearchGroup, rows []model.Keywor
 	if settings.WriteText {
 		checks = append(checks, qualityCheck("Sequence export completeness", sequenceAudit.SkippedCount == 0, fmt.Sprintf("%d written / %d requested", sequenceAudit.WrittenCount, sequenceAudit.RequestedCount), "warn when written < requested", "Sequence export is complete only when each requested selected row produced a sequence record.", "sequence export state"))
 	} else {
-		checks = append(checks, report.QualityCheck{Name: "Sequence export completeness", Result: "not applicable", Count: "not requested", Rule: "text export was not requested", Explanation: "No sequence fetching was performed for report generation.", Source: "export settings"})
+		checks = append(checks, report.QualityCheck{Name: "Sequence export completeness", Result: "not applicable", Count: "not requested", Rule: "FASTA export was not requested", Explanation: "No sequence fetching was performed for report generation.", Source: "export settings"})
 	}
 	if settings.WriteRawExcel {
 		checks = append(checks, qualityCheck("Raw Excel completeness", true, fmt.Sprintf("%d rows", len(allRows)), "pass when raw export requested and current rows are written", "Raw Excel captures all current keyword rows.", "export settings"))
@@ -868,11 +868,12 @@ func dynamicColumnStatsUse(header string) string {
 
 func keywordExportSettings(baseName string, outputDir string, settings exportSettings) []report.NameValue {
 	return []report.NameValue{
-		{Name: "File base name", Value: baseName, Explanation: "Base name used for selected Excel, raw Excel, peptide text, and raw peptide text outputs."},
+		{Name: "File base name", Value: baseName, Explanation: "Base name used for selected Excel, raw Excel, peptide FASTA, and raw peptide FASTA outputs."},
 		{Name: "Output folder", Value: outputDir, Explanation: "Destination directory for the current export action."},
 		{Name: "Write selected Excel", Value: fmt.Sprintf("%t", settings.WriteExcel), Explanation: "Selected rows are written to the main workbook when true."},
-		{Name: "Write raw Excel and raw text", Value: fmt.Sprintf("%t", settings.WriteRawExcel), Explanation: "All current rows are written to _raw.xlsx, and _raw.txt is also written when text export is enabled."},
-		{Name: "Write peptide text", Value: fmt.Sprintf("%t", settings.WriteText), Explanation: "Peptide sequences are fetched and written only when true."},
+		{Name: "Write raw Excel and raw FASTA", Value: fmt.Sprintf("%t", settings.WriteRawExcel), Explanation: "All current rows are written to _raw.xlsx, and _raw.fasta is also written when FASTA export is enabled."},
+		{Name: "Write peptide FASTA", Value: fmt.Sprintf("%t", settings.WriteText), Explanation: "Peptide sequences are fetched and written only when true."},
+		{Name: "FASTA header mode", Value: fastaHeaderModeDisplay(settings), Explanation: "Controls whether FASTA records use phgo headers, source-original headers, or only the primary ID."},
 		{Name: "Write report PDF", Value: fmt.Sprintf("%t", settings.WriteReport), Explanation: "One PDF report is written for the current export action when true."},
 	}
 }
@@ -882,7 +883,7 @@ func buildKeywordSequenceAudit(rows []model.KeywordResultRow, records []model.Pr
 		Requested:       true,
 		RequestedCount:  len(rows),
 		WrittenCount:    len(records),
-		TextFileType:    "FASTA-style peptide sequence text export for selected keyword rows",
+		TextFileType:    "peptide FASTA export for selected keyword rows",
 		HeaderLabelMode: keywordSequenceHeaderLabelMode(rows),
 	}
 	recordBySourceKey := make(map[string]model.ProteinSequenceRecord, len(records))

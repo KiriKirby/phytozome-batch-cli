@@ -68,7 +68,7 @@ func renderBlastGeneratedFileIndex(r *pdfReportRenderer, files []GeneratedFile, 
 	r.chapterHeading("Chapter 2. Generated File Index")
 	r.paragraph("The generated-file index maps each artifact back to the BLAST export action. BLAST exports can represent a single query, a selected run from a batch, a merged Family BLAST group, or Export all. Full hashes are kept in the technical appendix so the opening index remains readable.", 9.2, colorText, pageWidth-marginLeft-marginRight)
 	if len(files) == 0 {
-		r.note("No generated data files were recorded for this BLAST export action. A complete report normally records selected Excel, raw Excel, peptide text, and the report PDF when requested.")
+		r.note("No generated data files were recorded for this BLAST export action. A complete report normally records selected Excel, raw Excel, peptide FASTA, and the report PDF when requested.")
 		return
 	}
 	rows := make([][]string, 0, len(files))
@@ -471,10 +471,10 @@ func renderBlastSequenceAudit(r *pdfReportRenderer, b BlastReportData) {
 	r.chapterHeading("Chapter 14. Sequence Export Audit")
 	seq := b.Sequences
 	if !seq.Requested {
-		r.paragraph("Peptide text export was not requested, so sequence-export details are not applicable. The report did not fetch sequences to populate this chapter.", 9.2, colorText, pageWidth-marginLeft-marginRight)
+		r.paragraph("Peptide FASTA export was not requested, so sequence-export details are not applicable. The report did not fetch sequences to populate this chapter.", 9.2, colorText, pageWidth-marginLeft-marginRight)
 		return
 	}
-	r.paragraph("BLAST text export can contain two distinct record classes: query sequence records prepended for reference and selected hit peptide records exported from BLAST rows. In Family BLAST, the prepended query block follows the family TXT setting: either only the first family member query is written at the top, or all family-member queries are written in family order.", 9.2, colorText, pageWidth-marginLeft-marginRight)
+	r.paragraph("BLAST FASTA export can contain two distinct record classes: query sequence records prepended for reference and selected hit peptide records exported from BLAST rows. In Family BLAST, the prepended query block follows the FASTA query-record setting: either only the first family member query is written at the top, or all family-member queries are written in family order.", 9.2, colorText, pageWidth-marginLeft-marginRight)
 	r.cards([]NameValue{
 		{Name: "requested", Value: strconv.Itoa(seq.RequestedCount), Explanation: "records"},
 		{Name: "written", Value: strconv.Itoa(seq.WrittenCount), Explanation: "records"},
@@ -483,7 +483,7 @@ func renderBlastSequenceAudit(r *pdfReportRenderer, b BlastReportData) {
 	})
 	r.sequenceChart(seq)
 	r.table([]string{"Field", "Value"}, [][]string{
-		{"Text file type", valueOr(seq.TextFileType, "BLAST peptide text export")},
+		{"FASTA file type", valueOr(seq.TextFileType, "BLAST peptide FASTA export")},
 		{"Header label mode", valueOr(seq.HeaderLabelMode, "not available in this run")},
 	}, []float64{118, 389})
 	estimatedRows := math.Max(1, float64(len(seq.QuerySummaries)))

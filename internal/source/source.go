@@ -58,5 +58,4 @@ type QueryResolver interface {
 
 type TAIRLabelNameResolver interface {
 	ResolveTAIRKeywordRowLabelCandidates(ctx context.Context, row model.KeywordResultRow) ([]string, string)
-	ResolveTAIRFamilyCandidateLabelCandidates(ctx context.Context, version model.SpeciesCandidate, candidate model.SpeciesCandidate) ([]string, string)
 }

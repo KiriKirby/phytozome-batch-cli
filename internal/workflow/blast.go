@@ -22,7 +22,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/KiriKirby/phytozome-go/internal/appfs"
@@ -116,10 +115,6 @@ type BlastWizard struct {
 	proteinSequenceCache map[string]model.ProteinSequenceData
 	proteinSequenceMiss  map[string]error
 	proteinSequenceGroup singleflight.Group
-
-	tairFamilyLabelMu    sync.RWMutex
-	tairFamilyLabelCache map[string]keywordLabelIdentification
-	tairFamilyLabelGroup singleflight.Group
 }
 
 type InstanceLaunchRequest struct {
@@ -270,13 +265,15 @@ type blastQueryRun struct {
 }
 
 type exportSettings struct {
-	BaseName      string
-	OutputDir     string
-	WriteReport   bool
-	WriteText     bool
-	WriteExcel    bool
-	WriteRawExcel bool
-	UsePhgoHeader bool
+	BaseName              string
+	OutputDir             string
+	WriteReport           bool
+	WriteText             bool
+	WriteExcel            bool
+	WriteRawExcel         bool
+	FastaHeaderMode       model.FastaHeaderMode
+	UsePhgoHeader         bool
+	PrependOnlyFirstQuery bool
 }
 
 type exportFileResult struct {
@@ -578,7 +575,6 @@ func NewBlastWizardWithTUIInfo(out io.Writer, tuiInfo tui.StartupInfo) *BlastWiz
 		keywordTermRowsCache:      make(map[string][]model.KeywordResultRow),
 		proteinSequenceCache:      make(map[string]model.ProteinSequenceData),
 		proteinSequenceMiss:       make(map[string]error),
-		tairFamilyLabelCache:      make(map[string]keywordLabelIdentification),
 	}
 	w.prompt.SetDetailLoaders(w.loadKeywordDetailFASTA, w.loadBlastDetailFASTA)
 	w.prompt.SetHomeNavigationEnabled(true)
@@ -1639,9 +1635,7 @@ func (w *BlastWizard) selectSpecies(candidates []model.SpeciesCandidate) (model.
 }
 
 func (w *BlastWizard) selectFamily(version model.SpeciesCandidate, candidates []model.SpeciesCandidate) (model.SpeciesCandidate, error) {
-	pageCtx, cancelPage := context.WithCancel(context.Background())
-	defer cancelPage()
-	var loadSeq atomic.Uint64
+	_ = version
 	searchProvider := func(keyword string, scope []model.SpeciesCandidate) []model.SpeciesCandidate {
 		base := candidates
 		if len(scope) > 0 {
@@ -1652,38 +1646,9 @@ func (w *BlastWizard) selectFamily(version model.SpeciesCandidate, candidates []
 		}
 		return base
 	}
-	labelLoader := func(query string, visible []model.SpeciesCandidate, refresh func([]model.SpeciesCandidate)) {
-		resolver, ok := w.source.(source.TAIRLabelNameResolver)
-		if !ok || len(visible) == 0 {
-			return
-		}
-		seq := loadSeq.Add(1)
-		go func(querySnapshot string, pageCandidates []model.SpeciesCandidate, generation uint64) {
-			if strings.TrimSpace(querySnapshot) != "" {
-				time.Sleep(250 * time.Millisecond)
-			}
-			if pageCtx.Err() != nil || loadSeq.Load() != generation {
-				return
-			}
-			out := make([]model.SpeciesCandidate, 0, len(pageCandidates))
-			for _, candidate := range pageCandidates {
-				if pageCtx.Err() != nil || loadSeq.Load() != generation {
-					return
-				}
-				updated := candidate
-				identification := w.resolveTAIRFamilyCandidateLabelIdentification(pageCtx, resolver, version, candidate)
-				if len(identification.Aliases) > 0 {
-					updated.LabelName = strings.TrimSpace(identification.Aliases[0])
-					updated.PhgoAliases = strings.Join(uniqueStrings(identification.Aliases), "; ")
-				}
-				out = append(out, updated)
-				refresh(append([]model.SpeciesCandidate(nil), out...))
-			}
-		}(query, append([]model.SpeciesCandidate(nil), visible...), seq)
-	}
 	for {
 		restore := w.prompt.PushSessionContext("Family", "TAIR family")
-		selected, err := w.prompt.SearchAndSelectFamilyWithProvider(candidates, searchProvider, labelLoader)
+		selected, err := w.prompt.SearchAndSelectFamilyWithProvider(candidates, searchProvider)
 		restore()
 		if err == nil {
 			return selected, nil
@@ -1699,46 +1664,6 @@ func (w *BlastWizard) selectFamily(version model.SpeciesCandidate, candidates []
 			return model.SpeciesCandidate{}, err
 		}
 	}
-}
-
-func (w *BlastWizard) resolveTAIRFamilyCandidateLabelIdentification(ctx context.Context, resolver source.TAIRLabelNameResolver, version model.SpeciesCandidate, candidate model.SpeciesCandidate) keywordLabelIdentification {
-	cacheKey := strings.ToLower(strings.TrimSpace(strings.Join([]string{
-		firstNonEmpty(version.JBrowseName, version.GenomeLabel),
-		firstNonEmpty(candidate.GroupKey, candidate.JBrowseName, candidate.GenomeLabel),
-	}, "|")))
-	if strings.TrimSpace(cacheKey) == "" {
-		return keywordLabelIdentification{}
-	}
-	w.tairFamilyLabelMu.RLock()
-	if cached, ok := w.tairFamilyLabelCache[cacheKey]; ok {
-		w.tairFamilyLabelMu.RUnlock()
-		return cached
-	}
-	w.tairFamilyLabelMu.RUnlock()
-	value, err, _ := w.tairFamilyLabelGroup.Do(cacheKey, func() (any, error) {
-		aliases, sourceType := resolver.ResolveTAIRFamilyCandidateLabelCandidates(ctx, version, candidate)
-		ranked := labelname.RankAliases(labelname.AliasRankRequest{
-			TaskTimestamp: "",
-			ItemIndex:     0,
-			SearchTerm:    firstNonEmpty(candidate.GenomeLabel, candidate.JBrowseName, candidate.GroupKey),
-			Aliases:       uniqueStrings(aliases),
-		})
-		identification := keywordLabelIdentification{
-			Aliases:    uniqueStrings(ranked.RankedAliases),
-			SourceType: strings.TrimSpace(sourceType),
-		}
-		w.tairFamilyLabelMu.Lock()
-		if w.tairFamilyLabelCache == nil {
-			w.tairFamilyLabelCache = make(map[string]keywordLabelIdentification)
-		}
-		w.tairFamilyLabelCache[cacheKey] = identification
-		w.tairFamilyLabelMu.Unlock()
-		return identification, nil
-	})
-	if err != nil {
-		return keywordLabelIdentification{}
-	}
-	return value.(keywordLabelIdentification)
 }
 
 func (w *BlastWizard) runKeywordMode(ctx context.Context, selected model.SpeciesCandidate) error {
@@ -3649,9 +3574,15 @@ func (w *BlastWizard) resumeBlastRowSelection(ctx context.Context, rowContext bl
 		if err != nil {
 			return err
 		}
-		settings, err := w.prepareExportSettings(buildBlastOutputDisplayName(exportItem), false, true, true)
+		showFamilyQueryPrepend, prependOnlyFirstQuery := familyExportQueryPrependOptionForItem(exportItem)
+		settings, err := w.prepareExportSettingsWithFamilyOption(buildBlastOutputDisplayName(exportItem), false, true, true, showFamilyQueryPrepend, prependOnlyFirstQuery)
 		if err != nil {
 			return err
+		}
+		if showFamilyQueryPrepend {
+			exportItem.FamilySettings.PrependOnlyFirstQuery = settings.PrependOnlyFirstQuery
+			rowContext.FamilySettings.PrependOnlyFirstQuery = settings.PrependOnlyFirstQuery
+			rowContext.Item.FamilySettings.PrependOnlyFirstQuery = settings.PrependOnlyFirstQuery
 		}
 		outputDir := settings.OutputDir
 		displayName := settings.BaseName
@@ -3660,7 +3591,7 @@ func (w *BlastWizard) resumeBlastRowSelection(ctx context.Context, rowContext bl
 		}
 		filePrefix := sanitizeExportName(displayName)
 		for {
-			txtHeaderLabel := blastTXTHeaderLabel(exportItem, displayName)
+			txtHeaderLabel := blastFastaHeaderLabel(exportItem, displayName)
 			allRows := rowContext.AllRows
 			if len(allRows) == 0 {
 				allRows = rowContext.Results.Rows
@@ -3736,7 +3667,7 @@ func (w *BlastWizard) reviewBlastRuns(ctx context.Context, selected model.Specie
 	if useSingleBlastRunReview(originalRunCount, runs) {
 		return w.reviewSingleBlastRun(ctx, selected, prepared, runs[0], configuredRequest)
 	}
-	return w.reviewMultiBlastRuns(ctx, selected, prepared, runs, configuredRequest)
+	return w.reviewMultiBlastRuns(ctx, selected, prepared, runs, configuredRequest, originalRunCount)
 }
 
 func useSingleBlastRunReview(originalRunCount int, runs []blastQueryRun) bool {
@@ -3816,10 +3747,10 @@ func (w *BlastWizard) reviewSingleBlastRun(ctx context.Context, selected model.S
 	}
 }
 
-func (w *BlastWizard) reviewMultiBlastRuns(ctx context.Context, selected model.SpeciesCandidate, prepared []blastQueryItem, runs []blastQueryRun, configuredRequest model.BlastRequest) error {
+func (w *BlastWizard) reviewMultiBlastRuns(ctx context.Context, selected model.SpeciesCandidate, prepared []blastQueryItem, runs []blastQueryRun, configuredRequest model.BlastRequest, originalRunCount int) error {
 	w.warmBlastRunsSequenceCache(ctx, runs)
 	for {
-		selection, err := w.prompt.SelectBlastRuns(blastRunViews(runs), prompt.ErrBackToQueryInput)
+		selection, err := w.prompt.SelectBlastRunsWithOptions(blastRunViews(runs), prompt.ErrBackToQueryInput, prompt.BlastRunSelectionOptions{OriginalRunCount: originalRunCount})
 		if err != nil {
 			if errors.Is(err, prompt.ErrBackToRowSelection) {
 				continue
@@ -3943,16 +3874,21 @@ func (w *BlastWizard) exportSingleBlastRun(ctx context.Context, selected model.S
 		defaultName = buildBlastOutputDisplayName(exportItem)
 		allowEmpty = true
 	}
-	settings, err := w.prepareExportSettings(defaultName, false, allowEmpty, true)
+	showFamilyQueryPrepend, prependOnlyFirstQuery := familyExportQueryPrependOptionForItem(exportItem)
+	settings, err := w.prepareExportSettingsWithFamilyOption(defaultName, false, allowEmpty, true, showFamilyQueryPrepend, prependOnlyFirstQuery)
 	if err != nil {
 		return err
+	}
+	if showFamilyQueryPrepend {
+		exportItem.FamilySettings.PrependOnlyFirstQuery = settings.PrependOnlyFirstQuery
+		run.Item.FamilySettings.PrependOnlyFirstQuery = settings.PrependOnlyFirstQuery
 	}
 	displayName := settings.BaseName
 	if displayName == "" {
 		displayName = defaultName
 	}
 	filePrefix := sanitizeExportName(displayName)
-	txtHeaderLabel := blastTXTHeaderLabel(exportItem, displayName)
+	txtHeaderLabel := blastFastaHeaderLabel(exportItem, displayName)
 	for {
 		files, err := w.exportFamilyBlastSelectionsToDir(ctx, rows, allRows, rowNumbers, filterFlags, exportItemFamilySources(exportItem), displayName, txtHeaderLabel, filePrefix, settings.OutputDir, settings, exportItem.FamilySettings, true)
 		if err == nil && settings.WriteReport {
@@ -4014,7 +3950,7 @@ func (w *BlastWizard) exportSingleBlastRun(ctx context.Context, selected model.S
 }
 
 func (w *BlastWizard) exportAllBlastRuns(ctx context.Context, selected model.SpeciesCandidate, prepared []blastQueryItem, runs []blastQueryRun, rowsByRun [][]model.BlastResultRow, rowNumbersByRun [][]int, filterFlagsByRun [][]bool, selectedByRun [][]bool, configuredRequest model.BlastRequest, filterSettings model.BlastFilterSettings, filterApplied bool, filterCleared bool) error {
-	settings, err := w.prepareBatchExportSettings()
+	settings, err := w.prepareBatchExportSettings(runs)
 	if err != nil {
 		return err
 	}
@@ -4131,6 +4067,10 @@ func (w *BlastWizard) exportAllBlastRunsWithProgress(ctx context.Context, select
 				continue
 			}
 			exportItem := run.Item
+			if show, _ := familyExportQueryPrependOptionForItem(exportItem); show {
+				exportItem.FamilySettings.PrependOnlyFirstQuery = settings.PrependOnlyFirstQuery
+				run.Item = exportItem
+			}
 			displayName := buildBlastOutputDisplayName(exportItem)
 			var rowNumbers []int
 			if runPosition >= 0 && runPosition < len(rowNumbersByRun) {
@@ -4154,7 +4094,7 @@ func (w *BlastWizard) exportAllBlastRunsWithProgress(ctx context.Context, select
 				selectedRowsMask: selectedRowsMask,
 				displayName:      displayName,
 				filePrefix:       uniqueExportPrefix(sanitizeExportName(displayName), usedNames),
-				txtHeaderLabel:   blastTXTHeaderLabel(exportItem, displayName),
+				txtHeaderLabel:   blastFastaHeaderLabel(exportItem, displayName),
 			})
 		}
 		previousSuppress := w.suppressTaskModals
@@ -7537,11 +7477,18 @@ func (w *BlastWizard) phytozomeKeywordLabelSpecies(ctx context.Context, selected
 }
 
 func (w *BlastWizard) prepareExportSettings(defaultBaseName string, allowFolder bool, allowEmptyFileName bool, mentionBlastHeaderFallback bool) (exportSettings, error) {
+	return w.prepareExportSettingsWithFamilyOption(defaultBaseName, allowFolder, allowEmptyFileName, mentionBlastHeaderFallback, false, false)
+}
+
+func (w *BlastWizard) prepareExportSettingsWithFamilyOption(defaultBaseName string, allowFolder bool, allowEmptyFileName bool, mentionBlastHeaderFallback bool, showFamilyQueryPrepend bool, prependOnlyFirstQuery bool) (exportSettings, error) {
 	outputDir, err := appfs.OutputDir()
 	if err != nil {
 		return exportSettings{}, err
 	}
-	settings, err := w.prompt.ExportSettings("File name", allowFolder, allowEmptyFileName, mentionBlastHeaderFallback, prompt.ErrBackToRowSelection)
+	settings, err := w.prompt.ExportSettingsWithOptions("File name", allowFolder, allowEmptyFileName, mentionBlastHeaderFallback, prompt.ErrBackToRowSelection, prompt.ExportSettingsOptions{
+		ShowFamilyQueryPrepend: showFamilyQueryPrepend,
+		PrependOnlyFirstQuery:  prependOnlyFirstQuery,
+	})
 	if err != nil {
 		return exportSettings{}, err
 	}
@@ -7562,12 +7509,16 @@ func (w *BlastWizard) prepareExportSettings(defaultBaseName string, allowFolder 
 	return exportSettingsFromPrompt(settings, baseName, resolved), nil
 }
 
-func (w *BlastWizard) prepareBatchExportSettings() (exportSettings, error) {
+func (w *BlastWizard) prepareBatchExportSettings(runs []blastQueryRun) (exportSettings, error) {
 	outputDir, err := appfs.OutputDir()
 	if err != nil {
 		return exportSettings{}, err
 	}
-	settings, err := w.prompt.ExportSettings("Output folder", true, true, false, prompt.ErrBackToRowSelection)
+	showFamilyQueryPrepend, prependOnlyFirstQuery := familyExportQueryPrependOption(runs)
+	settings, err := w.prompt.ExportSettingsWithOptions("Output folder", true, true, false, prompt.ErrBackToRowSelection, prompt.ExportSettingsOptions{
+		ShowFamilyQueryPrepend: showFamilyQueryPrepend,
+		PrependOnlyFirstQuery:  prependOnlyFirstQuery,
+	})
 	if err != nil {
 		return exportSettings{}, err
 	}
@@ -7582,14 +7533,32 @@ func (w *BlastWizard) prepareBatchExportSettings() (exportSettings, error) {
 }
 
 func exportSettingsFromPrompt(settings prompt.ExportSettings, baseName string, outputDir string) exportSettings {
+	headerMode := model.NormalizeFastaHeaderMode(settings.FastaHeaderMode, settings.UsePhgoHeader)
 	return exportSettings{
-		BaseName:      baseName,
-		OutputDir:     outputDir,
-		WriteReport:   settings.WriteReport,
-		WriteText:     settings.WriteText,
-		WriteExcel:    settings.WriteExcel,
-		WriteRawExcel: settings.WriteRawExcel,
-		UsePhgoHeader: settings.UsePhgoHeader,
+		BaseName:              baseName,
+		OutputDir:             outputDir,
+		WriteReport:           settings.WriteReport,
+		WriteText:             settings.WriteText,
+		WriteExcel:            settings.WriteExcel,
+		WriteRawExcel:         settings.WriteRawExcel,
+		FastaHeaderMode:       headerMode,
+		UsePhgoHeader:         headerMode == model.FastaHeaderModePhgo,
+		PrependOnlyFirstQuery: settings.PrependOnlyFirstQuery,
+	}
+}
+
+func (s exportSettings) fastaHeaderMode() model.FastaHeaderMode {
+	return model.NormalizeFastaHeaderMode(s.FastaHeaderMode, s.UsePhgoHeader)
+}
+
+func fastaHeaderModeDisplay(settings exportSettings) string {
+	switch settings.fastaHeaderMode() {
+	case model.FastaHeaderModeOriginal:
+		return "original FASTA header"
+	case model.FastaHeaderModeMinimal:
+		return "minimal primary ID only"
+	default:
+		return "phgo FASTA header"
 	}
 }
 
@@ -7822,7 +7791,7 @@ func buildBlastOutputDisplayName(item blastQueryItem) string {
 	return label
 }
 
-func blastTXTHeaderLabel(item blastQueryItem, fileBaseName string) string {
+func blastFastaHeaderLabel(item blastQueryItem, fileBaseName string) string {
 	if label := strings.TrimSpace(item.LabelName); label != "" {
 		return label
 	}
@@ -7837,6 +7806,22 @@ func exportItemFamilySources(item blastQueryItem) []*model.QuerySequenceSource {
 		return []*model.QuerySequenceSource{item.QuerySource}
 	}
 	return nil
+}
+
+func familyExportQueryPrependOptionForItem(item blastQueryItem) (bool, bool) {
+	if !item.FamilySettings.Enabled {
+		return false, false
+	}
+	return true, item.FamilySettings.PrependOnlyFirstQuery
+}
+
+func familyExportQueryPrependOption(runs []blastQueryRun) (bool, bool) {
+	for _, run := range runs {
+		if show, initial := familyExportQueryPrependOptionForItem(run.Item); show {
+			return true, initial
+		}
+	}
+	return false, false
 }
 
 func sanitizeExportName(value string) string {
@@ -8553,17 +8538,13 @@ func (w *BlastWizard) exportBlastSelectionsToDir(ctx context.Context, selectedRo
 				hitRecords := append([]model.ProteinSequenceRecord(nil), rawRecords...)
 				prependStart := time.Now()
 				rawRecords = prependQuerySequenceRecord(rawRecords, querySource, txtHeaderLabel)
-				if settings.UsePhgoHeader {
-					rawRecords = applyBlastPhgoHeaders(rawRecords, allRows, []*model.QuerySequenceSource{querySource}, len(rawRecords)-len(hitRecords))
-				} else {
-					rawRecords = applyOriginalHeaders(rawRecords)
-				}
-				steps = append(steps, keywordReportStep("Prepend query sequence record to raw text", prependStart, time.Now(), "ok", blastQueryPrependStepDetails(querySource, rawRecords, hitRecords)))
+				rawRecords = applyBlastHeaderMode(rawRecords, allRows, []*model.QuerySequenceSource{querySource}, len(rawRecords)-len(hitRecords), settings.fastaHeaderMode())
+				steps = append(steps, keywordReportStep("Prepend query sequence record to raw FASTA", prependStart, time.Now(), "ok", blastQueryPrependStepDetails(querySource, rawRecords, hitRecords)))
 				writeStart := time.Now()
 				if err := export.WriteProteinSequencesText(rawTextPath, rawRecords); err != nil {
-					return append(steps, keywordReportStep("Write raw BLAST peptide text", writeStart, time.Now(), "failed", err.Error())), err
+					return append(steps, keywordReportStep("Write raw BLAST peptide FASTA", writeStart, time.Now(), "failed", err.Error())), err
 				}
-				return append(steps, keywordReportStep("Write raw BLAST peptide text", writeStart, time.Now(), "ok", fmt.Sprintf("%d sequence records written", len(rawRecords)))), nil
+				return append(steps, keywordReportStep("Write raw BLAST peptide FASTA", writeStart, time.Now(), "ok", fmt.Sprintf("%d sequence records written", len(rawRecords)))), nil
 			},
 			w.out,
 			w.suppressTaskModals,
@@ -8612,11 +8593,7 @@ func (w *BlastWizard) exportBlastSelectionsToDir(ctx context.Context, selectedRo
 		hitRecords := append([]model.ProteinSequenceRecord(nil), records...)
 		prependStart := time.Now()
 		records = prependQuerySequenceRecord(records, querySource, txtHeaderLabel)
-		if settings.UsePhgoHeader {
-			records = applyBlastPhgoHeaders(records, selectedRows, []*model.QuerySequenceSource{querySource}, len(records)-len(hitRecords))
-		} else {
-			records = applyOriginalHeaders(records)
-		}
+		records = applyBlastHeaderMode(records, selectedRows, []*model.QuerySequenceSource{querySource}, len(records)-len(hitRecords), settings.fastaHeaderMode())
 		files.Steps = append(files.Steps, keywordReportStep("Prepend query sequence record", prependStart, time.Now(), "ok", blastQueryPrependStepDetails(querySource, records, hitRecords)))
 		writeText := func() error {
 			return export.WriteProteinSequencesText(textPath, records)
@@ -8626,13 +8603,13 @@ func (w *BlastWizard) exportBlastSelectionsToDir(ctx context.Context, selectedRo
 		if w.suppressTaskModals {
 			err = writeText()
 		} else {
-			err = withSpinner(w.out, "Writing peptide text file...", writeText)
+			err = withSpinner(w.out, "Writing peptide FASTA file...", writeText)
 		}
 		if err != nil {
-			files.Steps = append(files.Steps, keywordReportStep("Write BLAST peptide text", stepStart, time.Now(), "failed", err.Error()))
+			files.Steps = append(files.Steps, keywordReportStep("Write BLAST peptide FASTA", stepStart, time.Now(), "failed", err.Error()))
 			return exportFileResult{}, err
 		}
-		files.Steps = append(files.Steps, keywordReportStep("Write BLAST peptide text", stepStart, time.Now(), "ok", fmt.Sprintf("%d sequence records written", len(records))))
+		files.Steps = append(files.Steps, keywordReportStep("Write BLAST peptide FASTA", stepStart, time.Now(), "ok", fmt.Sprintf("%d sequence records written", len(records))))
 		files.TextPath = textPath
 		files.SequenceRecords = records
 		files.SequenceAudit = buildBlastSequenceAudit(selectedRows, records, []*model.QuerySequenceSource{querySource}, true)
@@ -8651,6 +8628,7 @@ func (w *BlastWizard) exportFamilyBlastSelectionsToDir(ctx context.Context, sele
 		}
 		return w.exportBlastSelectionsToDir(ctx, selectedRows, allRows, rowNumbers, filterFlags, querySource, displayName, txtHeaderLabel, fileBaseName, outputDir, settings, showComplete)
 	}
+	familySettings.PrependOnlyFirstQuery = settings.PrependOnlyFirstQuery
 	files := exportFileResult{SequenceAudit: report.SequenceAudit{Requested: settings.WriteText}}
 	exportMetadata := buildFamilyExportMetadata(querySources)
 	var prefetchedTextRecords []model.ProteinSequenceRecord
@@ -8708,19 +8686,15 @@ func (w *BlastWizard) exportFamilyBlastSelectionsToDir(ctx context.Context, sele
 				hitRecords := append([]model.ProteinSequenceRecord(nil), rawRecords...)
 				prependStart := time.Now()
 				var prependedQueries int
-				prependedSources := familyTXTQuerySources(querySources, familySettings)
+				prependedSources := familyFastaQuerySources(querySources, familySettings)
 				rawRecords, prependedQueries = prependFamilyQuerySequenceRecords(rawRecords, querySources, txtHeaderLabel, familySettings)
-				if settings.UsePhgoHeader {
-					rawRecords = applyBlastPhgoHeaders(rawRecords, allRows, prependedSources, prependedQueries)
-				} else {
-					rawRecords = applyOriginalHeaders(rawRecords)
-				}
-				steps = append(steps, keywordReportStep("Prepend Family BLAST query sequence records to raw text", prependStart, time.Now(), "ok", familyQueryPrependStepDetails(prependedQueries, len(querySources), familySettings.PrependOnlyFirstQuery, len(hitRecords))))
+				rawRecords = applyBlastHeaderMode(rawRecords, allRows, prependedSources, prependedQueries, settings.fastaHeaderMode())
+				steps = append(steps, keywordReportStep("Prepend Family BLAST query sequence records to raw FASTA", prependStart, time.Now(), "ok", familyQueryPrependStepDetails(prependedQueries, len(querySources), familySettings.PrependOnlyFirstQuery, len(hitRecords))))
 				writeStart := time.Now()
 				if err := export.WriteProteinSequencesText(rawTextPath, rawRecords); err != nil {
-					return append(steps, keywordReportStep("Write raw Family BLAST peptide text", writeStart, time.Now(), "failed", err.Error())), err
+					return append(steps, keywordReportStep("Write raw Family BLAST peptide FASTA", writeStart, time.Now(), "failed", err.Error())), err
 				}
-				return append(steps, keywordReportStep("Write raw Family BLAST peptide text", writeStart, time.Now(), "ok", fmt.Sprintf("%d sequence records written", len(rawRecords)))), nil
+				return append(steps, keywordReportStep("Write raw Family BLAST peptide FASTA", writeStart, time.Now(), "ok", fmt.Sprintf("%d sequence records written", len(rawRecords)))), nil
 			},
 			w.out,
 			w.suppressTaskModals,
@@ -8768,13 +8742,9 @@ func (w *BlastWizard) exportFamilyBlastSelectionsToDir(ctx context.Context, sele
 		hitRecords := append([]model.ProteinSequenceRecord(nil), records...)
 		prependStart := time.Now()
 		var prependedQueries int
-		prependedSources := familyTXTQuerySources(querySources, familySettings)
+		prependedSources := familyFastaQuerySources(querySources, familySettings)
 		records, prependedQueries = prependFamilyQuerySequenceRecords(records, querySources, txtHeaderLabel, familySettings)
-		if settings.UsePhgoHeader {
-			records = applyBlastPhgoHeaders(records, selectedRows, prependedSources, prependedQueries)
-		} else {
-			records = applyOriginalHeaders(records)
-		}
+		records = applyBlastHeaderMode(records, selectedRows, prependedSources, prependedQueries, settings.fastaHeaderMode())
 		files.Steps = append(files.Steps, keywordReportStep("Prepend Family BLAST query sequence records", prependStart, time.Now(), "ok", familyQueryPrependStepDetails(prependedQueries, len(querySources), familySettings.PrependOnlyFirstQuery, len(hitRecords))))
 		writeText := func() error {
 			return export.WriteProteinSequencesText(textPath, records)
@@ -8784,13 +8754,13 @@ func (w *BlastWizard) exportFamilyBlastSelectionsToDir(ctx context.Context, sele
 		if w.suppressTaskModals {
 			writeErr = writeText()
 		} else {
-			writeErr = withSpinner(w.out, "Writing peptide text file...", writeText)
+			writeErr = withSpinner(w.out, "Writing peptide FASTA file...", writeText)
 		}
 		if writeErr != nil {
-			files.Steps = append(files.Steps, keywordReportStep("Write Family BLAST peptide text", stepStart, time.Now(), "failed", writeErr.Error()))
+			files.Steps = append(files.Steps, keywordReportStep("Write Family BLAST peptide FASTA", stepStart, time.Now(), "failed", writeErr.Error()))
 			return exportFileResult{}, writeErr
 		}
-		files.Steps = append(files.Steps, keywordReportStep("Write Family BLAST peptide text", stepStart, time.Now(), "ok", fmt.Sprintf("%d sequence records written", len(records))))
+		files.Steps = append(files.Steps, keywordReportStep("Write Family BLAST peptide FASTA", stepStart, time.Now(), "ok", fmt.Sprintf("%d sequence records written", len(records))))
 		files.TextPath = textPath
 		files.SequenceRecords = records
 		files.SequenceAudit = buildBlastSequenceAudit(selectedRows, records, querySources, true)
@@ -8849,7 +8819,7 @@ func runParallelExportSteps(left func() ([]report.GenerationStep, error), right 
 	return leftResult.steps, rightResult.steps, err
 }
 
-func familyTXTQueryIndexes(querySources []*model.QuerySequenceSource, settings model.FamilyBlastSettings) []int {
+func familyFastaQueryIndexes(querySources []*model.QuerySequenceSource, settings model.FamilyBlastSettings) []int {
 	indexes := make([]int, 0, len(querySources))
 	for i, source := range querySources {
 		if source != nil {
@@ -8862,8 +8832,8 @@ func familyTXTQueryIndexes(querySources []*model.QuerySequenceSource, settings m
 	return indexes
 }
 
-func familyTXTQuerySources(querySources []*model.QuerySequenceSource, settings model.FamilyBlastSettings) []*model.QuerySequenceSource {
-	indexes := familyTXTQueryIndexes(querySources, settings)
+func familyFastaQuerySources(querySources []*model.QuerySequenceSource, settings model.FamilyBlastSettings) []*model.QuerySequenceSource {
+	indexes := familyFastaQueryIndexes(querySources, settings)
 	out := make([]*model.QuerySequenceSource, 0, len(indexes))
 	for _, index := range indexes {
 		if index >= 0 && index < len(querySources) && querySources[index] != nil {
@@ -8873,7 +8843,7 @@ func familyTXTQuerySources(querySources []*model.QuerySequenceSource, settings m
 	return out
 }
 
-func familyTXTHeaderLabel(source *model.QuerySequenceSource, fallback string) string {
+func familyFastaHeaderLabel(source *model.QuerySequenceSource, fallback string) string {
 	if source == nil {
 		return strings.TrimSpace(fallback)
 	}
@@ -8903,19 +8873,19 @@ func familyQueryPrependStepDetails(prependedQueries int, totalQueries int, onlyF
 
 func familySequenceHeaderMode(onlyFirst bool) string {
 	if onlyFirst {
-		return "family text export prepends only the first family member query header; hit records append selected row label_name"
+		return "family FASTA export prepends only the first family member query header; hit records append selected row label_name"
 	}
-	return "family text export prepends all family member query headers in run order; hit records append selected row label_name"
+	return "family FASTA export prepends all family member query headers in run order; hit records append selected row label_name"
 }
 
 func prependFamilyQuerySequenceRecords(records []model.ProteinSequenceRecord, querySources []*model.QuerySequenceSource, fallback string, familySettings model.FamilyBlastSettings) ([]model.ProteinSequenceRecord, int) {
-	prependedSources := familyTXTQuerySources(querySources, familySettings)
+	prependedSources := familyFastaQuerySources(querySources, familySettings)
 	for i := len(prependedSources) - 1; i >= 0; i-- {
 		source := prependedSources[i]
 		if source == nil {
 			continue
 		}
-		headerLabel := familyTXTHeaderLabel(source, fallback)
+		headerLabel := familyFastaHeaderLabel(source, fallback)
 		records = prependQuerySequenceRecord(records, source, headerLabel)
 	}
 	return records, len(prependedSources)
@@ -8928,7 +8898,7 @@ func (w *BlastWizard) exportBlastExcelAndFetchRecords(ctx context.Context, rows 
 	return tui.RunProgressTaskValueContext(tui.TaskPage{
 		Path:        w.tuiPath("Export", "Writing files"),
 		Title:       "Writing BLAST export files",
-		Description: "Writing the Excel file while fetching peptide sequences for the text export.",
+		Description: "Writing the Excel file while fetching peptide sequences for the FASTA export.",
 		Initial:     "Starting export...",
 		Total:       len(rows) + 1,
 		CancelError: prompt.ErrBackToRowSelection,
@@ -8982,9 +8952,9 @@ func (w *BlastWizard) fetchBlastRecordsForExport(ctx context.Context, rows []mod
 	}
 	return tui.RunProgressTaskValueContext(tui.TaskPage{
 		Path:        w.tuiPath("Export", "Writing files"),
-		Title:       "Preparing BLAST text export",
-		Description: "Fetching peptide sequences for the text export.",
-		Initial:     "Starting text export...",
+		Title:       "Preparing BLAST FASTA export",
+		Description: "Fetching peptide sequences for the FASTA export.",
+		Initial:     "Starting FASTA export...",
 		Total:       len(rows),
 		CancelError: prompt.ErrBackToRowSelection,
 	}, func(taskCtx context.Context, update func(int, string)) ([]model.ProteinSequenceRecord, error) {
@@ -8998,7 +8968,7 @@ func (w *BlastWizard) fetchBlastRecordsForExport(ctx context.Context, rows []mod
 func filesSummary(files exportFileResult) string {
 	lines := []string{}
 	if strings.TrimSpace(files.TextPath) != "" {
-		lines = append(lines, "Text\n"+files.TextPath)
+		lines = append(lines, "FASTA\n"+files.TextPath)
 	}
 	if strings.TrimSpace(files.ExcelPath) != "" {
 		lines = append(lines, "Excel\n"+files.ExcelPath)
@@ -9007,7 +8977,7 @@ func filesSummary(files exportFileResult) string {
 		lines = append(lines, "Raw Excel\n"+files.RawExcelPath)
 	}
 	if strings.TrimSpace(files.RawTextPath) != "" {
-		lines = append(lines, "Raw text\n"+files.RawTextPath)
+		lines = append(lines, "Raw FASTA\n"+files.RawTextPath)
 	}
 	if strings.TrimSpace(files.ReportPath) != "" {
 		lines = append(lines, "Data analysis report (PDF)\n"+files.ReportPath)
@@ -10565,16 +10535,12 @@ func (w *BlastWizard) exportSelectedKeywordFiles(ctx context.Context, selected m
 					return append(steps, keywordReportStep("Fetch/use raw peptide sequences", fetchStart, time.Now(), "failed", err.Error())), err
 				}
 				steps = append(steps, keywordReportStep("Fetch/use raw peptide sequences", fetchStart, time.Now(), "ok", fmt.Sprintf("%d sequence records available", len(rawRecords))))
-				if settings.UsePhgoHeader {
-					rawRecords = applyKeywordPhgoHeaders(rawRecords, allRows)
-				} else {
-					rawRecords = applyOriginalHeaders(rawRecords)
-				}
+				rawRecords = applyKeywordHeaderMode(rawRecords, allRows, settings.fastaHeaderMode())
 				writeStart := time.Now()
 				if err := export.WriteProteinSequencesText(rawTextPath, rawRecords); err != nil {
-					return append(steps, keywordReportStep("Write raw peptide text", writeStart, time.Now(), "failed", err.Error())), err
+					return append(steps, keywordReportStep("Write raw peptide FASTA", writeStart, time.Now(), "failed", err.Error())), err
 				}
-				return append(steps, keywordReportStep("Write raw peptide text", writeStart, time.Now(), "ok", fmt.Sprintf("%d peptide records written", len(rawRecords)))), nil
+				return append(steps, keywordReportStep("Write raw peptide FASTA", writeStart, time.Now(), "ok", fmt.Sprintf("%d peptide records written", len(rawRecords)))), nil
 			},
 			w.out,
 			false,
@@ -10604,7 +10570,7 @@ func (w *BlastWizard) exportSelectedKeywordFiles(ctx context.Context, selected m
 	if settings.WriteText && !settings.WriteRawExcel {
 		preloadStart := time.Now()
 		w.prefetchKeywordSequences(ctx, selected, rows, nil)
-		steps = append(steps, keywordReportStep("Preload keyword peptide sequences", preloadStart, time.Now(), "ok", fmt.Sprintf("%d keyword rows checked before writing text files", len(rows))))
+		steps = append(steps, keywordReportStep("Preload keyword peptide sequences", preloadStart, time.Now(), "ok", fmt.Sprintf("%d keyword rows checked before writing FASTA files", len(rows))))
 	}
 	var sequenceRecords []model.ProteinSequenceRecord
 	var sequenceAudit report.SequenceAudit
@@ -10627,21 +10593,17 @@ func (w *BlastWizard) exportSelectedKeywordFiles(ctx context.Context, selected m
 		} else {
 			steps = append(steps, keywordReportStep("Reuse prefetched peptide sequences", time.Now(), time.Now(), "ok", fmt.Sprintf("%d sequence records reused from parallel Excel export step", len(records))))
 		}
-		if settings.UsePhgoHeader {
-			records = applyKeywordPhgoHeaders(records, rows)
-		} else {
-			records = applyOriginalHeaders(records)
-		}
+		records = applyKeywordHeaderMode(records, rows, settings.fastaHeaderMode())
 		sequenceRecords = records
 		sequenceAudit = buildKeywordSequenceAudit(rows, records)
 		writeStart := time.Now()
-		if err := withSpinner(w.out, "Writing peptide text file...", func() error {
+		if err := withSpinner(w.out, "Writing peptide FASTA file...", func() error {
 			return export.WriteProteinSequencesText(textPath, records)
 		}); err != nil {
-			steps = append(steps, keywordReportStep("Write peptide text", writeStart, time.Now(), "failed", err.Error()))
+			steps = append(steps, keywordReportStep("Write peptide FASTA", writeStart, time.Now(), "failed", err.Error()))
 			return err
 		}
-		steps = append(steps, keywordReportStep("Write peptide text", writeStart, time.Now(), "ok", fmt.Sprintf("%d peptide records written", len(records))))
+		steps = append(steps, keywordReportStep("Write peptide FASTA", writeStart, time.Now(), "ok", fmt.Sprintf("%d peptide records written", len(records))))
 		files.TextPath = textPath
 	} else {
 		sequenceAudit = report.SequenceAudit{Requested: false}
@@ -10663,7 +10625,7 @@ func (w *BlastWizard) exportKeywordExcelAndFetchRecords(ctx context.Context, sel
 	return tui.RunProgressTaskValueContext(tui.TaskPage{
 		Path:        w.tuiPath("Export", "Writing keyword files"),
 		Title:       "Writing keyword export files",
-		Description: "Writing the keyword Excel file while fetching peptide sequences for the text export.",
+		Description: "Writing the keyword Excel file while fetching peptide sequences for the FASTA export.",
 		Initial:     "Starting keyword export...",
 		Total:       len(rows) + 1,
 		CancelError: prompt.ErrBackToRowSelection,
@@ -11430,11 +11392,49 @@ func applyOriginalHeaders(records []model.ProteinSequenceRecord) []model.Protein
 	return out
 }
 
+func applyKeywordHeaderMode(records []model.ProteinSequenceRecord, rows []model.KeywordResultRow, mode model.FastaHeaderMode) []model.ProteinSequenceRecord {
+	switch model.NormalizeFastaHeaderMode(mode, true) {
+	case model.FastaHeaderModeOriginal:
+		return applyOriginalHeaders(records)
+	case model.FastaHeaderModeMinimal:
+		return applyKeywordMinimalHeaders(records, rows)
+	default:
+		return applyKeywordPhgoHeaders(records, rows)
+	}
+}
+
+func applyBlastHeaderMode(records []model.ProteinSequenceRecord, rows []model.BlastResultRow, querySources []*model.QuerySequenceSource, prependedQueryCount int, mode model.FastaHeaderMode) []model.ProteinSequenceRecord {
+	switch model.NormalizeFastaHeaderMode(mode, true) {
+	case model.FastaHeaderModeOriginal:
+		return applyOriginalHeaders(records)
+	case model.FastaHeaderModeMinimal:
+		return applyBlastMinimalHeaders(records, rows, querySources, prependedQueryCount)
+	default:
+		return applyBlastPhgoHeaders(records, rows, querySources, prependedQueryCount)
+	}
+}
+
 func applyKeywordPhgoHeaders(records []model.ProteinSequenceRecord, rows []model.KeywordResultRow) []model.ProteinSequenceRecord {
 	out := append([]model.ProteinSequenceRecord(nil), records...)
 	limit := minInt(len(out), len(rows))
 	for i := 0; i < limit; i++ {
 		if header := keywordPhgoHeader(rows[i], i+1); header != "" {
+			out[i].Header = header
+		}
+	}
+	return out
+}
+
+func applyKeywordMinimalHeaders(records []model.ProteinSequenceRecord, rows []model.KeywordResultRow) []model.ProteinSequenceRecord {
+	out := append([]model.ProteinSequenceRecord(nil), records...)
+	limit := minInt(len(out), len(rows))
+	for i := 0; i < limit; i++ {
+		if header := minimalFastaHeader(keywordMinimalHeaderID(rows[i], out[i])); header != "" {
+			out[i].Header = header
+		}
+	}
+	for i := limit; i < len(out); i++ {
+		if header := minimalFastaHeader(recordMinimalHeaderID(out[i])); header != "" {
 			out[i].Header = header
 		}
 	}
@@ -11457,6 +11457,72 @@ func applyBlastPhgoHeaders(records []model.ProteinSequenceRecord, rows []model.B
 		}
 	}
 	return out
+}
+
+func applyBlastMinimalHeaders(records []model.ProteinSequenceRecord, rows []model.BlastResultRow, querySources []*model.QuerySequenceSource, prependedQueryCount int) []model.ProteinSequenceRecord {
+	out := append([]model.ProteinSequenceRecord(nil), records...)
+	queryLimit := minInt(minInt(prependedQueryCount, len(out)), len(querySources))
+	for i := 0; i < queryLimit; i++ {
+		if header := minimalFastaHeader(querySourceID2(querySources[i])); header != "" {
+			out[i].Header = header
+		}
+	}
+	start := minInt(prependedQueryCount, len(out))
+	limit := minInt(len(out)-start, len(rows))
+	for i := 0; i < limit; i++ {
+		if header := minimalFastaHeader(blastRowID2(rows[i])); header != "" {
+			out[start+i].Header = header
+		}
+	}
+	for i := start + limit; i < len(out); i++ {
+		if header := minimalFastaHeader(recordMinimalHeaderID(out[i])); header != "" {
+			out[i].Header = header
+		}
+	}
+	return out
+}
+
+func keywordMinimalHeaderID(row model.KeywordResultRow, record model.ProteinSequenceRecord) string {
+	return firstNonEmpty(
+		strings.TrimSpace(row.TranscriptID),
+		strings.TrimSpace(row.SequenceID),
+		stripTranscriptDecorations(strings.TrimSpace(row.GeneIdentifier)),
+		recordMinimalHeaderID(record),
+	)
+}
+
+func minimalFastaHeader(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	return ">" + id
+}
+
+func recordMinimalHeaderID(record model.ProteinSequenceRecord) string {
+	for _, header := range []string{record.Header, record.OriginalHeader} {
+		if id := primaryIDFromFastaHeader(header); id != "" {
+			return id
+		}
+	}
+	return "sequence"
+}
+
+func primaryIDFromFastaHeader(header string) string {
+	header = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(header), ">"))
+	if header == "" {
+		return ""
+	}
+	if open := strings.Index(header, " ("); open >= 0 {
+		header = strings.TrimSpace(header[:open])
+	}
+	if pipe := strings.LastIndex(header, "|"); pipe >= 0 && pipe < len(header)-1 {
+		header = strings.TrimSpace(header[pipe+1:])
+	}
+	if fields := strings.Fields(header); len(fields) > 0 {
+		header = fields[0]
+	}
+	return strings.TrimSpace(header)
 }
 
 func keywordPhgoHeader(row model.KeywordResultRow, rowNumber int) string {
@@ -11483,7 +11549,7 @@ func querySourcePhgoHeader(source *model.QuerySequenceSource) string {
 	if source == nil {
 		return ""
 	}
-	return buildPhgoHeaderWithSuffix(
+	return buildPhgoHeaderWithGroups(
 		firstNonEmpty(strings.TrimSpace(source.OrganismShort), strings.TrimSpace(source.SourceJBrowseName), strings.TrimSpace(source.SourceGenomeLabel)),
 		firstNonEmpty(strings.TrimSpace(source.LabelName), preferredStoredQuerySourceAlias(source), querySourceID2(source)),
 		querySourceID2(source),
@@ -11492,11 +11558,11 @@ func querySourcePhgoHeader(source *model.QuerySequenceSource) string {
 }
 
 func buildPhgoHeader(species string, label string, geneID string, rowNumber int) string {
-	suffix := ""
+	groups := []string{}
 	if rowNumber > 0 {
-		suffix = strconv.Itoa(rowNumber)
+		groups = append(groups, strconv.Itoa(rowNumber))
 	}
-	return buildPhgoHeaderWithSuffix(species, label, geneID, suffix)
+	return buildPhgoHeaderWithGroups(species, label, geneID, groups...)
 }
 
 func buildBlastPhgoHeader(species string, label string, geneID string, blastSourceLabel string, blastSourceGeneID string, rowNumber int) string {
@@ -11505,14 +11571,14 @@ func buildBlastPhgoHeader(species string, label string, geneID string, blastSour
 	if sourceLabel == "" || sourceGeneID == "" {
 		return buildPhgoHeader(species, label, geneID, rowNumber)
 	}
-	suffix := sourceLabel + "/" + sourceGeneID
+	groups := []string{sourceLabel + "/" + sourceGeneID}
 	if rowNumber > 0 {
-		suffix += "\\" + strconv.Itoa(rowNumber)
+		groups = append(groups, strconv.Itoa(rowNumber))
 	}
-	return buildPhgoHeaderWithSuffix(species, label, geneID, suffix)
+	return buildPhgoHeaderWithGroups(species, label, geneID, groups...)
 }
 
-func buildPhgoHeaderWithSuffix(species string, label string, geneID string, suffix string) string {
+func buildPhgoHeaderWithGroups(species string, label string, geneID string, groups ...string) string {
 	species = sanitizePhgoHeaderPart(species)
 	label = sanitizePhgoHeaderPart(label)
 	geneID = sanitizePhgoHeaderPart(geneID)
@@ -11520,9 +11586,11 @@ func buildPhgoHeaderWithSuffix(species string, label string, geneID string, suff
 		return ""
 	}
 	header := ">phgo://" + species + "/" + label + "/" + geneID
-	suffix = strings.TrimSpace(suffix)
-	if suffix != "" {
-		header += "\\" + suffix
+	for _, group := range groups {
+		group = strings.TrimSpace(group)
+		if group != "" {
+			header += "\\" + group
+		}
 	}
 	return header
 }
@@ -11906,50 +11974,50 @@ func parsePhgoFastaHeader(header string) (phgoFastaHeader, bool) {
 	if body == "" {
 		return phgoFastaHeader{}, false
 	}
-	sections := strings.Split(body, "\\")
-	if len(sections) > 3 {
+	groups := strings.Split(body, "\\")
+	if len(groups) > 3 {
 		return phgoFastaHeader{}, false
 	}
-	mainParts := strings.Split(strings.TrimSpace(sections[0]), "/")
-	if len(mainParts) != 3 {
+	selfParts := strings.Split(strings.TrimSpace(groups[0]), "/")
+	if len(selfParts) != 3 {
 		return phgoFastaHeader{}, false
 	}
-	for i := range mainParts {
-		mainParts[i] = strings.TrimSpace(mainParts[i])
+	for i := range selfParts {
+		selfParts[i] = strings.TrimSpace(selfParts[i])
 	}
-	if mainParts[0] == "" || mainParts[1] == "" || mainParts[2] == "" {
+	if selfParts[0] == "" || selfParts[1] == "" || selfParts[2] == "" {
 		return phgoFastaHeader{}, false
 	}
 	parsed := phgoFastaHeader{
 		RawHeader: header,
-		Species:   mainParts[0],
-		LabelName: mainParts[1],
-		GeneID:    mainParts[2],
+		Species:   selfParts[0],
+		LabelName: selfParts[1],
+		GeneID:    selfParts[2],
 	}
-	if len(sections) == 1 {
+	if len(groups) == 1 {
 		return parsed, true
 	}
-	firstSuffix := strings.TrimSpace(sections[1])
-	if firstSuffix == "" {
+	secondGroup := strings.TrimSpace(groups[1])
+	if secondGroup == "" {
 		return phgoFastaHeader{}, false
 	}
 	switch {
-	case strings.EqualFold(firstSuffix, "h"):
-		if len(sections) != 2 {
+	case strings.EqualFold(secondGroup, "h"):
+		if len(groups) != 2 {
 			return phgoFastaHeader{}, false
 		}
 		parsed.IsBlastQuerySource = true
 		return parsed, true
-	case isPositiveInteger(firstSuffix):
-		if len(sections) != 2 {
+	case isPositiveInteger(secondGroup):
+		if len(groups) != 2 {
 			return phgoFastaHeader{}, false
 		}
-		row, _ := strconv.Atoi(firstSuffix)
+		row, _ := strconv.Atoi(secondGroup)
 		parsed.RowNumber = row
 		parsed.HasRowPart = true
 		return parsed, true
 	default:
-		sourceParts := strings.Split(firstSuffix, "/")
+		sourceParts := strings.Split(secondGroup, "/")
 		if len(sourceParts) != 2 {
 			return phgoFastaHeader{}, false
 		}
@@ -11961,8 +12029,8 @@ func parsePhgoFastaHeader(header string) (phgoFastaHeader, bool) {
 		}
 		parsed.BlastSourceLabelName = sourceParts[0]
 		parsed.BlastSourceGeneID = sourceParts[1]
-		if len(sections) == 3 {
-			rowPart := strings.TrimSpace(sections[2])
+		if len(groups) == 3 {
+			rowPart := strings.TrimSpace(groups[2])
 			if !isPositiveInteger(rowPart) {
 				return phgoFastaHeader{}, false
 			}

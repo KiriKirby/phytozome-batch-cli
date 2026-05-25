@@ -9,6 +9,25 @@ package model
 
 import "time"
 
+type FastaHeaderMode string
+
+const (
+	FastaHeaderModePhgo     FastaHeaderMode = "phgo"
+	FastaHeaderModeOriginal FastaHeaderMode = "original"
+	FastaHeaderModeMinimal  FastaHeaderMode = "minimal"
+)
+
+func NormalizeFastaHeaderMode(mode FastaHeaderMode, legacyUsePhgo bool) FastaHeaderMode {
+	switch mode {
+	case FastaHeaderModePhgo, FastaHeaderModeOriginal, FastaHeaderModeMinimal:
+		return mode
+	}
+	if legacyUsePhgo {
+		return FastaHeaderModePhgo
+	}
+	return FastaHeaderModeOriginal
+}
+
 type ProteinSequenceRecord struct {
 	Header         string
 	OriginalHeader string
