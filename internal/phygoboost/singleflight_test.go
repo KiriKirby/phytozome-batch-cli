@@ -35,9 +35,10 @@ func TestSingleflightDoContextReturnsOnCallerCancellation(t *testing.T) {
 	cancel()
 
 	done := make(chan error, 1)
+	executed := make(chan struct{}, 1)
 	go func() {
 		_, err, _ := SingleflightDoContext(ctx, &group, "species", func() (any, error) {
-			t.Fatal("cancelled waiter should not execute callback")
+			executed <- struct{}{}
 			return nil, nil
 		})
 		done <- err
@@ -50,6 +51,12 @@ func TestSingleflightDoContextReturnsOnCallerCancellation(t *testing.T) {
 		}
 	case <-time.After(300 * time.Millisecond):
 		t.Fatal("cancelled waiter stayed blocked on shared call")
+	}
+
+	select {
+	case <-executed:
+		t.Fatal("cancelled waiter should not execute callback")
+	default:
 	}
 
 	close(release)
