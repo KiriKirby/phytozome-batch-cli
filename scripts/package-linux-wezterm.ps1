@@ -85,7 +85,7 @@ try {
 
 if (-not $SkipArchive) {
     Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
-    python (Join-Path $PSScriptRoot "create-tar.py") $archivePath (Join-Path $repoRoot "bin\phytozome-go_linux_amd64_wezterm") "phytozome-go_linux_amd64_wezterm" "phytozome-go" "phytozome-go.bin" "phytozome-go-cleancache.bin" "wezterm" "wezterm.AppImage"
+    go run (Join-Path $repoRoot "scripts\create-tar") $archivePath (Join-Path $repoRoot "bin\phytozome-go_linux_amd64_wezterm") "phytozome-go_linux_amd64_wezterm" "phytozome-go" "phytozome-go.bin" "phytozome-go-cleancache.bin" "wezterm" "wezterm.AppImage"
     if ($LASTEXITCODE -ne 0) {
         throw "Could not create Linux WezTerm archive: $archivePath"
     }

@@ -2831,6 +2831,7 @@ func (p *Prompter) SearchAndSelectFamilyWithProvider(candidates []model.SpeciesC
 	if candidate, ok, err := p.searchAndSelectFamilyHierarchical(candidates, searchFn, loader); ok || err != nil {
 		return candidate, err
 	}
+	candidates = append([]model.SpeciesCandidate(nil), candidates...)
 	choices := make([]tui.Choice, 0, len(candidates))
 	choiceByKey := make(map[string]model.SpeciesCandidate, len(candidates))
 	for i, candidate := range candidates {
@@ -2879,15 +2880,20 @@ func (p *Prompter) SearchAndSelectFamilyWithProvider(candidates []model.SpeciesC
 				}
 			}
 			loader(query, visibleCandidates, func(updated []model.SpeciesCandidate) {
+				updatedByKey := updateFamilyCandidateStore(candidates, updated)
 				out := make([]tui.Choice, 0, len(updated))
 				for _, candidate := range updated {
 					for key, original := range choiceByKey {
 						if familyCandidateStableKey(original) == familyCandidateStableKey(candidate) {
-							choiceByKey[key] = candidate
+							if replacement, ok := updatedByKey[familyCandidateStableKey(original)]; ok {
+								choiceByKey[key] = replacement
+							} else {
+								choiceByKey[key] = candidate
+							}
 							out = append(out, tui.Choice{
 								Value:       key,
-								Label:       candidate.DisplayLabel(),
-								Description: strings.TrimSpace(candidate.JBrowseName + targetIDLabel(candidate.ProteomeID)),
+								Label:       choiceByKey[key].DisplayLabel(),
+								Description: strings.TrimSpace(choiceByKey[key].JBrowseName + targetIDLabel(choiceByKey[key].ProteomeID)),
 							})
 							break
 						}
@@ -2914,6 +2920,7 @@ func (p *Prompter) SearchAndSelectFamilyWithProvider(candidates []model.SpeciesC
 }
 
 func (p *Prompter) searchAndSelectFamilyHierarchical(candidates []model.SpeciesCandidate, searchFn FamilySearchProvider, loader FamilyChoiceLabelLoader) (model.SpeciesCandidate, bool, error) {
+	candidates = append([]model.SpeciesCandidate(nil), candidates...)
 	hasHierarchy := false
 	childrenByParent := make(map[string][]model.SpeciesCandidate)
 	roots := make([]model.SpeciesCandidate, 0, len(candidates))
@@ -2977,12 +2984,22 @@ func (p *Prompter) searchAndSelectFamilyHierarchical(candidates []model.SpeciesC
 					}
 				}
 				loader(query, visibleCandidates, func(updated []model.SpeciesCandidate) {
+					updatedByKey := updateFamilyCandidateStore(candidates, updated)
+					updateFamilyCandidateSlice(roots, updatedByKey)
+					for key := range childrenByParent {
+						updateFamilyCandidateSlice(childrenByParent[key], updatedByKey)
+					}
+					updateFamilyCandidateSlice(current, updatedByKey)
 					for _, candidate := range updated {
 						value := strings.TrimSpace(candidate.GroupKey)
 						if value == "" {
 							value = strings.TrimSpace(candidate.JBrowseName)
 						}
-						choiceByValue[value] = candidate
+						if replacement, ok := updatedByKey[familyCandidateStableKey(candidate)]; ok {
+							choiceByValue[value] = replacement
+						} else {
+							choiceByValue[value] = candidate
+						}
 					}
 					updatedChoices, _ := familyChoicesFromCandidates(updated)
 					refreshChoices(updatedChoices)
@@ -3028,6 +3045,23 @@ func familyCandidateStableKey(candidate model.SpeciesCandidate) string {
 		strings.TrimSpace(candidate.ParentKey),
 		strings.TrimSpace(candidate.GenomeLabel),
 	}, "|")))
+}
+
+func updateFamilyCandidateSlice(candidates []model.SpeciesCandidate, updatedByKey map[string]model.SpeciesCandidate) {
+	for i := range candidates {
+		if replacement, ok := updatedByKey[familyCandidateStableKey(candidates[i])]; ok {
+			candidates[i] = replacement
+		}
+	}
+}
+
+func updateFamilyCandidateStore(candidates []model.SpeciesCandidate, updated []model.SpeciesCandidate) map[string]model.SpeciesCandidate {
+	updatedByKey := make(map[string]model.SpeciesCandidate, len(updated))
+	for _, candidate := range updated {
+		updatedByKey[familyCandidateStableKey(candidate)] = candidate
+	}
+	updateFamilyCandidateSlice(candidates, updatedByKey)
+	return updatedByKey
 }
 
 func familyChoicesFromCandidates(candidates []model.SpeciesCandidate) ([]tui.Choice, map[string]model.SpeciesCandidate) {

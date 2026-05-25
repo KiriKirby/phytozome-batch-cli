@@ -30,7 +30,15 @@ if (-not (Test-Path -LiteralPath $downloadZip -PathType Leaf)) {
     Invoke-WebRequest -Uri $release.URL -OutFile $downloadZip
 }
 
-if ($Force -or -not (Test-Path -LiteralPath $extractDir -PathType Container)) {
+$needsExtract = $Force -or -not (Test-Path -LiteralPath $extractDir -PathType Container)
+if (-not $needsExtract) {
+    $existingRoot = Get-ChildItem -LiteralPath $extractDir -Directory | Select-Object -First 1
+    if (-not $existingRoot) {
+        $needsExtract = $true
+    }
+}
+
+if ($needsExtract) {
     Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
     Expand-Archive -LiteralPath $downloadZip -DestinationPath $extractDir -Force
 }

@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/KiriKirby/phytozome-go/internal/appfs"
@@ -1638,6 +1639,9 @@ func (w *BlastWizard) selectSpecies(candidates []model.SpeciesCandidate) (model.
 }
 
 func (w *BlastWizard) selectFamily(version model.SpeciesCandidate, candidates []model.SpeciesCandidate) (model.SpeciesCandidate, error) {
+	pageCtx, cancelPage := context.WithCancel(context.Background())
+	defer cancelPage()
+	var loadSeq atomic.Uint64
 	searchProvider := func(keyword string, scope []model.SpeciesCandidate) []model.SpeciesCandidate {
 		base := candidates
 		if len(scope) > 0 {
@@ -1653,22 +1657,29 @@ func (w *BlastWizard) selectFamily(version model.SpeciesCandidate, candidates []
 		if !ok || len(visible) == 0 {
 			return
 		}
-		go func(querySnapshot string, pageCandidates []model.SpeciesCandidate) {
+		seq := loadSeq.Add(1)
+		go func(querySnapshot string, pageCandidates []model.SpeciesCandidate, generation uint64) {
 			if strings.TrimSpace(querySnapshot) != "" {
 				time.Sleep(250 * time.Millisecond)
 			}
+			if pageCtx.Err() != nil || loadSeq.Load() != generation {
+				return
+			}
 			out := make([]model.SpeciesCandidate, 0, len(pageCandidates))
 			for _, candidate := range pageCandidates {
+				if pageCtx.Err() != nil || loadSeq.Load() != generation {
+					return
+				}
 				updated := candidate
-				identification := w.resolveTAIRFamilyCandidateLabelIdentification(context.Background(), resolver, version, candidate)
+				identification := w.resolveTAIRFamilyCandidateLabelIdentification(pageCtx, resolver, version, candidate)
 				if len(identification.Aliases) > 0 {
 					updated.LabelName = strings.TrimSpace(identification.Aliases[0])
 					updated.PhgoAliases = strings.Join(uniqueStrings(identification.Aliases), "; ")
 				}
 				out = append(out, updated)
+				refresh(append([]model.SpeciesCandidate(nil), out...))
 			}
-			refresh(out)
-		}(query, append([]model.SpeciesCandidate(nil), visible...))
+		}(query, append([]model.SpeciesCandidate(nil), visible...), seq)
 	}
 	for {
 		restore := w.prompt.PushSessionContext("Family", "TAIR family")

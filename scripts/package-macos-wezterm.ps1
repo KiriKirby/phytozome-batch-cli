@@ -146,7 +146,7 @@ try {
 
 if (-not $SkipArchive) {
     Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
-    python (Join-Path $PSScriptRoot "create-tar.py") $archivePath $appBundleDir "phytozome GO.app" "Contents/MacOS" "Contents/MacOS/wezterm"
+    go run (Join-Path $repoRoot "scripts\create-tar") $archivePath $appBundleDir "phytozome GO.app" "Contents/MacOS" "Contents/MacOS/wezterm"
     if ($LASTEXITCODE -ne 0) {
         throw "Could not create macOS WezTerm archive: $archivePath"
     }

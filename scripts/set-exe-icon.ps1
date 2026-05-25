@@ -174,6 +174,45 @@ function Write-UInt32LE {
     $Writer.Write([uint32]$Value)
 }
 
+function Resolve-ResourceUpdatePath {
+    param([string]$TargetPath)
+
+    $resolved = (Resolve-Path -LiteralPath $TargetPath).Path
+    if ([System.IO.Path]::GetExtension($resolved).Equals(".exe", [System.StringComparison]::OrdinalIgnoreCase)) {
+        return [pscustomobject]@{
+            ActivePath = $resolved
+            FinalPath = $resolved
+            TempPath = $null
+        }
+    }
+
+    $tempPath = Join-Path ([System.IO.Path]::GetTempPath()) ("phytozome-rsrc-" + [System.Guid]::NewGuid().ToString("N") + ".exe")
+    Copy-Item -LiteralPath $resolved -Destination $tempPath -Force
+    return [pscustomobject]@{
+        ActivePath = $tempPath
+        FinalPath = $resolved
+        TempPath = $tempPath
+    }
+}
+
+function Resolve-RceditBinary {
+    param([string]$RepoRoot)
+
+    $toolDir = Join-Path $RepoRoot "bin\tooling\rcedit"
+    $binaryPath = Join-Path $toolDir "rcedit-x64.exe"
+    if (Test-Path -LiteralPath $binaryPath -PathType Leaf) {
+        return $binaryPath
+    }
+
+    New-Item -ItemType Directory -Force -Path $toolDir | Out-Null
+    $downloadUrl = "https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe"
+    Invoke-WebRequest -Uri $downloadUrl -OutFile $binaryPath
+    if (-not (Test-Path -LiteralPath $binaryPath -PathType Leaf)) {
+        throw "Failed to download rcedit fallback binary from $downloadUrl"
+    }
+    return $binaryPath
+}
+
 $iconBytes = [System.IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $IconPath))
 if ($iconBytes.Length -lt 6) {
     throw "Invalid icon file: $IconPath"
@@ -242,7 +281,8 @@ try {
     $groupStream.Dispose()
 }
 
-$groupNames = [PhytozomeWinResources]::GetGroupIconNames((Resolve-Path -LiteralPath $ExePath))
+$resourceTarget = Resolve-ResourceUpdatePath -TargetPath $ExePath
+$groupNames = [PhytozomeWinResources]::GetGroupIconNames($resourceTarget.ActivePath)
 if (-not ($groupNames -contains "#1")) {
     $groupNames = @("#1") + $groupNames
 }
@@ -250,43 +290,51 @@ if (-not ($groupNames -contains "#1")) {
 $iconImages = [byte[][]]($entries | ForEach-Object { $_.Data })
 
 try {
-    [PhytozomeWinResources]::ApplyIconResources((Resolve-Path -LiteralPath $ExePath), $iconImages, $groupData, [string[]]$groupNames, $FirstIconId)
+    [PhytozomeWinResources]::ApplyIconResources($resourceTarget.ActivePath, $iconImages, $groupData, [string[]]$groupNames, $FirstIconId)
 } catch {
     Write-Warning "Native Windows resource update failed; falling back to rcedit. $($_.Exception.Message)"
 
-    if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-        throw "node is required for the rcedit icon fallback but was not found."
-    }
-    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
-        throw "npm is required for the rcedit icon fallback but was not found."
-    }
-
     $repoRoot = Split-Path -Parent $PSScriptRoot
-    $rceditRoot = Join-Path $repoRoot "bin\tooling\rcedit-node"
-    $rceditModule = Join-Path $rceditRoot "node_modules\rcedit"
-    if (-not (Test-Path -LiteralPath $rceditModule -PathType Container)) {
-        New-Item -ItemType Directory -Force -Path $rceditRoot | Out-Null
-        & npm install --silent --no-audit --no-fund --prefix $rceditRoot rcedit@4.0.1
+    $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
+    $npmCommand = Get-Command npm -ErrorAction SilentlyContinue
+    if ($nodeCommand -and $npmCommand) {
+        $rceditRoot = Join-Path $repoRoot "bin\tooling\rcedit-node"
+        $rceditModule = Join-Path $rceditRoot "node_modules\rcedit"
+        if (-not (Test-Path -LiteralPath $rceditModule -PathType Container)) {
+            New-Item -ItemType Directory -Force -Path $rceditRoot | Out-Null
+            & npm install --silent --no-audit --no-fund --prefix $rceditRoot rcedit@4.0.1
+            if ($LASTEXITCODE -ne 0) {
+                throw "npm failed to install rcedit."
+            }
+        }
+
+        $oldNodePath = $env:NODE_PATH
+        $oldExe = $env:PHYTOZOME_RCEDIT_EXE
+        $oldIcon = $env:PHYTOZOME_RCEDIT_ICON
+        try {
+            $env:NODE_PATH = Join-Path $rceditRoot "node_modules"
+            $env:PHYTOZOME_RCEDIT_EXE = $resourceTarget.ActivePath
+            $env:PHYTOZOME_RCEDIT_ICON = (Resolve-Path -LiteralPath $IconPath)
+            & node -e "const rcedit = require('rcedit'); rcedit(process.env.PHYTOZOME_RCEDIT_EXE, { icon: process.env.PHYTOZOME_RCEDIT_ICON }).catch(error => { console.error(error); process.exit(1); });"
+            if ($LASTEXITCODE -ne 0) {
+                throw "rcedit failed to update the executable icon."
+            }
+        } finally {
+            $env:NODE_PATH = $oldNodePath
+            $env:PHYTOZOME_RCEDIT_EXE = $oldExe
+            $env:PHYTOZOME_RCEDIT_ICON = $oldIcon
+        }
+    } else {
+        $rceditBinary = Resolve-RceditBinary -RepoRoot $repoRoot
+        & $rceditBinary $resourceTarget.ActivePath --set-icon (Resolve-Path -LiteralPath $IconPath)
         if ($LASTEXITCODE -ne 0) {
-            throw "npm failed to install rcedit."
+            throw "rcedit executable fallback failed to update the executable icon."
         }
     }
-
-    $oldNodePath = $env:NODE_PATH
-    $oldExe = $env:PHYTOZOME_RCEDIT_EXE
-    $oldIcon = $env:PHYTOZOME_RCEDIT_ICON
-    try {
-        $env:NODE_PATH = Join-Path $rceditRoot "node_modules"
-        $env:PHYTOZOME_RCEDIT_EXE = (Resolve-Path -LiteralPath $ExePath)
-        $env:PHYTOZOME_RCEDIT_ICON = (Resolve-Path -LiteralPath $IconPath)
-        & node -e "const rcedit = require('rcedit'); rcedit(process.env.PHYTOZOME_RCEDIT_EXE, { icon: process.env.PHYTOZOME_RCEDIT_ICON }).catch(error => { console.error(error); process.exit(1); });"
-        if ($LASTEXITCODE -ne 0) {
-            throw "rcedit failed to update the executable icon."
-        }
-    } finally {
-        $env:NODE_PATH = $oldNodePath
-        $env:PHYTOZOME_RCEDIT_EXE = $oldExe
-        $env:PHYTOZOME_RCEDIT_ICON = $oldIcon
+} finally {
+    if ($resourceTarget.TempPath) {
+        Copy-Item -LiteralPath $resourceTarget.TempPath -Destination $resourceTarget.FinalPath -Force
+        Remove-Item -LiteralPath $resourceTarget.TempPath -Force -ErrorAction SilentlyContinue
     }
 }
 

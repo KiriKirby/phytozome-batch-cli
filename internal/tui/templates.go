@@ -1619,7 +1619,13 @@ func RunSearchPage(page SearchPage) (SearchResult, error) {
 	selectedIndex := 0
 	resultRowOffset := 0
 	var filterSeq atomic.Uint64
+	var closed atomic.Bool
 	filterReady := true
+	stopApp := func() {
+		if closed.CompareAndSwap(false, true) {
+			app.Stop()
+		}
+	}
 
 	input := tview.NewInputField().
 		SetLabel(strings.TrimSpace(page.Label) + " ").
@@ -1685,7 +1691,7 @@ func RunSearchPage(page SearchPage) (SearchResult, error) {
 		}
 		result.Value = filtered[absolute].Value
 		result.Query = query
-		app.Stop()
+		stopApp()
 	}
 	confirmCurrent := func() {
 		selectCurrent(selectedIndex)
@@ -1867,7 +1873,13 @@ func RunSearchPage(page SearchPage) (SearchResult, error) {
 			}
 			visible := append([]Choice(nil), filtered[start:end]...)
 			page.OnVisibleChoices(query, visible, func(updated []Choice) {
-				app.QueueUpdateDraw(func() {
+				if closed.Load() {
+					return
+				}
+				_ = app.QueueUpdateDraw(func() {
+					if closed.Load() {
+						return
+					}
 					if len(updated) == 0 {
 						return
 					}
@@ -1915,7 +1927,13 @@ func RunSearchPage(page SearchPage) (SearchResult, error) {
 			} else {
 				next = defaultChoiceFilter(querySnapshot, page.Choices)
 			}
-			app.QueueUpdateDraw(func() {
+			if closed.Load() {
+				return
+			}
+			_ = app.QueueUpdateDraw(func() {
+				if closed.Load() {
+					return
+				}
 				if filterSeq.Load() != seq {
 					return
 				}
@@ -1954,8 +1972,8 @@ func RunSearchPage(page SearchPage) (SearchResult, error) {
 	body.AddItem(results, 0, 1, false)
 	body.AddItem(pageBar, 5, 0, false)
 	addButtonRow(body, buttonRow(
-		buttonSpec{Label: ButtonBack, Shortcut: ShortcutBack, Action: func() { result.Nav = NavBack; result.Query = query; app.Stop() }, Visible: page.AllowBack},
-		buttonSpec{Label: ButtonHome, Shortcut: ShortcutHome, Action: func() { result.Nav = NavHome; result.Query = query; app.Stop() }, Visible: page.AllowHome},
+		buttonSpec{Label: ButtonBack, Shortcut: ShortcutBack, Action: func() { result.Nav = NavBack; result.Query = query; stopApp() }, Visible: page.AllowBack},
+		buttonSpec{Label: ButtonHome, Shortcut: ShortcutHome, Action: func() { result.Nav = NavHome; result.Query = query; stopApp() }, Visible: page.AllowHome},
 		buttonSpec{Label: ButtonPaste, Shortcut: ShortcutPaste, Action: paste, Visible: true},
 		buttonSpec{Label: ButtonSelect, Shortcut: ShortcutConfirm, Action: confirmCurrent, Visible: true, Primary: true},
 	))
@@ -1977,14 +1995,14 @@ func RunSearchPage(page SearchPage) (SearchResult, error) {
 			if page.AllowBack {
 				result.Nav = NavBack
 				result.Query = query
-				app.Stop()
+				stopApp()
 				return nil
 			}
 		case tcell.KeyCtrlO:
 			if page.AllowHome {
 				result.Nav = NavHome
 				result.Query = query
-				app.Stop()
+				stopApp()
 				return nil
 			}
 		case tcell.KeyCtrlV:
@@ -7890,14 +7908,7 @@ func runTaskValue[T any](page TaskPage, task func(ctx context.Context, update fu
 		}
 	}
 	if allowCancel {
-		addButtonRow(modalBody, closeOnlyModalButtons([]buttonSpec{
-			{
-				Label:    ButtonCancel,
-				Shortcut: ShortcutCancel,
-				Action:   cancelTask,
-				Visible:  true,
-			},
-		}, false, "", "", cancelTask, nil))
+		addButtonRow(modalBody, closeOnlyModalButtons(nil, false, "", "", cancelTask, nil))
 	}
 	app.SetRoot(taskModalRoot(page, modalBody, 90, 14), true)
 	app.SetFocus(modalBody)
@@ -8081,14 +8092,7 @@ func runProgressTaskValue[T any](page TaskPage, task func(ctx context.Context, u
 		}
 	}
 	if allowCancel {
-		addButtonRow(modalBody, closeOnlyModalButtons([]buttonSpec{
-			{
-				Label:    ButtonCancel,
-				Shortcut: ShortcutCancel,
-				Action:   cancelTask,
-				Visible:  true,
-			},
-		}, false, "", "", cancelTask, nil))
+		addButtonRow(modalBody, closeOnlyModalButtons(nil, false, "", "", cancelTask, nil))
 	}
 	app.SetRoot(taskModalRoot(page, modalBody, 90, 14), true)
 	app.SetFocus(modalBody)

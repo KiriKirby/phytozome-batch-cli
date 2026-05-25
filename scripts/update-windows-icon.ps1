@@ -16,12 +16,44 @@ $sourcePath = Join-Path $repoRoot $Source
 $launcherDir = Join-Path $repoRoot "cmd\phytozome-go-winlauncher"
 $iconPath = Join-Path $launcherDir "phytozome-go.ico"
 $sysoPath = Join-Path $launcherDir "rsrc_windows_amd64.syso"
+$toolBinDir = Join-Path $repoRoot "bin\tooling\gobin"
 
 if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
     throw "Icon source not found: $sourcePath"
 }
 
 Add-Type -AssemblyName System.Drawing
+
+function Resolve-RsrcCommand {
+    $command = Get-Command "rsrc" -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+
+    New-Item -ItemType Directory -Force -Path $toolBinDir | Out-Null
+
+    $existingGobin = [Environment]::GetEnvironmentVariable("GOBIN", "Process")
+    $existingPath = [Environment]::GetEnvironmentVariable("PATH", "Process")
+    try {
+        [Environment]::SetEnvironmentVariable("GOBIN", $toolBinDir, "Process")
+        if (-not (($existingPath -split ';') -contains $toolBinDir)) {
+            [Environment]::SetEnvironmentVariable("PATH", "$toolBinDir;$existingPath", "Process")
+        }
+        & go install github.com/akavel/rsrc@latest
+        if ($LASTEXITCODE -ne 0) {
+            throw "go install github.com/akavel/rsrc@latest failed with exit code $LASTEXITCODE"
+        }
+    } finally {
+        [Environment]::SetEnvironmentVariable("GOBIN", $existingGobin, "Process")
+        [Environment]::SetEnvironmentVariable("PATH", $existingPath, "Process")
+    }
+
+    $installed = Join-Path $toolBinDir "rsrc.exe"
+    if (-not (Test-Path -LiteralPath $installed -PathType Leaf)) {
+        throw "rsrc was installed but not found at $installed"
+    }
+    return $installed
+}
 
 function New-IconPngBytes {
     param(
@@ -111,7 +143,8 @@ try {
     $iconStream.Dispose()
 }
 
-& rsrc -arch amd64 -ico $iconPath -o $sysoPath
+$rsrcPath = Resolve-RsrcCommand
+& $rsrcPath -arch amd64 -ico $iconPath -o $sysoPath
 
 Write-Host "Icon written to: $iconPath"
 Write-Host "Resource written to: $sysoPath"
