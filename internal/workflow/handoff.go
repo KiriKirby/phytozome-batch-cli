@@ -41,6 +41,9 @@ type blastHandoffContext struct {
 	TransferSourceSpecies  model.SpeciesCandidate  `json:"transfer_source_species"`
 	TransferKeywordRows    []model.KeywordResultRow `json:"transfer_keyword_rows"`
 	TransferBlastRows      []model.BlastResultRow  `json:"transfer_blast_rows"`
+	TransferCanvasItems    []model.CanvasItem      `json:"transfer_canvas_items"`
+	TransferCanvasCurrent  int                     `json:"transfer_canvas_current"`
+	TransferCanvasNextID   int                     `json:"transfer_canvas_next_id"`
 	LastBlastItems         []blastQueryItem        `json:"last_blast_items"`
 	LastKeywordGroups      []model.KeywordSearchGroup `json:"last_keyword_groups"`
 	LastKeywordReport      *keywordReportRunContext `json:"last_keyword_report,omitempty"`
@@ -70,6 +73,9 @@ func (w *BlastWizard) SnapshotHandoff(database string, mode QueryMode, instanceI
 		LastBlastItems:       cloneBlastQueryItems(w.lastBlastItems),
 		LastKeywordGroups:    cloneKeywordSearchGroups(w.lastKeywordGroups),
 		LastKeywordSpecies:   w.lastKeywordSpecies,
+		TransferCanvasItems:  cloneCanvasItems(w.transferCanvasItems),
+		TransferCanvasCurrent: w.transferCanvasCurrent,
+		TransferCanvasNextID:  w.transferCanvasNextID,
 	}
 	if w.lastKeywordReport != nil {
 		reportCopy := *w.lastKeywordReport

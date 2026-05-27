@@ -124,12 +124,19 @@ The program keeps all runtime artifacts next to the executable so nothing is sca
   - exported `.xlsx`
   - exported `.fasta`
   - detailed run reports
+  - saved `.pgo` session snapshots when enabled in export settings
 - `.cache/`
   - Phytozome persistent caches
   - lemna release caches
   - local BLAST databases and downloaded FASTA
 
 If you choose an extra folder name during batch BLAST export, that folder is created inside `output/`.
+
+## Session Snapshots
+
+Export settings include `Save session snapshot (.pgo)`. A `.pgo` file stores the current result review state, user row/alias edits, table position/sort state, and cached sequence data needed by later exports so it can be reopened later from `Explore` -> `Open session` and return directly to the saved result table.
+
+The snapshot format is documented in `docs/session-snapshot-system.md`.
 
 ## Global Navigation Commands
 

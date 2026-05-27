@@ -73,8 +73,8 @@ func main() {
 }
 
 func prepareWezTermRuntime(bundleDir string) (string, error) {
-	runtimeDir := filepath.Join(os.TempDir(), "phytozome-go-wezterm-runtime")
-	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+	runtimeDir, err := os.MkdirTemp(os.TempDir(), "phytozome-go-wezterm-runtime-")
+	if err != nil {
 		return "", fmt.Errorf("create WezTerm runtime directory:\n%w", err)
 	}
 	entries, err := os.ReadDir(bundleDir)

@@ -17,6 +17,10 @@ const (
 	FastaHeaderModeMinimal  FastaHeaderMode = "minimal"
 )
 
+func (m FastaHeaderMode) String() string {
+	return string(m)
+}
+
 func NormalizeFastaHeaderMode(mode FastaHeaderMode, legacyUsePhgo bool) FastaHeaderMode {
 	switch mode {
 	case FastaHeaderModePhgo, FastaHeaderModeOriginal, FastaHeaderModeMinimal:
@@ -126,4 +130,34 @@ type QuerySequenceSource struct {
 	ProteinID           string
 	OrganismShort       string
 	Annotation          string
+	BlastSourceLabelName string
+	BlastSourceGeneID    string
+	PhgoRowNumber        int
+	PhgoHasRowNumber     bool
+}
+
+type CanvasKind string
+
+const (
+	CanvasKindKeyword CanvasKind = "keyword"
+	CanvasKindBlast   CanvasKind = "blast"
+	CanvasKindFasta   CanvasKind = "fasta"
+)
+
+type CanvasRow struct {
+	RowNumber  int                  `json:"row_number"`
+	Kind       CanvasKind           `json:"kind"`
+	KeywordRow *KeywordResultRow    `json:"keyword_row,omitempty"`
+	BlastRow   *BlastResultRow      `json:"blast_row,omitempty"`
+	FASTA      *QuerySequenceSource `json:"fasta,omitempty"`
+}
+
+type CanvasItem struct {
+	Title       string      `json:"title"`
+	Subtitle    string      `json:"subtitle"`
+	Kind        CanvasKind  `json:"kind"`
+	Rows        []CanvasRow `json:"rows"`
+	Selected    []bool      `json:"selected,omitempty"`
+	SourceLabel string      `json:"source_label,omitempty"`
+	ImportedFrom string     `json:"imported_from,omitempty"`
 }

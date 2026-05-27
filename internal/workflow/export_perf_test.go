@@ -162,7 +162,7 @@ func TestKeywordExportPerformanceMatrixLive(t *testing.T) {
 			}
 
 			exportStarted := time.Now()
-			err = w.exportSelectedKeywordFiles(ctx, tc.species, selectedRows, allRows, groups, settings.BaseName, outputDir, settings, reportCtx, false)
+			err = w.exportSelectedKeywordFiles(ctx, tc.species, selectedRows, allRows, groups, settings.BaseName, outputDir, settings, nil, ModeKeyword, reportCtx, false)
 			exportDuration := time.Since(exportStarted)
 			if err != nil {
 				t.Fatalf("exportSelectedKeywordFiles: %v", err)

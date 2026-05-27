@@ -20,12 +20,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KiriKirby/phytozome-go/internal/appfs"
+	"github.com/KiriKirby/phytozome-go/internal/interpro"
 	"github.com/KiriKirby/phytozome-go/internal/labelname"
 	"github.com/KiriKirby/phytozome-go/internal/lemna"
 	"github.com/KiriKirby/phytozome-go/internal/model"
 	"github.com/KiriKirby/phytozome-go/internal/prompt"
 	"github.com/KiriKirby/phytozome-go/internal/report"
+	"github.com/KiriKirby/phytozome-go/internal/sessionsnapshot"
 	"github.com/KiriKirby/phytozome-go/internal/source"
+	"github.com/KiriKirby/phytozome-go/internal/tui"
 	"github.com/KiriKirby/phytozome-go/internal/uniprot"
 )
 
@@ -499,6 +503,24 @@ func TestApplyFamilyBlastPlanUsesExternalReferenceEvidenceWhenMerging(t *testing
 	}
 	if got := mergedRuns[0].Results.Rows[0].LabelName; got != "PAL2" {
 		t.Fatalf("reference-supported row should win duplicate target merge, got %q", got)
+	}
+}
+
+func TestBlastSnapshotOriginalRunCountPrefersReviewContext(t *testing.T) {
+	reviewCtx := &blastReviewContext{OriginalRunCount: 4}
+	runs := []blastQueryRun{{Index: 1}}
+	if got := blastSnapshotOriginalRunCount(reviewCtx, runs); got != 4 {
+		t.Fatalf("blastSnapshotOriginalRunCount()=%d want 4", got)
+	}
+}
+
+func TestBlastSnapshotOriginalRunCountFallsBackToVisibleRuns(t *testing.T) {
+	runs := []blastQueryRun{{Index: 1}, {Index: 2}}
+	if got := blastSnapshotOriginalRunCount(nil, runs); got != 2 {
+		t.Fatalf("blastSnapshotOriginalRunCount()=%d want 2", got)
+	}
+	if got := blastSnapshotOriginalRunCount(&blastReviewContext{}, nil); got != 1 {
+		t.Fatalf("blastSnapshotOriginalRunCount() with empty context=%d want 1", got)
 	}
 }
 
@@ -4826,6 +4848,502 @@ func TestUseSingleBlastRunReviewDependsOnOriginalQueryCount(t *testing.T) {
 	}
 	if useSingleBlastRunReview(19, oneRun) {
 		t.Fatal("large multi-query input with one surviving run must remain in multi-run review")
+	}
+}
+
+func TestHydrateKeywordSnapshotRestoresExportDefaults(t *testing.T) {
+	w := NewBlastWizardWithTUIInfo(&bytes.Buffer{}, TUIInfo{})
+	snapshot := sessionsnapshot.Snapshot{
+		Context: sessionsnapshot.ContextV1{Mode: string(ModeKeyword)},
+		Keyword: &sessionsnapshot.KeywordResultV1{
+			SelectedSpecies: model.SpeciesCandidate{JBrowseName: "TAIR10", GenomeLabel: "TAIR10"},
+			Groups: []model.KeywordSearchGroup{{
+				SearchTerm: "PAL",
+				Rows: []model.KeywordResultRow{{
+					SourceDatabase: "tair",
+					LabelName:      "PAL1",
+					ProteinID:      "AT2G37040.1",
+				}},
+			}},
+			Selected: []bool{true},
+		},
+		ExportSettings: &sessionsnapshot.ExportSettingsV2{
+			BaseName:  "keyword",
+			OutputDir: "out",
+			Prompt: sessionsnapshot.PromptExportSettingsV2{
+				BaseName:        "keyword",
+				WriteExcel:      true,
+				WriteSession:    true,
+				FastaHeaderMode: model.FastaHeaderModePhgo,
+				UsePhgoHeader:   true,
+			},
+		},
+	}
+	_, _, _, _, err := w.hydrateKeywordSnapshot(snapshot)
+	if err != nil {
+		t.Fatalf("hydrateKeywordSnapshot returned error: %v", err)
+	}
+	got := w.prompt.SnapshotExportSettings()
+	if got.BaseName != "keyword" || !got.WriteExcel || !got.WriteSession {
+		t.Fatalf("export defaults not restored: %#v", got)
+	}
+}
+
+func TestHydrateBlastSnapshotRestoresExternalReferencesAndHandoff(t *testing.T) {
+	w := NewBlastWizardWithTUIInfo(&bytes.Buffer{}, TUIInfo{})
+	snapshot := sessionsnapshot.Snapshot{
+		Context: sessionsnapshot.ContextV1{Mode: string(ModeBlast)},
+		Blast: &sessionsnapshot.BlastResultV1{
+			SelectedSpecies:  model.SpeciesCandidate{JBrowseName: "Athaliana_TAIR10", GenomeLabel: "Arabidopsis"},
+			OriginalRunCount: 2,
+			Prepared: []sessionsnapshot.BlastQueryItemV1{{
+				LabelName: "PAL1",
+				Sequence:  "MPEPTIDE",
+			}},
+			Runs: []sessionsnapshot.BlastRunV1{{
+				Index: 1,
+				Item:  sessionsnapshot.BlastQueryItemV1{LabelName: "PAL1", Sequence: "MPEPTIDE"},
+				Results: model.BlastResult{Rows: []model.BlastResultRow{{
+					SourceDatabase: "phytozome",
+					Protein:        "AT2G37040.1",
+				}}},
+			}},
+		},
+		ExternalReferences: &sessionsnapshot.ExternalReferenceSettingsV2{
+			AutoLabelBlastHits: true,
+			UseUniProt:         true,
+			UseInterPro:        true,
+			InterProSettings:   model.DefaultInterProConservedRegionSettings(),
+		},
+		Handoff: &sessionsnapshot.HandoffStateV2{
+			PendingMode:          string(ModeBlast),
+			TransferKind:         "blast-row-to-blast",
+			TransferTargetDB:     "lemna",
+			ReuseLastBlastInput:  true,
+			ReuseLastBlastRows:   true,
+			ReuseLastKeywordRows: true,
+			LastBlastItems: []sessionsnapshot.BlastQueryItemV2{{
+				LabelName: "PAL1",
+				Sequence:  "MPEPTIDE",
+			}},
+		},
+	}
+	_, _, _, _, err := w.hydrateBlastSnapshot(snapshot)
+	if err != nil {
+		t.Fatalf("hydrateBlastSnapshot returned error: %v", err)
+	}
+	if !w.lastExternalRefs.UseUniProt || !w.lastExternalRefs.UseInterPro || !w.lastExternalRefs.AutoLabelBlastHits {
+		t.Fatalf("external references not restored: %#v", w.lastExternalRefs)
+	}
+	if w.transferKind != "blast-row-to-blast" || w.transferTargetDatabase != "lemna" {
+		t.Fatalf("handoff transfer state not restored: transferKind=%q target=%q", w.transferKind, w.transferTargetDatabase)
+	}
+	if !w.reuseLastBlastInput || !w.reuseLastBlastRows || !w.reuseLastKeywordRows {
+		t.Fatalf("handoff reuse flags not restored")
+	}
+	if len(w.lastBlastItems) != 1 || w.lastBlastItems[0].LabelName != "PAL1" {
+		t.Fatalf("last blast items not restored: %#v", w.lastBlastItems)
+	}
+	gotRefs := w.prompt.SnapshotExternalReferenceSettings()
+	if !gotRefs.UseUniProt || !gotRefs.UseInterPro || !gotRefs.AutoLabelBlastHits {
+		t.Fatalf("prompt external reference defaults not restored: %#v", gotRefs)
+	}
+}
+
+func TestBlastSnapshotRoundTripRestoresRuntimeCaches(t *testing.T) {
+	dir := t.TempDir()
+	w := NewBlastWizardWithTUIInfo(&bytes.Buffer{}, TUIInfo{})
+	w.source = keywordMapSource{name: "phytozome"}
+	w.blastLabelLookupCache["label-key"] = blastAutoLabelResult{
+		Label:         "PAL1",
+		Aliases:       []string{"PAL1", "ATPAL1"},
+		TaskTimestamp: "ts-1",
+		ItemIndex:     2,
+	}
+	w.blastHitLabelLookupCache["hit-key"] = blastHitLabelIdentification{
+		Label:     "C4H",
+		LabelType: "phgo_alias",
+		Aliases:   []string{"C4H", "CYP73A5"},
+	}
+	w.rowUniProtAccessionsCache["acc-key"] = []string{"Q43158"}
+	w.rowUniProtAccessionsKnown["acc-key"] = true
+	w.uniProtLookupCache["uni-key"] = uniProtLookupResult{
+		entry: uniprot.Entry{Accession: "Q43158", ProteinName: "PAL"},
+		ok:    true,
+	}
+	w.interProLookupCache["ip-key"] = interProLookupResult{
+		entry: interpro.Entry{Accession: "Q43158", Accessions: "IPR000001"},
+		ok:    true,
+	}
+	w.keywordBlastItemCache["item-key"] = blastQueryItem{LabelName: "PAL1", Sequence: "MPEPTIDE"}
+	w.querySourceResolveCache["qs-key"] = model.QuerySequenceSource{LabelName: "PAL1", ProteinID: "AT2G37040.1"}
+	w.keywordTermRowsCache["term-key"] = []model.KeywordResultRow{{LabelName: "PAL1", ProteinID: "AT2G37040.1"}}
+	w.proteinSequenceCache["seq-key"] = model.ProteinSequenceData{Sequence: "MPEPTIDE", OriginalHeader: ">PAL1"}
+	w.proteinSequenceMiss["miss-key"] = fmt.Errorf("no protein sequence for missing")
+	w.speciesCandidatesCache["species-key"] = []model.SpeciesCandidate{{JBrowseName: "Athaliana_TAIR10", GenomeLabel: "Arabidopsis"}}
+
+	path := filepath.Join(dir, "runtime-cache")
+	err := sessionsnapshot.WriteFile(path, sessionsnapshot.Snapshot{
+		Context:      sessionsnapshot.ContextV1{CreatedAt: time.Now()},
+		RuntimeCache: w.snapshotRuntimeCache(),
+	})
+	if err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	snapshot, err := sessionsnapshot.ReadFile(path + sessionsnapshot.FileExtension)
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+	restored := NewBlastWizardWithTUIInfo(&bytes.Buffer{}, TUIInfo{})
+	restored.source = keywordMapSource{name: "phytozome"}
+	restored.hydrateRuntimeCache(snapshot.RuntimeCache)
+
+	if got := restored.blastLabelLookupCache["label-key"]; got.Label != "PAL1" || len(got.Aliases) != 2 {
+		t.Fatalf("blast label cache not restored: %#v", got)
+	}
+	if got := restored.blastHitLabelLookupCache["hit-key"]; got.LabelType != "phgo_alias" || got.Label != "C4H" {
+		t.Fatalf("blast hit label cache not restored: %#v", got)
+	}
+	if got := restored.rowUniProtAccessionsCache["acc-key"]; len(got) != 1 || got[0] != "Q43158" {
+		t.Fatalf("row uniprot accession cache not restored: %#v", got)
+	}
+	if got := restored.uniProtLookupCache["uni-key"]; !got.ok || got.entry.Accession != "Q43158" {
+		t.Fatalf("uniprot lookup cache not restored: %#v", got)
+	}
+	if got := restored.interProLookupCache["ip-key"]; !got.ok || got.entry.Accessions != "IPR000001" {
+		t.Fatalf("interpro lookup cache not restored: %#v", got)
+	}
+	if got := restored.keywordBlastItemCache["item-key"]; got.LabelName != "PAL1" {
+		t.Fatalf("keyword blast item cache not restored: %#v", got)
+	}
+	if got := restored.querySourceResolveCache["qs-key"]; got.ProteinID != "AT2G37040.1" {
+		t.Fatalf("query source cache not restored: %#v", got)
+	}
+	if got := restored.keywordTermRowsCache["term-key"]; len(got) != 1 || got[0].LabelName != "PAL1" {
+		t.Fatalf("keyword term rows cache not restored: %#v", got)
+	}
+	if got := restored.proteinSequenceCache["seq-key"]; got.Sequence != "MPEPTIDE" {
+		t.Fatalf("protein sequence cache not restored: %#v", got)
+	}
+	if err := restored.proteinSequenceMiss["miss-key"]; err == nil || !strings.Contains(err.Error(), "no protein sequence") {
+		t.Fatalf("protein sequence miss cache not restored: %v", err)
+	}
+	if got := restored.speciesCandidatesCache["species-key"]; len(got) != 1 || got[0].JBrowseName != "Athaliana_TAIR10" {
+		t.Fatalf("species candidates cache not restored: %#v", got)
+	}
+}
+
+func TestSnapshotArtifactBundleReturnsNilByDefault(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmp := t.TempDir()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("chdir temp: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(wd)
+	}()
+
+	outputDir, err := appfs.OutputDir()
+	if err != nil {
+		t.Fatalf("OutputDir: %v", err)
+	}
+	manifest, payloads, err := snapshotArtifactBundle(filepath.Join(outputDir, "session.pgo"), outputDir)
+	if err != nil {
+		t.Fatalf("snapshotArtifactBundle: %v", err)
+	}
+	if manifest != nil {
+		t.Fatalf("snapshotArtifactBundle manifest = %#v, want nil", manifest)
+	}
+	if payloads != nil {
+		t.Fatalf("snapshotArtifactBundle payloads = %#v, want nil", payloads)
+	}
+}
+
+func TestCanvasItemFromBlastRowsUsesNumericTitleAndSequentialRowNumbers(t *testing.T) {
+	item := canvasItemFromBlastRows("ignored", "PAL1", []model.BlastResultRow{
+		{LabelName: "PAL1", Protein: "AT2G37040.1"},
+		{LabelName: "PAL2", Protein: "AT3G53260.1"},
+	}, nil)
+	if item.Title != "ignored" {
+		t.Fatalf("canvas item title = %q, want preserved title", item.Title)
+	}
+	if len(item.Rows) != 2 {
+		t.Fatalf("canvas row count = %d, want 2", len(item.Rows))
+	}
+	if item.Rows[0].RowNumber != 1 || item.Rows[1].RowNumber != 2 {
+		t.Fatalf("canvas row numbers = %#v", item.Rows)
+	}
+}
+
+func TestCanvasItemsFromBlastRunsPreserveRunTitlesAndSelectedRowsOnly(t *testing.T) {
+	runs := []blastQueryRun{
+		{
+			Item: blastQueryItem{LabelName: "group A", RawInput: "raw A"},
+			Results: model.BlastResult{Rows: []model.BlastResultRow{
+				{LabelName: "A1", Protein: "P1"},
+				{LabelName: "A2", Protein: "P2"},
+			}},
+		},
+		{
+			Item: blastQueryItem{LabelName: "group B", RawInput: "raw B"},
+			Results: model.BlastResult{Rows: []model.BlastResultRow{
+				{LabelName: "B1", Protein: "P3"},
+			}},
+		},
+	}
+	items := canvasItemsFromBlastRuns(runs, [][]bool{
+		{true, false},
+		{false},
+	})
+	if len(items) != 1 {
+		t.Fatalf("canvas item count = %d, want 1", len(items))
+	}
+	if items[0].Title != "group A" {
+		t.Fatalf("canvas title = %q, want preserved run title", items[0].Title)
+	}
+	if len(items[0].Rows) != 1 || items[0].Rows[0].RowNumber != 1 {
+		t.Fatalf("canvas rows = %#v", items[0].Rows)
+	}
+}
+
+func TestAssignCanvasRowNumbersContinuesFromExistingMaximum(t *testing.T) {
+	existing := []model.CanvasRow{
+		{RowNumber: 1, Kind: model.CanvasKindFasta},
+		{RowNumber: 4, Kind: model.CanvasKindFasta},
+	}
+	next := assignCanvasRowNumbers([]model.CanvasRow{
+		{Kind: model.CanvasKindFasta},
+		{Kind: model.CanvasKindFasta},
+	}, nextCanvasRowNumber(existing))
+	if next[0].RowNumber != 5 || next[1].RowNumber != 6 {
+		t.Fatalf("assigned row numbers = %#v, want 5 and 6", next)
+	}
+}
+
+func TestHydrateSnapshotArtifactsReportsMissingPayload(t *testing.T) {
+	err := hydrateSnapshotArtifacts(sessionsnapshot.Snapshot{
+		Artifacts: &sessionsnapshot.ArtifactManifestV2{
+			Entries: []sessionsnapshot.ArtifactEntryV2{{
+				ID:          "artifacts/cache/uniprot/search/entry.json",
+				Path:        "artifacts/cache/uniprot/search/entry.json",
+				RestorePath: filepath.Join("C:\\", "missing", "entry.json"),
+			}},
+		},
+		ArtifactPayloads: map[string][]byte{},
+	})
+	if err == nil || !strings.Contains(err.Error(), "missing packed payload") {
+		t.Fatalf("expected missing payload error, got %v", err)
+	}
+}
+
+func TestLoadSessionSnapshotWithProgressSuppressTaskModals(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session")
+	if err := sessionsnapshot.WriteFile(path, sessionsnapshot.Snapshot{
+		Context: sessionsnapshot.ContextV1{
+			CreatedAt: time.Now(),
+			Mode:      string(ModeKeyword),
+		},
+		Keyword: &sessionsnapshot.KeywordResultV1{
+			SelectedSpecies: model.SpeciesCandidate{JBrowseName: "TAIR10", GenomeLabel: "TAIR10"},
+			Groups: []model.KeywordSearchGroup{{
+				SearchTerm: "PAL",
+				Rows:       []model.KeywordResultRow{{LabelName: "PAL1", SequenceID: "AT2G37040.1"}},
+			}},
+		},
+	}); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	w := NewBlastWizardWithTUIInfo(&bytes.Buffer{}, TUIInfo{})
+	w.suppressTaskModals = true
+	load, err := w.loadSessionSnapshotWithProgress(context.Background(), path+sessionsnapshot.FileExtension)
+	if err != nil {
+		t.Fatalf("loadSessionSnapshotWithProgress returned error: %v", err)
+	}
+	if load.snapshot.Keyword == nil || len(load.snapshot.Keyword.Groups) != 1 {
+		t.Fatalf("loaded snapshot keyword module = %#v", load.snapshot.Keyword)
+	}
+	if load.restoreErr != nil {
+		t.Fatalf("restoreErr = %v, want nil", load.restoreErr)
+	}
+}
+
+func TestHydrateKeywordSnapshotRestoresFullRowSelectionState(t *testing.T) {
+	w := NewBlastWizardWithTUIInfo(&bytes.Buffer{}, TUIInfo{})
+	state := tui.RowSelectionState{
+		Valid:          true,
+		SelectedRow:    7,
+		SelectedColumn: 5,
+		RowOffset:      11,
+		ColumnOffset:   3,
+		Sort:           tui.TableSort{Column: 4, Direction: tui.SortDescending},
+		ControlHeaders: true,
+		HeaderColumn:   4,
+	}
+	snapshot := sessionsnapshot.Snapshot{
+		Context: sessionsnapshot.ContextV1{Mode: string(ModeKeyword)},
+		Keyword: &sessionsnapshot.KeywordResultV1{
+			SelectedSpecies: model.SpeciesCandidate{JBrowseName: "TAIR10", GenomeLabel: "TAIR10"},
+			Groups: []model.KeywordSearchGroup{{
+				SearchTerm: "PAL",
+				Rows: []model.KeywordResultRow{
+					{SourceDatabase: "tair", LabelName: "PAL1", ProteinID: "AT2G37040.1", SequenceID: "AT2G37040.1"},
+					{SourceDatabase: "tair", LabelName: "PAL2", ProteinID: "AT3G53260.1", SequenceID: "AT3G53260.1"},
+				},
+			}},
+			Selected: []bool{false, true},
+		},
+		KeywordReview: &sessionsnapshot.KeywordReviewStateV1{
+			SelectionState: state,
+		},
+	}
+	_, groups, _, _, err := w.hydrateKeywordSnapshot(snapshot)
+	if err != nil {
+		t.Fatalf("hydrateKeywordSnapshot returned error: %v", err)
+	}
+	got := w.prompt.SnapshotKeywordReviewState(groups)
+	if got != state {
+		t.Fatalf("keyword review state = %#v, want %#v", got, state)
+	}
+}
+
+func TestHydrateBlastSnapshotRestoresSingleTableSelectionState(t *testing.T) {
+	w := NewBlastWizardWithTUIInfo(&bytes.Buffer{}, TUIInfo{})
+	state := tui.RowSelectionState{
+		Valid:          true,
+		SelectedRow:    4,
+		SelectedColumn: 8,
+		RowOffset:      9,
+		ColumnOffset:   2,
+		Sort:           tui.TableSort{Column: 6, Direction: tui.SortDescending},
+		ControlHeaders: true,
+		HeaderColumn:   6,
+	}
+	rows := []model.BlastResultRow{
+		{SourceDatabase: "phytozome", Protein: "AT2G37040.1"},
+		{SourceDatabase: "phytozome", Protein: "AT3G53260.1"},
+	}
+	snapshot := sessionsnapshot.Snapshot{
+		Context: sessionsnapshot.ContextV1{Mode: string(ModeBlast)},
+		Blast: &sessionsnapshot.BlastResultV1{
+			SelectedSpecies:  model.SpeciesCandidate{JBrowseName: "Athaliana_TAIR10", GenomeLabel: "Arabidopsis"},
+			OriginalRunCount: 1,
+			Prepared: []sessionsnapshot.BlastQueryItemV1{{
+				LabelName: "PAL1",
+				Sequence:  "MPEPTIDE",
+			}},
+			Runs: []sessionsnapshot.BlastRunV1{{
+				Index:   1,
+				Item:    sessionsnapshot.BlastQueryItemV1{LabelName: "PAL1", Sequence: "MPEPTIDE"},
+				Results: model.BlastResult{Rows: rows},
+			}},
+			Selected:    []bool{true, false},
+			FilterFlags: []bool{false, false},
+		},
+		BlastReview: &sessionsnapshot.BlastReviewStateV1{
+			SingleSelectionState: state,
+		},
+	}
+	_, _, runs, _, err := w.hydrateBlastSnapshot(snapshot)
+	if err != nil {
+		t.Fatalf("hydrateBlastSnapshot returned error: %v", err)
+	}
+	got := w.prompt.SnapshotBlastRowReviewState(runs[0].Results.Rows)
+	if got != state {
+		t.Fatalf("blast single-table state = %#v, want %#v", got, state)
+	}
+}
+
+func TestHydrateBlastSnapshotRestoresMultiRunSelectionState(t *testing.T) {
+	w := NewBlastWizardWithTUIInfo(&bytes.Buffer{}, TUIInfo{})
+	state := tui.BlastRunSelectionState{
+		Valid:        true,
+		CurrentRun:   1,
+		ControlMode:  1,
+		ListOffset:   5,
+		Sort:         tui.TableSort{Column: 3, Direction: tui.SortDescending},
+		HeaderColumn: 3,
+		Tables: []tui.BlastRunTableState{
+			{Valid: true, SelectedRow: 2, SelectedColumn: 4, RowOffset: 3, ColumnOffset: 1},
+			{Valid: true, SelectedRow: 6, SelectedColumn: 5, RowOffset: 7, ColumnOffset: 2},
+		},
+	}
+	runs := []sessionsnapshot.BlastRunV1{
+		{
+			Index:   1,
+			Item:    sessionsnapshot.BlastQueryItemV1{LabelName: "PAL1", Sequence: "MPEPTIDE"},
+			Results: model.BlastResult{Rows: []model.BlastResultRow{{SourceDatabase: "phytozome", Protein: "AT2G37040.1"}}},
+		},
+		{
+			Index:   2,
+			Item:    sessionsnapshot.BlastQueryItemV1{LabelName: "PAL2", Sequence: "MPEPTIDE"},
+			Results: model.BlastResult{Rows: []model.BlastResultRow{{SourceDatabase: "phytozome", Protein: "AT3G53260.1"}}},
+		},
+	}
+	snapshot := sessionsnapshot.Snapshot{
+		Context: sessionsnapshot.ContextV1{Mode: string(ModeBlast)},
+		Blast: &sessionsnapshot.BlastResultV1{
+			SelectedSpecies:  model.SpeciesCandidate{JBrowseName: "Athaliana_TAIR10", GenomeLabel: "Arabidopsis"},
+			OriginalRunCount: 2,
+			Prepared: []sessionsnapshot.BlastQueryItemV1{
+				{LabelName: "PAL1", Sequence: "MPEPTIDE"},
+				{LabelName: "PAL2", Sequence: "MPEPTIDE"},
+			},
+			Runs:             runs,
+			SelectedByRun:    [][]bool{{true}, {false}},
+			FilterFlagsByRun: [][]bool{{false}, {true}},
+		},
+		BlastReview: &sessionsnapshot.BlastReviewStateV1{
+			MultiSelectionState: state,
+		},
+	}
+	_, _, restoredRuns, _, err := w.hydrateBlastSnapshot(snapshot)
+	if err != nil {
+		t.Fatalf("hydrateBlastSnapshot returned error: %v", err)
+	}
+	got := w.prompt.SnapshotBlastRunsReviewState(blastRunViews(restoredRuns))
+	if got.Valid != state.Valid || got.CurrentRun != state.CurrentRun || got.ControlMode != state.ControlMode || got.ListOffset != state.ListOffset || got.Sort != state.Sort || got.HeaderColumn != state.HeaderColumn {
+		t.Fatalf("blast multi-run state mismatch: got=%#v want=%#v", got, state)
+	}
+	if len(got.Tables) != len(state.Tables) {
+		t.Fatalf("blast multi-run table state length = %d, want %d", len(got.Tables), len(state.Tables))
+	}
+	for i := range state.Tables {
+		if got.Tables[i] != state.Tables[i] {
+			t.Fatalf("blast multi-run table state[%d] = %#v, want %#v", i, got.Tables[i], state.Tables[i])
+		}
+	}
+}
+
+func TestSnapshotKeywordSequenceCacheSkipsMissingTAIRSequenceFailures(t *testing.T) {
+	w := NewBlastWizardWithTUIInfo(&bytes.Buffer{}, TUIInfo{})
+	w.source = fakeSource{
+		name: "tair",
+		sequences: map[string]string{
+			"AT2G37040.1": "MPEPTIDE",
+		},
+		sequenceErrors: map[string]error{
+			"AT5G04230": fmt.Errorf("empty TAIR FASTA URL"),
+		},
+	}
+	selected := model.SpeciesCandidate{ProteomeID: 370201, JBrowseName: "TAIR10", GenomeLabel: "TAIR10"}
+	rows := []model.KeywordResultRow{
+		{SourceDatabase: "tair", SequenceID: "AT2G37040.1", TranscriptID: "AT2G37040.1", LabelName: "PAL1"},
+		{SourceDatabase: "tair", SequenceID: "AT5G04230", TranscriptID: "AT5G04230", LabelName: "BAD"},
+	}
+	cache, err := w.snapshotKeywordSequenceCache(context.Background(), selected, rows)
+	if err != nil {
+		t.Fatalf("snapshotKeywordSequenceCache returned error: %v", err)
+	}
+	if cache == nil || len(cache.Entries) != 1 {
+		t.Fatalf("sequence cache entries = %#v, want 1 good entry", cache)
+	}
+	if cache.Entries[0].SequenceID != "AT2G37040.1" {
+		t.Fatalf("sequence cache first entry = %#v", cache.Entries[0])
 	}
 }
 

@@ -67,6 +67,21 @@ func TestBlastRunSelectionShowsExportScopeFromOriginalQueryCount(t *testing.T) {
 	}
 }
 
+func TestPageInputTextRawSkipsBinaryFileRead(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.pgo")
+	if err := os.WriteFile(path, []byte{0x50, 0x4b, 0x03, 0x04, 0xff}, 0o600); err != nil {
+		t.Fatalf("write snapshot placeholder: %v", err)
+	}
+	got, err := pageInputText(true, path)
+	if err != nil {
+		t.Fatalf("pageInputText returned error: %v", err)
+	}
+	if got != path {
+		t.Fatalf("pageInputText = %q, want %q", got, path)
+	}
+}
+
 func TestSelectFirstChoiceStartsAtFirstSelectableItem(t *testing.T) {
 	list := tview.NewList()
 	choices := []Choice{
@@ -234,6 +249,24 @@ func TestButtonRowPrimaryLabelUpdatesOnlyPrimaryButtons(t *testing.T) {
 	}
 	if row.buttons[1].Label != ButtonAuto {
 		t.Fatalf("primary button label = %q, want %q", row.buttons[1].Label, ButtonAuto)
+	}
+}
+
+func TestButtonRowPlacesPrimaryExtrasBeforeDefaultPrimaryButtons(t *testing.T) {
+	row := buttonRow(
+		buttonSpec{Label: ButtonBack, Shortcut: ShortcutBack, Visible: true},
+		buttonSpec{Label: ButtonHome, Shortcut: ShortcutHome, Visible: true},
+		buttonSpec{Label: "Create canvas", Shortcut: "F3", Visible: true, Primary: true},
+		buttonSpec{Label: ButtonExport, Shortcut: ShortcutExport, Visible: true, Primary: true},
+		buttonSpec{Label: ButtonView, Shortcut: ShortcutConfirm, Visible: true, Primary: true},
+	)
+
+	positions := row.buttonPositions(120)
+	if len(positions) != 5 {
+		t.Fatalf("unexpected button count: got %d want 5", len(positions))
+	}
+	if !strings.Contains(positions[4].label, "Create canvas") {
+		t.Fatalf("primary extra button should be leftmost in primary group, got %q", positions[4].label)
 	}
 }
 

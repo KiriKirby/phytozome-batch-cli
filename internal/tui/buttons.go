@@ -20,6 +20,7 @@ const (
 	ButtonApply       = "Apply"
 	ButtonAuto        = "Auto identify"
 	ButtonSave        = "Save"
+	ButtonOpen        = "Open"
 	ButtonView        = "View"
 	ButtonHelp        = "Help"
 	ButtonFilter      = "Filter"

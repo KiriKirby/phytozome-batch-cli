@@ -1,0 +1,277 @@
+// The contents of this file are subject to the Common Public Attribution License Version 1.0 (CPAL-1.0);
+// you may not use this file except in compliance with the License. You may obtain a copy of the License at
+// https://opensource.org/license/CPAL-1.0. Software distributed under the License is distributed on an "AS IS"
+// basis, WITHOUT WARRANTY OF ANY KIND, either express or implied. The Original Code is phytozome GO. The
+// Initial Developer is wangsychn. All portions of the code written by wangsychn are Copyright (c) 2026
+// wangsychn. All Rights Reserved. Contributor(s): .
+
+package sessionsnapshot
+
+import (
+	"archive/zip"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/KiriKirby/phytozome-go/internal/model"
+	"github.com/KiriKirby/phytozome-go/internal/tui"
+)
+
+func TestWriteReadKeywordSnapshotRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "keyword")
+	now := time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC)
+	in := Snapshot{
+		Context: ContextV1{
+			CreatedAt:          now,
+			ApplicationName:    "phytozome GO",
+			ApplicationVersion: "dev",
+			Database:           "tair",
+			Mode:               "family",
+			ResultKind:         "keyword-result",
+		},
+		Keyword: &KeywordResultV1{
+			SelectedSpecies: model.SpeciesCandidate{JBrowseName: "TAIR10", GenomeLabel: "TAIR10"},
+			Groups: []model.KeywordSearchGroup{{
+				SearchTerm: "PAL",
+				Rows: []model.KeywordResultRow{{
+					SourceDatabase: "tair",
+					LabelName:      "PAL1",
+					ProteinID:      "AT2G37040.1",
+				}},
+			}},
+			Selected: []bool{true},
+		},
+		KeywordReview: &KeywordReviewStateV1{
+			SelectionState: tui.RowSelectionState{Valid: true, SelectedRow: 3, SelectedColumn: 2},
+		},
+		SequenceCache: &SequenceCacheV1{
+			Entries: []SequenceCacheEntryV1{{
+				TargetID:       370201,
+				SequenceID:     "AT2G37040.1",
+				Sequence:       "MSTNPKPQR",
+				OriginalHeader: ">AT2G37040.1",
+			}},
+		},
+		ExportSettings: &ExportSettingsV2{
+			BaseName:  "keyword",
+			OutputDir: dir,
+			Prompt: PromptExportSettingsV2{
+				BaseName:        "keyword",
+				WriteExcel:      true,
+				WriteSession:    true,
+				FastaHeaderMode: model.FastaHeaderModePhgo,
+				UsePhgoHeader:   true,
+			},
+		},
+	}
+	if err := WriteFile(path, in); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	out, err := ReadFile(path + FileExtension)
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+	if out.Context.FormatName != FormatName || out.Context.FormatVersion != FormatVersion {
+		t.Fatalf("unexpected format context: %#v", out.Context)
+	}
+	if out.Keyword == nil || len(out.Keyword.Groups) != 1 || out.Keyword.Groups[0].Rows[0].LabelName != "PAL1" {
+		t.Fatalf("keyword module did not round-trip: %#v", out.Keyword)
+	}
+	if out.KeywordReview == nil || !out.KeywordReview.SelectionState.Valid || out.KeywordReview.SelectionState.SelectedRow != 3 {
+		t.Fatalf("keyword review state did not round-trip: %#v", out.KeywordReview)
+	}
+	if out.SequenceCache == nil || len(out.SequenceCache.Entries) != 1 || out.SequenceCache.Entries[0].Sequence != "MSTNPKPQR" {
+		t.Fatalf("sequence cache did not round-trip: %#v", out.SequenceCache)
+	}
+	if out.ExportSettings == nil || out.ExportSettings.Prompt.BaseName != "keyword" || !out.ExportSettings.Prompt.WriteExcel {
+		t.Fatalf("export settings did not round-trip: %#v", out.ExportSettings)
+	}
+
+	reader, err := zip.OpenReader(path + FileExtension)
+	if err != nil {
+		t.Fatalf("open zip: %v", err)
+	}
+	defer reader.Close()
+	seenManifest := false
+	seenModule := false
+	for _, file := range reader.File {
+		if file.Name == "manifest.xml" {
+			seenManifest = true
+		}
+		if file.Name == "modules/keyword-result-v2.xml" {
+			seenModule = true
+		}
+	}
+	if !seenManifest || !seenModule {
+		t.Fatalf("missing XML archive entries: manifest=%t keyword=%t", seenManifest, seenModule)
+	}
+}
+
+func TestWriteReadBlastSnapshotPreservesOriginalRunCount(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "blast")
+	if err := WriteFile(path, Snapshot{
+		Context: ContextV1{CreatedAt: time.Now()},
+		Blast: &BlastResultV1{
+			SelectedSpecies:  model.SpeciesCandidate{JBrowseName: "legacy"},
+			OriginalRunCount: 4,
+			Runs: []BlastRunV1{{
+				Index:   1,
+				Results: model.BlastResult{Rows: []model.BlastResultRow{{Protein: "legacy.1"}}},
+			}},
+		},
+		ExternalReferences: &ExternalReferenceSettingsV2{
+			AutoLabelBlastHits: true,
+			UseUniProt:         true,
+			UseInterPro:        true,
+			InterProSettings:   model.DefaultInterProConservedRegionSettings(),
+		},
+	}); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	out, err := ReadFile(path + FileExtension)
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+	if out.Blast == nil || out.Blast.OriginalRunCount != 4 {
+		t.Fatalf("blast snapshot original run count not preserved: %#v", out.Blast)
+	}
+	if out.ExternalReferences == nil || !out.ExternalReferences.UseInterPro {
+		t.Fatalf("external references not preserved: %#v", out.ExternalReferences)
+	}
+}
+
+func TestReadFileKeepsOldSnapshotsWithoutNewModules(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "legacy")
+	if err := WriteFile(path, Snapshot{
+		Context: ContextV1{CreatedAt: time.Now()},
+		Blast: &BlastResultV1{
+			SelectedSpecies: model.SpeciesCandidate{JBrowseName: "legacy"},
+			Runs: []BlastRunV1{{
+				Index: 1,
+				Results: model.BlastResult{Rows: []model.BlastResultRow{{
+					SourceDatabase: "phytozome",
+					Protein:        "legacy.1",
+				}}},
+			}},
+		},
+	}); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	out, err := ReadFile(path + FileExtension)
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+	if out.Blast == nil || out.BlastReview != nil || out.SequenceCache != nil {
+		t.Fatalf("legacy snapshot should load without optional modules: %#v", out)
+	}
+}
+
+func TestResolveOpenPathUsesOutputDirAndOptionalExtension(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "saved.pgo")
+	if err := WriteFile(path, Snapshot{Context: ContextV1{CreatedAt: time.Now()}}); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	resolved, err := ResolveOpenPath("saved", dir)
+	if err != nil {
+		t.Fatalf("ResolveOpenPath returned error: %v", err)
+	}
+	if resolved != path {
+		t.Fatalf("resolved path = %q, want %q", resolved, path)
+	}
+}
+
+func TestWriteReadSnapshotArtifactsRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "artifact")
+	snapshot := Snapshot{
+		Context: ContextV1{CreatedAt: time.Now()},
+		Artifacts: &ArtifactManifestV2{
+			Entries: []ArtifactEntryV2{{
+				ID:          "artifacts/output/test.bin",
+				Path:        "artifacts/output/test.bin",
+				Kind:        "generated-output",
+				MediaType:   "application/octet-stream",
+				Description: "test payload",
+			}},
+		},
+		ArtifactPayloads: map[string][]byte{
+			"artifacts/output/test.bin": {0x00, 0x01, 0x02, 0x03},
+		},
+	}
+	if err := WriteFile(path, snapshot); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	out, err := ReadFile(path + FileExtension)
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+	if out.Artifacts == nil || len(out.Artifacts.Entries) != 1 {
+		t.Fatalf("artifact manifest did not round-trip: %#v", out.Artifacts)
+	}
+	got := out.ArtifactPayloads["artifacts/output/test.bin"]
+	if len(got) != 4 || got[0] != 0x00 || got[3] != 0x03 {
+		t.Fatalf("artifact payload did not round-trip: %#v", got)
+	}
+}
+
+func TestWriteReadCanvasSnapshotRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "canvas")
+	snapshot := Snapshot{
+		Context: ContextV1{
+			CreatedAt: time.Now(),
+			Database:  "tair",
+			Mode:      "canvas",
+		},
+		Canvas: &CanvasResultV1{
+			Items: []CanvasItemV1{{
+				Title:        "group 1",
+				Subtitle:     "2/2 lines",
+				Kind:         model.CanvasKindKeyword,
+				SourceLabel:  "PAL family",
+				ImportedFrom: "snapshot",
+				Rows: []CanvasRowV1{
+					{Kind: model.CanvasKindKeyword, KeywordRow: &model.KeywordResultRow{LabelName: "PAL1", ProteinID: "AT2G37040.1"}},
+					{Kind: model.CanvasKindFasta, FASTA: &model.QuerySequenceSource{LabelName: "query1", Annotation: ">query1\nMSTNPKPQR"}},
+				},
+				Selected: []bool{true, false},
+			}},
+			CurrentItem:   0,
+			NextNumericID: 3,
+			ImportedFrom:  "demo.pgo",
+		},
+		CanvasReview: &CanvasReviewStateV1{
+			SelectionState: tui.BlastRunSelectionState{
+				Valid:       true,
+				CurrentRun:  0,
+				ControlMode: 2,
+			},
+		},
+	}
+	if err := WriteFile(path, snapshot); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	out, err := ReadFile(path + FileExtension)
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+	if out.Canvas == nil || len(out.Canvas.Items) != 1 {
+		t.Fatalf("canvas module did not round-trip: %#v", out.Canvas)
+	}
+	if out.Canvas.Items[0].Title != "group 1" || len(out.Canvas.Items[0].Rows) != 2 {
+		t.Fatalf("canvas item payload mismatch: %#v", out.Canvas.Items[0])
+	}
+	if out.Canvas.Items[0].SourceLabel != "PAL family" || out.Canvas.Items[0].ImportedFrom != "snapshot" {
+		t.Fatalf("canvas item metadata mismatch: %#v", out.Canvas.Items[0])
+	}
+	if out.Canvas.Items[0].Rows[0].RowNumber != 0 || out.Canvas.Items[0].Rows[1].RowNumber != 0 {
+		t.Fatalf("canvas row number payload mismatch: %#v", out.Canvas.Items[0].Rows)
+	}
+	if out.CanvasReview == nil || !out.CanvasReview.SelectionState.Valid || out.CanvasReview.SelectionState.ControlMode != 2 {
+		t.Fatalf("canvas review state did not round-trip: %#v", out.CanvasReview)
+	}
+}

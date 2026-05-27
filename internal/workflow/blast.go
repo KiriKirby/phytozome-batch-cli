@@ -68,11 +68,15 @@ type BlastWizard struct {
 	lastKeywordReport      *keywordReportRunContext
 	lastKeywordSpecies     model.SpeciesCandidate
 	rewindKeywordToInput   bool
+	lastExternalRefs       externalReferenceConfig
 	suppressTaskModals     bool
 	transferKind           string
 	transferTargetDatabase string
 	transferKeywordRows    []model.KeywordResultRow
 	transferBlastRows      []model.BlastResultRow
+	transferCanvasItems    []model.CanvasItem
+	transferCanvasCurrent  int
+	transferCanvasNextID   int
 	transferSourceSpecies  model.SpeciesCandidate
 
 	speciesCandidatesMu    sync.Mutex
@@ -226,6 +230,7 @@ const (
 	ModeBlast   QueryMode = "blast"
 	ModeKeyword QueryMode = "keyword"
 	ModeFamily  QueryMode = "family"
+	ModeCanvas  QueryMode = "canvas"
 )
 
 type blastQueryItem struct {
@@ -268,6 +273,7 @@ type exportSettings struct {
 	BaseName              string
 	OutputDir             string
 	WriteReport           bool
+	WriteSession          bool
 	WriteText             bool
 	WriteExcel            bool
 	WriteRawExcel         bool
@@ -282,6 +288,7 @@ type exportFileResult struct {
 	RawTextPath     string
 	RawExcelPath    string
 	ReportPath      string
+	SessionPath     string
 	Steps           []report.GenerationStep
 	SequenceAudit   report.SequenceAudit
 	SequenceRecords []model.ProteinSequenceRecord
@@ -600,6 +607,9 @@ func NewBlastWizardWithLaunch(out io.Writer, tuiInfo tui.StartupInfo, launch Ins
 		w.transferSourceSpecies = launch.Handoff.BlastContext.TransferSourceSpecies
 		w.transferKeywordRows = append([]model.KeywordResultRow(nil), launch.Handoff.BlastContext.TransferKeywordRows...)
 		w.transferBlastRows = append([]model.BlastResultRow(nil), launch.Handoff.BlastContext.TransferBlastRows...)
+		w.transferCanvasItems = cloneCanvasItems(launch.Handoff.BlastContext.TransferCanvasItems)
+		w.transferCanvasCurrent = launch.Handoff.BlastContext.TransferCanvasCurrent
+		w.transferCanvasNextID = launch.Handoff.BlastContext.TransferCanvasNextID
 		w.lastBlastItems = cloneBlastQueryItems(launch.Handoff.BlastContext.LastBlastItems)
 		w.lastKeywordGroups = cloneKeywordSearchGroups(launch.Handoff.BlastContext.LastKeywordGroups)
 		w.lastKeywordSpecies = launch.Handoff.BlastContext.LastKeywordSpecies
@@ -693,6 +703,25 @@ databaseLoop:
 			}
 			if mode != ModeBlast {
 				w.setBlastProgramContext("")
+			}
+			if mode == ModeCanvas {
+				if err := w.runCanvasMode(ctx, canvasLaunchState{
+					Items:         cloneCanvasItems(w.transferCanvasItems),
+					CurrentItem:   w.transferCanvasCurrent,
+					NextNumericID: w.transferCanvasNextID,
+					SaveBaseName:  canvasDefaultSaveName(w.transferCanvasItems),
+				}); err != nil {
+					switch classifyWizardBack(err) {
+					case wizardBackExit:
+						return nil
+					case wizardBackDatabase:
+						continue databaseLoop
+					case wizardBackMode:
+						continue modeLoop
+					}
+					return err
+				}
+				continue databaseLoop
 			}
 
 			candidates, err := w.loadSpeciesCandidatesForMode(ctx, mode)
@@ -882,6 +911,15 @@ func (w *BlastWizard) runTransferEntry(ctx context.Context) error {
 	if w.instanceRunID != "" && w.instanceID != "" {
 		_ = w.markInstanceActive()
 		syncInstanceTerminalMetadata(w.tuiInfo.Version, w.instanceRunID, w.instanceID)
+	}
+
+	if strings.EqualFold(strings.TrimSpace(w.transferKind), "canvas_items") {
+		return w.runCanvasMode(ctx, canvasLaunchState{
+			Items:         cloneCanvasItems(w.transferCanvasItems),
+			CurrentItem:   w.transferCanvasCurrent,
+			NextNumericID: w.transferCanvasNextID,
+			SaveBaseName:  canvasDefaultSaveName(w.transferCanvasItems),
+		})
 	}
 
 	targetDatabase := strings.ToLower(strings.TrimSpace(w.transferTargetDatabase))
@@ -1091,6 +1129,10 @@ func (w *BlastWizard) familySource(src source.DataSource) (source.DataSource, er
 
 func (w *BlastWizard) runStartupTool(tool string) error {
 	switch strings.TrimSpace(tool) {
+	case "open_session":
+		return w.openSessionSnapshotTool(context.Background())
+	case "new_canvas":
+		return w.runCanvasMode(context.Background(), canvasLaunchState{})
 	case "pathway_search":
 		return w.showInfo(
 			"Pathway search",
@@ -1839,13 +1881,22 @@ keywordInputLoop:
 				}
 				continue keywordRowLoop
 			}
+			if selection.CreateCanvas {
+				if err := w.runKeywordRowsCanvasMode(ctx, selected, groups, selection.Rows); err != nil {
+					if errors.Is(err, prompt.ErrBackToRowSelection) {
+						continue keywordRowLoop
+					}
+					return err
+				}
+				continue keywordRowLoop
+			}
 			w.warmKeywordSequenceCache(ctx, selected, groups)
 			w.postRunBackTarget = prompt.ErrBackToRowSelection
 			if !selection.GenerateFile {
 				continue keywordRowLoop
 			}
 
-			if err := w.prepareAndExportKeywordSelection(ctx, selected, groups, selection.Rows, reportCtx); err != nil {
+			if err := w.prepareAndExportKeywordSelectionWithMask(ctx, selected, groups, selection.Rows, selection.Selected, ModeKeyword, reportCtx); err != nil {
 				if errors.Is(err, prompt.ErrBackToRowSelection) {
 					continue keywordRowLoop
 				}
@@ -1989,7 +2040,7 @@ keywordRowLoop:
 		if !selection.GenerateFile {
 			continue keywordRowLoop
 		}
-		if err := w.prepareAndExportKeywordSelection(ctx, selected, groups, selection.Rows, nil); err != nil {
+		if err := w.prepareAndExportKeywordSelectionWithMask(ctx, selected, groups, selection.Rows, selection.Selected, QueryMode(mode), nil); err != nil {
 			if errors.Is(err, prompt.ErrBackToRowSelection) {
 				continue keywordRowLoop
 			}
@@ -2955,12 +3006,14 @@ func (w *BlastWizard) collectExternalReferenceConfig() (externalReferenceConfig,
 	if err != nil {
 		return externalReferenceConfig{}, err
 	}
-	return externalReferenceConfig{
+	config := externalReferenceConfig{
 		AutoLabelBlastHits: settings.AutoLabelBlastHits,
 		UseUniProt:         settings.UseUniProt,
 		UseInterPro:        settings.UseInterPro,
 		InterProSettings:   settings.InterProSettings,
-	}, nil
+	}
+	w.lastExternalRefs = config
+	return config, nil
 }
 
 func (w *BlastWizard) collectFamilyBlastPlan(prepared []blastQueryItem, references externalReferenceConfig) (*familyBlastPlan, error) {
@@ -3172,6 +3225,7 @@ func (w *BlastWizard) executeConfiguredBlastBatch(ctx context.Context, selected 
 
 func (w *BlastWizard) executeConfiguredBlastBatchWithReferences(ctx context.Context, selected model.SpeciesCandidate, prepared []blastQueryItem, configuredRequest model.BlastRequest, references externalReferenceConfig, familyPlan *familyBlastPlan) error {
 	w.postRunBackTarget = prompt.ErrBackToQueryInput
+	w.lastExternalRefs = references
 
 	queryRuns := make([]blastQueryRun, 0, len(prepared))
 	resumeIndex := 0
@@ -3563,6 +3617,15 @@ func (w *BlastWizard) resumeBlastRowSelection(ctx context.Context, rowContext bl
 			}
 			continue
 		}
+		if selection.CreateCanvas {
+			if err := w.runBlastRowsCanvasMode(ctx, firstNonEmpty(rowContext.Item.LabelName, rowContext.Item.RawInput), firstNonEmpty(rowContext.Item.LabelName, rowContext.Item.RawInput), selection.Rows); err != nil {
+				if errors.Is(err, prompt.ErrBackToRowSelection) {
+					continue
+				}
+				return err
+			}
+			continue
+		}
 		if !selection.GenerateFile {
 			continue
 		}
@@ -3779,6 +3842,15 @@ func (w *BlastWizard) reviewMultiBlastRuns(ctx context.Context, selected model.S
 			}
 			continue
 		}
+		if selection.CreateCanvas {
+			if err := w.runBlastRunsCanvasMode(ctx, runs, selection.SelectedByRun); err != nil {
+				if errors.Is(err, prompt.ErrBackToRowSelection) {
+					continue
+				}
+				return err
+			}
+			continue
+		}
 		if selection.DoneAll {
 			if err := w.exportAllBlastRuns(ctx, selected, prepared, runs, selection.RowsByRun, selection.RowNumbersByRun, selection.FilterFlagsByRun, selection.SelectedByRun, configuredRequest, selection.FilterSettings, selection.FilterApplied, selection.FilterCleared); err != nil {
 				if errors.Is(err, prompt.ErrBackToRowSelection) {
@@ -3889,8 +3961,11 @@ func (w *BlastWizard) exportSingleBlastRun(ctx context.Context, selected model.S
 	}
 	filePrefix := sanitizeExportName(displayName)
 	txtHeaderLabel := blastFastaHeaderLabel(exportItem, displayName)
+	files := exportFileResult{}
 	for {
-		files, err := w.exportFamilyBlastSelectionsToDir(ctx, rows, allRows, rowNumbers, filterFlags, exportItemFamilySources(exportItem), displayName, txtHeaderLabel, filePrefix, settings.OutputDir, settings, exportItem.FamilySettings, true)
+		writerSettings := settings
+		writerSettings.WriteSession = false
+		files, err = w.exportFamilyBlastSelectionsToDir(ctx, rows, allRows, rowNumbers, filterFlags, exportItemFamilySources(exportItem), displayName, txtHeaderLabel, filePrefix, settings.OutputDir, writerSettings, exportItem.FamilySettings, false)
 		if err == nil && settings.WriteReport {
 			reportPath, reportErr := w.renderBlastReportForExport(ctx, blastReportExportContext{
 				Selected:          selected,
@@ -3944,12 +4019,21 @@ func (w *BlastWizard) exportSingleBlastRun(ctx context.Context, selected model.S
 				return fmt.Errorf("unsupported export recovery action %q", action)
 			}
 		}
+		if settings.WriteSession {
+			selectedByRun := [][]bool{append([]bool(nil), selection.Selected...)}
+			sessionPath, sessionErr := w.writeBlastSessionSnapshot(selected, []blastQueryItem{exportItem}, []blastQueryRun{run}, configuredRequest, 1, selection.Selected, selectedByRun, filterFlags, [][]bool{append([]bool(nil), filterFlags...)}, selection.FilterSettings, selection.FilterApplied, selection.FilterCleared, settings)
+			if sessionErr != nil {
+				return sessionErr
+			}
+			files.SessionPath = sessionPath
+		}
 		break
 	}
-	return nil
+	return w.showInfo("Export complete", filesSummary(files), prompt.ErrBackToRowSelection)
 }
 
 func (w *BlastWizard) exportAllBlastRuns(ctx context.Context, selected model.SpeciesCandidate, prepared []blastQueryItem, runs []blastQueryRun, rowsByRun [][]model.BlastResultRow, rowNumbersByRun [][]int, filterFlagsByRun [][]bool, selectedByRun [][]bool, configuredRequest model.BlastRequest, filterSettings model.BlastFilterSettings, filterApplied bool, filterCleared bool) error {
+	originalRunCount := blastSnapshotOriginalRunCount(w.lastBlastReviewContext, runs)
 	settings, err := w.prepareBatchExportSettings(runs)
 	if err != nil {
 		return err
@@ -4030,7 +4114,25 @@ func (w *BlastWizard) exportAllBlastRuns(ctx context.Context, selected model.Spe
 			exportedFiles = append(exportedFiles, exportFileResult{ReportPath: reportPath})
 		}
 	}
-	return w.showInfo("Export complete", fmt.Sprintf("Exported %d BLAST queries to\n%s", len(exportedRuns), settings.OutputDir), prompt.ErrBackToRowSelection)
+	if settings.WriteSession {
+		sessionPath, err := w.writeBlastSessionSnapshot(selected, reportPrepared, reportRuns, configuredRequest, originalRunCount, nil, reportSelectedByRun, nil, reportFilterFlagsByRun, filterSettings, filterApplied, filterCleared, settings)
+		if err != nil {
+			return err
+		}
+		exportedFiles = append(exportedFiles, exportFileResult{SessionPath: sessionPath})
+	}
+	message := fmt.Sprintf("Exported %d BLAST queries to\n%s", len(exportedRuns), settings.OutputDir)
+	if settings.WriteSession && len(exportedFiles) > 0 {
+		message += "\n\n" + filesSummary(exportedFiles[len(exportedFiles)-1])
+	}
+	return w.showInfo("Export complete", message, prompt.ErrBackToRowSelection)
+}
+
+func blastSnapshotOriginalRunCount(reviewCtx *blastReviewContext, runs []blastQueryRun) int {
+	if reviewCtx != nil && reviewCtx.OriginalRunCount > 0 {
+		return reviewCtx.OriginalRunCount
+	}
+	return maxInt(1, len(runs))
 }
 
 func (w *BlastWizard) exportAllBlastRunsWithProgress(ctx context.Context, selected model.SpeciesCandidate, prepared []blastQueryItem, runs []blastQueryRun, rowsByRun [][]model.BlastResultRow, rowNumbersByRun [][]int, filterFlagsByRun [][]bool, selectedByRun [][]bool, configuredRequest model.BlastRequest, settings exportSettings) (blastBatchExportResult, error) {
@@ -7538,6 +7640,7 @@ func exportSettingsFromPrompt(settings prompt.ExportSettings, baseName string, o
 		BaseName:              baseName,
 		OutputDir:             outputDir,
 		WriteReport:           settings.WriteReport,
+		WriteSession:          settings.WriteSession,
 		WriteText:             settings.WriteText,
 		WriteExcel:            settings.WriteExcel,
 		WriteRawExcel:         settings.WriteRawExcel,
@@ -8982,6 +9085,9 @@ func filesSummary(files exportFileResult) string {
 	if strings.TrimSpace(files.ReportPath) != "" {
 		lines = append(lines, "Data analysis report (PDF)\n"+files.ReportPath)
 	}
+	if strings.TrimSpace(files.SessionPath) != "" {
+		lines = append(lines, "Session snapshot (.pgo)\n"+files.SessionPath)
+	}
 	if len(lines) == 0 {
 		return "No files were written."
 	}
@@ -9309,9 +9415,9 @@ func (w *BlastWizard) exportSelectionsWithRetry(ctx context.Context, rows []mode
 	}
 }
 
-func (w *BlastWizard) exportKeywordSelectionsWithRetry(ctx context.Context, selected model.SpeciesCandidate, rows []model.KeywordResultRow, allRows []model.KeywordResultRow, groups []model.KeywordSearchGroup, baseName string, outputDir string, settings exportSettings, reportCtx *keywordReportRunContext) error {
+func (w *BlastWizard) exportKeywordSelectionsWithRetry(ctx context.Context, selected model.SpeciesCandidate, rows []model.KeywordResultRow, allRows []model.KeywordResultRow, groups []model.KeywordSearchGroup, baseName string, outputDir string, settings exportSettings, selectedMask []bool, mode QueryMode, reportCtx *keywordReportRunContext) error {
 	for {
-		err := w.exportKeywordSelections(ctx, selected, rows, allRows, groups, baseName, outputDir, settings, reportCtx)
+		err := w.exportKeywordSelections(ctx, selected, rows, allRows, groups, baseName, outputDir, settings, selectedMask, mode, reportCtx)
 		if err == nil {
 			return nil
 		}
@@ -9337,13 +9443,17 @@ func flattenKeywordSearchGroups(groups []model.KeywordSearchGroup) []model.Keywo
 }
 
 func (w *BlastWizard) prepareAndExportKeywordSelection(ctx context.Context, selected model.SpeciesCandidate, groups []model.KeywordSearchGroup, rows []model.KeywordResultRow, reportCtx *keywordReportRunContext) error {
+	return w.prepareAndExportKeywordSelectionWithMask(ctx, selected, groups, rows, nil, ModeKeyword, reportCtx)
+}
+
+func (w *BlastWizard) prepareAndExportKeywordSelectionWithMask(ctx context.Context, selected model.SpeciesCandidate, groups []model.KeywordSearchGroup, rows []model.KeywordResultRow, selectedMask []bool, mode QueryMode, reportCtx *keywordReportRunContext) error {
 	exportRows := append([]model.KeywordResultRow(nil), rows...)
 	settings, err := w.prepareExportSettings(defaultKeywordExportLabel(exportRows, groups), false, true, false)
 	if err != nil {
 		return err
 	}
 	baseName := settings.BaseName
-	if err := w.exportKeywordSelectionsWithRetry(ctx, selected, exportRows, flattenKeywordSearchGroups(groups), groups, baseName, settings.OutputDir, settings, reportCtx); err != nil {
+	if err := w.exportKeywordSelectionsWithRetry(ctx, selected, exportRows, flattenKeywordSearchGroups(groups), groups, baseName, settings.OutputDir, settings, selectedMask, mode, reportCtx); err != nil {
 		return err
 	}
 	return nil
@@ -10471,15 +10581,15 @@ func (w *BlastWizard) exportSelections(ctx context.Context, rows []model.BlastRe
 	return err
 }
 
-func (w *BlastWizard) exportKeywordSelections(ctx context.Context, selected model.SpeciesCandidate, rows []model.KeywordResultRow, allRows []model.KeywordResultRow, groups []model.KeywordSearchGroup, baseName string, outputDir string, settings exportSettings, reportCtx *keywordReportRunContext) error {
-	return w.exportSelectedKeywordFiles(ctx, selected, rows, allRows, groups, baseName, outputDir, settings, reportCtx, true)
+func (w *BlastWizard) exportKeywordSelections(ctx context.Context, selected model.SpeciesCandidate, rows []model.KeywordResultRow, allRows []model.KeywordResultRow, groups []model.KeywordSearchGroup, baseName string, outputDir string, settings exportSettings, selectedMask []bool, mode QueryMode, reportCtx *keywordReportRunContext) error {
+	return w.exportSelectedKeywordFiles(ctx, selected, rows, allRows, groups, baseName, outputDir, settings, selectedMask, mode, reportCtx, true)
 }
 
 func (w *BlastWizard) exportSelectedBlastFiles(ctx context.Context, rows []model.BlastResultRow, allRows []model.BlastResultRow, rowNumbers []int, filterFlags []bool, querySource *model.QuerySequenceSource, baseName string, outputDir string, settings exportSettings, showComplete bool) (exportFileResult, error) {
 	return w.exportBlastSelectionsToDir(ctx, rows, allRows, rowNumbers, filterFlags, querySource, baseName, baseName, sanitizeExportName(baseName), outputDir, settings, showComplete)
 }
 
-func (w *BlastWizard) exportSelectedKeywordFiles(ctx context.Context, selected model.SpeciesCandidate, rows []model.KeywordResultRow, allRows []model.KeywordResultRow, groups []model.KeywordSearchGroup, baseName string, outputDir string, settings exportSettings, reportCtx *keywordReportRunContext, showComplete bool) error {
+func (w *BlastWizard) exportSelectedKeywordFiles(ctx context.Context, selected model.SpeciesCandidate, rows []model.KeywordResultRow, allRows []model.KeywordResultRow, groups []model.KeywordSearchGroup, baseName string, outputDir string, settings exportSettings, selectedMask []bool, mode QueryMode, reportCtx *keywordReportRunContext, showComplete bool) error {
 	files := exportFileResult{}
 	exportStarted := time.Now()
 	steps := make([]report.GenerationStep, 0, 8)
@@ -10614,6 +10724,13 @@ func (w *BlastWizard) exportSelectedKeywordFiles(ctx context.Context, selected m
 			return err
 		}
 		files.ReportPath = reportPath
+	}
+	if settings.WriteSession {
+		sessionPath, err := w.writeKeywordSessionSnapshot(selected, groups, selectedMask, mode, settings, reportCtx)
+		if err != nil {
+			return err
+		}
+		files.SessionPath = sessionPath
 	}
 	if showComplete {
 		return w.showInfo("Export complete", filesSummary(files), prompt.ErrBackToRowSelection)
@@ -11865,6 +11982,10 @@ func parseFastaQuerySequenceInput(input string) (*model.QuerySequenceSource, boo
 		source.GeneID = parsed.GeneID
 		source.OrganismShort = parsed.Species
 		source.Annotation = parsed.RawHeader
+		source.BlastSourceLabelName = parsed.BlastSourceLabelName
+		source.BlastSourceGeneID = parsed.BlastSourceGeneID
+		source.PhgoRowNumber = parsed.RowNumber
+		source.PhgoHasRowNumber = parsed.HasRowPart
 	}
 
 	return source, true

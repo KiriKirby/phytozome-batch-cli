@@ -98,6 +98,84 @@ func TestBlastRowAliasChoicesFallBackToRowIdentifiers(t *testing.T) {
 	}
 }
 
+func TestBuildCanvasSelectionTableForFastaUsesFixedCanvasColumns(t *testing.T) {
+	item := model.CanvasItem{
+		Title: "1",
+		Kind:  model.CanvasKindFasta,
+		Rows: []model.CanvasRow{{
+			Kind: model.CanvasKindFasta,
+			FASTA: &model.QuerySequenceSource{
+				Annotation:    ">seq1 some header",
+				ProteinID:     "P1",
+				LabelName:     "PAL1",
+				OrganismShort: "Athaliana",
+			},
+		}},
+	}
+	columns, rows := buildCanvasSelectionTable(item)
+	gotIDs := make([]string, 0, len(columns))
+	for _, column := range columns {
+		gotIDs = append(gotIDs, column.ID)
+	}
+	wantIDs := []string{"source_type", "head", "species", "label_name", "gene_id", "source_label_name", "source_gene_id", "source_row"}
+	if strings.Join(gotIDs, "|") != strings.Join(wantIDs, "|") {
+		t.Fatalf("canvas FASTA columns = %#v, want %v", gotIDs, wantIDs)
+	}
+	if len(rows) != 1 || len(rows[0].Cells) != len(wantIDs) {
+		t.Fatalf("canvas FASTA rows = %#v, want one fixed-column row", rows)
+	}
+	if rows[0].Cells[1] != "PAL1" || rows[0].Cells[2] != "Athaliana" || rows[0].Cells[3] != "PAL1" || rows[0].Cells[4] != "" || rows[0].Cells[5] != "" || rows[0].Cells[6] != "" || rows[0].Cells[7] != "" {
+		t.Fatalf("canvas FASTA row cells = %#v", rows[0].Cells)
+	}
+}
+
+func TestCloneCanvasItemsPreservesMetadata(t *testing.T) {
+	items := []model.CanvasItem{{
+		Title:        "group 1",
+		Subtitle:     "1/1 lines",
+		Kind:         model.CanvasKindKeyword,
+		Selected:     []bool{true},
+		SourceLabel:  "PAL1",
+		ImportedFrom: "snapshot",
+		Rows: []model.CanvasRow{{
+			Kind:       model.CanvasKindKeyword,
+			KeywordRow: &model.KeywordResultRow{LabelName: "PAL1"},
+		}},
+	}}
+	cloned := cloneCanvasItems(items)
+	if len(cloned) != 1 || cloned[0].SourceLabel != "PAL1" || cloned[0].ImportedFrom != "snapshot" {
+		t.Fatalf("clone did not preserve canvas metadata: %#v", cloned)
+	}
+}
+
+func TestCanvasSelectionStructKeepsSaveFields(t *testing.T) {
+	got := CanvasSelection{
+		SaveBaseName: "canvas1",
+		WriteSession: true,
+	}
+	if got.SaveBaseName != "canvas1" || !got.WriteSession {
+		t.Fatalf("canvas save fields not preserved: %#v", got)
+	}
+}
+
+func TestBuildCanvasSelectionTableReturnsTableRows(t *testing.T) {
+	item := model.CanvasItem{
+		Title: "PAL",
+		Kind:  model.CanvasKindKeyword,
+		Rows: []model.CanvasRow{{
+			Kind:       model.CanvasKindKeyword,
+			KeywordRow: &model.KeywordResultRow{LabelName: "PAL1", ProteinID: "AT2G37040.1"},
+		}},
+	}
+	columns, rows := buildCanvasSelectionTable(item)
+	if len(columns) == 0 || len(rows) != 1 {
+		t.Fatalf("canvas keyword table not built: columns=%#v rows=%#v", columns, rows)
+	}
+	if len(rows[0].DetailPages) == 0 && strings.TrimSpace(rows[0].Detail) == "" {
+		t.Fatalf("canvas keyword detail should be preserved: %#v", rows[0])
+	}
+}
+
 func TestApplySelectionCommandUpDownAndRange(t *testing.T) {
 	selected := []bool{false, false, false, false, false}
 	order := []int{0, 1, 2, 3, 4}

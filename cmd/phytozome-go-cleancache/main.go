@@ -18,6 +18,9 @@ const author = "wangsychn"
 const repoURL = "https://github.com/KiriKirby/phytozome-go"
 const licenseName = "Common Public Attribution License 1.0"
 const licenseID = "CPAL-1.0"
+const skipBundlePreflightEnv = "PHGO_SKIP_BUNDLE_PREFLIGHT"
+const autoAcceptUpdateEnv = "PHGO_AUTO_ACCEPT_UPDATE"
+const updateDebugLogEnv = "PHGO_UPDATE_DEBUG_LOG"
 
 var version = "dev"
 
@@ -29,6 +32,11 @@ func main() {
 
 func run() error {
 	printStartupNotice()
+	if shouldSkipBundlePreflight() {
+		_, _ = fmt.Fprintln(os.Stdout)
+		_, _ = fmt.Fprintln(os.Stdout, "Bundle preflight skipped for relaunch.")
+		return launchMainProgram(os.Args[1:])
+	}
 
 	cacheTargets, err := resolveCacheTargets()
 	if err != nil {
@@ -48,12 +56,10 @@ func run() error {
 	}
 
 	_, _ = fmt.Fprintln(os.Stdout, "Cache cleanup complete.")
-	if shouldSpawnMainProgramInNewTab() {
-		_, _ = fmt.Fprintln(os.Stdout, "Opening phytozome GO in a new tab...")
-		return launchMainProgramInNewTab(os.Args[1:])
+	if updateLaunched := maybeHandleReleaseUpdate(os.Args[1:]); updateLaunched {
+		return nil
 	}
-	_, _ = fmt.Fprintln(os.Stdout, "Starting phytozome GO...")
-	return launchMainProgramDirect(os.Args[1:])
+	return launchMainProgram(os.Args[1:])
 }
 
 func printStartupNotice() {
@@ -61,6 +67,10 @@ func printStartupNotice() {
 	_, _ = fmt.Fprintf(os.Stdout, "Author: %s\n", author)
 	_, _ = fmt.Fprintf(os.Stdout, "Repo:   %s\n", repoURL)
 	_, _ = fmt.Fprintf(os.Stdout, "License: %s (%s)\n", licenseName, licenseID)
+}
+
+func shouldSkipBundlePreflight() bool {
+	return strings.TrimSpace(os.Getenv(skipBundlePreflightEnv)) != ""
 }
 
 func runSpinner(label string, fn func() error) error {
@@ -128,6 +138,15 @@ func launchMainProgramInNewTab(args []string) error {
 		return fmt.Errorf("open %s in new tab: %w", filepath.Base(mainPath), err)
 	}
 	return nil
+}
+
+func launchMainProgram(args []string) error {
+	if shouldSpawnMainProgramInNewTab() {
+		_, _ = fmt.Fprintln(os.Stdout, "Opening phytozome GO in a new tab...")
+		return launchMainProgramInNewTab(args)
+	}
+	_, _ = fmt.Fprintln(os.Stdout, "Starting phytozome GO...")
+	return launchMainProgramDirect(args)
 }
 
 func resolveMainProgramPath() (string, error) {
