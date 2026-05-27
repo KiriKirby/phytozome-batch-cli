@@ -386,11 +386,14 @@ func formatLicenseID(id string) string {
 }
 
 type buttonSpec struct {
-	Label    string
-	Shortcut string
-	Action   func()
-	Visible  bool
-	Primary  bool
+	Label       string
+	Shortcut    string
+	Action      func()
+	Visible     bool
+	Primary     bool
+	LeftPrimary bool
+	ListOnly    bool
+	TableOnly   bool
 }
 
 func buttonRow(buttons ...buttonSpec) *buttonRowPrimitive {

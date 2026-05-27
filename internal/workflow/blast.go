@@ -218,6 +218,15 @@ func isMissingProteinSequenceError(err error) bool {
 	if strings.Contains(message, "no protein sequence") {
 		return true
 	}
+	if strings.Contains(message, "missing protein fasta url") || strings.Contains(message, "empty tair fasta url") {
+		return true
+	}
+	if strings.Contains(message, "no external protein sequence source matched") {
+		return true
+	}
+	if strings.Contains(message, "no tair protein sequence matched") {
+		return true
+	}
 	if strings.Contains(message, "protein sequence response empty") {
 		return true
 	}
@@ -1882,7 +1891,7 @@ keywordInputLoop:
 				continue keywordRowLoop
 			}
 			if selection.CreateCanvas {
-				if err := w.runKeywordRowsCanvasMode(ctx, selected, groups, selection.Rows); err != nil {
+				if err := w.runKeywordRowsCanvasMode(ctx, selected, groups, selection.Rows, selection.SelectedByGroup); err != nil {
 					if errors.Is(err, prompt.ErrBackToRowSelection) {
 						continue keywordRowLoop
 					}

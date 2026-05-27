@@ -1544,7 +1544,7 @@ func (c *Client) FetchProteinSequence(ctx context.Context, targetID int, sequenc
 		return model.ProteinSequenceData{Sequence: entry.Sequence, OriginalHeader: entry.Header}, nil
 	}
 	if err != nil {
-		return model.ProteinSequenceData{}, err
+		return model.ProteinSequenceData{}, fmt.Errorf("%w; external fallback: %v", err, externalErr)
 	}
 	if externalErr != nil {
 		return model.ProteinSequenceData{}, externalErr

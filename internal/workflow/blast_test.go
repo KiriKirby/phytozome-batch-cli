@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -3489,6 +3490,31 @@ func TestFetchKeywordProteinSequenceRecordsWithProgressSkipsMissingAndUsesOrigin
 	}
 }
 
+func TestSnapshotKeywordSequenceCacheOmitsMissingTAIRFastaWithoutFailing(t *testing.T) {
+	w := &BlastWizard{
+		source: fakeSource{
+			name: "tair",
+			sequenceErrors: map[string]error{
+				"AT1G01010.1": fmt.Errorf("empty TAIR FASTA URL; external fallback: no external protein sequence source matched AT1G01010.1"),
+			},
+		},
+		proteinSequenceCache: make(map[string]model.ProteinSequenceData),
+		proteinSequenceMiss:  make(map[string]error),
+	}
+	cache, err := w.snapshotKeywordSequenceCache(context.Background(), model.SpeciesCandidate{ProteomeID: 370201, JBrowseName: "TAIR12"}, []model.KeywordResultRow{{
+		SourceDatabase: "tair",
+		SequenceID:     "AT1G01010.1",
+		TranscriptID:   "AT1G01010.1",
+		GeneIdentifier: "AT1G01010",
+	}})
+	if err != nil {
+		t.Fatalf("snapshotKeywordSequenceCache returned error: %v", err)
+	}
+	if cache == nil || len(cache.Entries) != 0 {
+		t.Fatalf("missing FASTA should be omitted from snapshot cache, got %#v", cache)
+	}
+}
+
 func TestResolveKeywordRowsToBlastItemsSkipsModalWrapperWhenSuppressed(t *testing.T) {
 	w := &BlastWizard{
 		source:                fakeSource{sequences: map[string]string{"seq1": "MPEPTIDE"}},
@@ -5106,6 +5132,143 @@ func TestCanvasItemsFromBlastRunsPreserveRunTitlesAndSelectedRowsOnly(t *testing
 	}
 	if len(items[0].Rows) != 1 || items[0].Rows[0].RowNumber != 1 {
 		t.Fatalf("canvas rows = %#v", items[0].Rows)
+	}
+}
+
+func TestCanvasItemsFromKeywordSelectionKeepsSelectedRowsOnly(t *testing.T) {
+	groups := []model.KeywordSearchGroup{{
+		SearchTerm: "group A",
+		LabelName:  "A",
+		Rows: []model.KeywordResultRow{
+			{LabelName: "A1", ProteinID: "P1"},
+			{LabelName: "A2", ProteinID: "P2"},
+		},
+	}, {
+		SearchTerm: "group B",
+		LabelName:  "B",
+		Rows: []model.KeywordResultRow{
+			{LabelName: "B1", ProteinID: "P3"},
+		},
+	}}
+	items := canvasItemsFromKeywordSelection(groups, []model.KeywordResultRow{
+		groups[0].Rows[1],
+	}, nil)
+	if len(items) != 1 {
+		t.Fatalf("canvas item count = %d, want 1", len(items))
+	}
+	if items[0].Title != "1" {
+		t.Fatalf("canvas title = %q, want numeric single-table title", items[0].Title)
+	}
+	if len(items[0].Rows) != 1 || items[0].Rows[0].KeywordRow == nil || items[0].Rows[0].KeywordRow.LabelName != "A2" {
+		t.Fatalf("canvas rows = %#v", items[0].Rows)
+	}
+}
+
+func TestCanvasItemsFromKeywordSelectionUsesGroupMaskAndSkipsUnselectedGroups(t *testing.T) {
+	groups := []model.KeywordSearchGroup{{
+		SearchTerm: "keyword A",
+		LabelName:  "A",
+		Rows: []model.KeywordResultRow{
+			{LabelName: "A1", ProteinID: "P1"},
+			{LabelName: "A2", ProteinID: "P2"},
+		},
+	}, {
+		SearchTerm: "keyword B",
+		LabelName:  "B",
+		Rows: []model.KeywordResultRow{
+			{LabelName: "B1", ProteinID: "P3"},
+		},
+	}}
+	items := canvasItemsFromKeywordSelection(groups, []model.KeywordResultRow{
+		groups[0].Rows[1],
+	}, [][]bool{
+		{false, true},
+		{false},
+	})
+	if len(items) != 1 {
+		t.Fatalf("canvas item count = %d, want 1", len(items))
+	}
+	if items[0].Title != "keyword A" {
+		t.Fatalf("canvas title = %q, want selected group title", items[0].Title)
+	}
+	if len(items[0].Rows) != 1 || items[0].Rows[0].KeywordRow == nil || items[0].Rows[0].KeywordRow.LabelName != "A2" {
+		t.Fatalf("canvas rows = %#v", items[0].Rows)
+	}
+}
+
+func TestMarkKeywordCanvasSequenceAvailabilityDisablesMissingRows(t *testing.T) {
+	items := canvasItemsFromKeywordSelection([]model.KeywordSearchGroup{{
+		SearchTerm: "keyword A",
+		Rows: []model.KeywordResultRow{
+			{LabelName: "A1", SequenceID: "ok"},
+			{LabelName: "A2", SequenceID: "missing"},
+		},
+	}}, []model.KeywordResultRow{
+		{LabelName: "A1", SequenceID: "ok"},
+		{LabelName: "A2", SequenceID: "missing"},
+	}, [][]bool{{true, true}})
+	markKeywordCanvasSequenceAvailability(items, map[string]sequenceFetchResult{
+		"ok":      {data: model.ProteinSequenceData{Sequence: "MPEPTIDE"}},
+		"missing": {err: fmt.Errorf("empty TAIR FASTA URL")},
+	})
+	if len(items) != 1 || len(items[0].Rows) != 2 {
+		t.Fatalf("canvas items = %#v", items)
+	}
+	if items[0].Rows[0].SequenceReady == nil || !*items[0].Rows[0].SequenceReady {
+		t.Fatalf("available row should be marked selectable: %#v", items[0].Rows[0])
+	}
+	if items[0].Rows[1].SequenceReady == nil || *items[0].Rows[1].SequenceReady {
+		t.Fatalf("missing row should be marked non-selectable: %#v", items[0].Rows[1])
+	}
+}
+
+func TestMissingProteinSequenceErrorIncludesTAIRFastaURLFailures(t *testing.T) {
+	for _, err := range []error{
+		fmt.Errorf("empty TAIR FASTA URL"),
+		fmt.Errorf("missing protein FASTA URL"),
+		fmt.Errorf("no external protein sequence source matched AT1G01010"),
+		fmt.Errorf("no TAIR protein sequence matched AT1G01010"),
+	} {
+		if !isMissingProteinSequenceError(err) {
+			t.Fatalf("error should be classified as missing sequence: %v", err)
+		}
+	}
+}
+
+func TestCanvasRowsFromFastaInputKeepsPhgoHeadAndSequence(t *testing.T) {
+	w := NewBlastWizard(io.Discard)
+	rows, err := w.canvasRowsFromFastaInput(">phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\7\nMPEPTIDE\n")
+	if err != nil {
+		t.Fatalf("canvasRowsFromFastaInput returned error: %v", err)
+	}
+	if len(rows) != 1 || rows[0].FASTA == nil {
+		t.Fatalf("canvas rows = %#v", rows)
+	}
+	source := rows[0].FASTA
+	if source.Annotation != "phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\7" || source.Sequence != "MPEPTIDE" {
+		t.Fatalf("phgo FASTA head/sequence not preserved: %#v", source)
+	}
+	if source.OrganismShort != "Sp7498" || source.LabelName != "C4H" || source.GeneID != "Sp7498_C4H_001" || source.BlastSourceLabelName != "PAL1" || source.BlastSourceGeneID != "AT2G37040" || source.PhgoRowNumber != 7 {
+		t.Fatalf("phgo FASTA metadata not extracted: %#v", source)
+	}
+}
+
+func TestCanvasItemsFromInputUsesFastaFilenameTitle(t *testing.T) {
+	w := NewBlastWizard(io.Discard)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "queries.fasta")
+	if err := os.WriteFile(path, []byte(">query1\nMPEPTIDE\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	items, err := w.canvasItemsFromInput(context.Background(), ">query1\nMPEPTIDE\n", 3, path)
+	if err != nil {
+		t.Fatalf("canvasItemsFromInput returned error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("canvas item count = %d, want 1", len(items))
+	}
+	if items[0].Title != "queries.fasta" {
+		t.Fatalf("canvas title = %q, want filename", items[0].Title)
 	}
 }
 

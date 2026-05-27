@@ -8,9 +8,12 @@
 package workflow
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -20,6 +23,11 @@ import (
 	"github.com/KiriKirby/phytozome-go/internal/prompt"
 	"github.com/KiriKirby/phytozome-go/internal/sessionsnapshot"
 	"github.com/KiriKirby/phytozome-go/internal/tui"
+)
+
+var (
+	canvasSequenceReadyTrue  = true
+	canvasSequenceReadyFalse = false
 )
 
 type canvasLaunchState struct {
@@ -94,14 +102,14 @@ func (w *BlastWizard) runCanvasMode(ctx context.Context, state canvasLaunchState
 			state.Items[state.CurrentItem].Title = strings.TrimSpace(name)
 			state.SaveBaseName = canvasDefaultSaveName(state.Items)
 		case "add_item":
-			input, inputErr := w.prompt.CanvasAddItemInput()
+			input, sourcePath, inputErr := w.prompt.CanvasAddItemInput()
 			if inputErr != nil {
 				if inputErr == prompt.ErrBackToRowSelection {
 					continue
 				}
 				return inputErr
 			}
-			items, itemErr := w.canvasItemsFromInput(ctx, strings.TrimSpace(input), state.NextNumericID)
+			items, itemErr := w.canvasItemsFromInput(ctx, strings.TrimSpace(input), state.NextNumericID, sourcePath)
 			if itemErr != nil {
 				if infoErr := w.showInfo("Canvas", itemErr.Error(), prompt.ErrBackToDatabaseSelection); infoErr != nil {
 					return infoErr
@@ -146,17 +154,22 @@ func (w *BlastWizard) runCanvasMode(ctx context.Context, state canvasLaunchState
 			}
 			item := &state.Items[state.CurrentItem]
 			selected := normalizeCanvasSelection(item.Selected, len(item.Rows))
-			if countTrueBools(selected) == 0 {
+			rowIndex := selection.ActionRow
+			if rowIndex < 0 || rowIndex >= len(item.Rows) {
 				continue
 			}
 			nextRows := make([]model.CanvasRow, 0, len(item.Rows))
 			nextSelected := make([]bool, 0, len(item.Rows))
 			for i, row := range item.Rows {
-				if i < len(selected) && selected[i] {
+				if i == rowIndex {
 					continue
 				}
 				nextRows = append(nextRows, row)
-				nextSelected = append(nextSelected, false)
+				if i < len(selected) {
+					nextSelected = append(nextSelected, selected[i])
+				} else {
+					nextSelected = append(nextSelected, false)
+				}
 			}
 			item.Rows = nextRows
 			item.Selected = nextSelected
@@ -204,7 +217,7 @@ func nextCanvasNumericID(items []model.CanvasItem) int {
 	return maxID + 1
 }
 
-func (w *BlastWizard) canvasItemsFromInput(ctx context.Context, input string, index int) ([]model.CanvasItem, error) {
+func (w *BlastWizard) canvasItemsFromInput(ctx context.Context, input string, index int, sourcePath string) ([]model.CanvasItem, error) {
 	if strings.TrimSpace(input) == "" {
 		return nil, fmt.Errorf("canvas input cannot be empty")
 	}
@@ -245,6 +258,9 @@ func (w *BlastWizard) canvasItemsFromInput(ctx context.Context, input string, in
 		return nil, err
 	}
 	title := fmt.Sprintf("%d", index)
+	if name := strings.TrimSpace(filepath.Base(sourcePath)); name != "" && !strings.EqualFold(filepath.Ext(sourcePath), ".pgo") {
+		title = name
+	}
 	item := model.CanvasItem{
 		Title:        title,
 		Kind:         model.CanvasKindFasta,
@@ -268,11 +284,33 @@ func (w *BlastWizard) tryLoadCanvasSnapshotInput(ctx context.Context, input stri
 	if err != nil {
 		return sessionsnapshot.Snapshot{}, "", false, nil
 	}
+	if strings.EqualFold(filepath.Ext(path), ".pgo") {
+		if isSnapshot, sigErr := canvasPathLooksLikeSnapshot(path); sigErr != nil {
+			return sessionsnapshot.Snapshot{}, "", false, sigErr
+		} else if !isSnapshot {
+			return sessionsnapshot.Snapshot{}, "", false, nil
+		}
+	} else {
+		return sessionsnapshot.Snapshot{}, "", false, nil
+	}
 	snapshot, err := w.loadCanvasImportSnapshot(ctx, path)
 	if err != nil {
 		return sessionsnapshot.Snapshot{}, "", true, err
 	}
 	return snapshot, strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)), true, nil
+}
+
+func canvasPathLooksLikeSnapshot(path string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	buf := make([]byte, 4)
+	if _, err := io.ReadFull(f, buf); err != nil {
+		return false, err
+	}
+	return bytes.Equal(buf, []byte("PK\x03\x04")), nil
 }
 
 func (w *BlastWizard) canvasRowsFromFastaInput(input string) ([]model.CanvasRow, error) {
@@ -291,17 +329,19 @@ func (w *BlastWizard) canvasRowsFromFastaInput(input string) ([]model.CanvasRow,
 		}
 		source, ok := parseFastaQuerySequenceInput(record)
 		if !ok || source == nil {
-			header, _ := splitFastaHeaderAndSequence(record)
+			header, sequence := splitCanvasFastaHeaderAndSequence(record)
 			if header == "" {
 				return nil, fmt.Errorf("invalid FASTA input near %q", oneLinePreview(record))
 			}
 			source = &model.QuerySequenceSource{
 				Annotation:     strings.TrimSpace(header),
+				Sequence:       sequence,
 				SourceDatabase: "canvas",
 			}
 		}
-		if strings.TrimSpace(source.SourceDatabase) == "" {
-			source.SourceDatabase = "canvas"
+		source = canvasImportSourceOnlyHeaderMetadata(source)
+		if strings.TrimSpace(source.SourceDatabase) == "" || strings.EqualFold(source.SourceDatabase, "fasta") {
+			source.SourceDatabase = string(model.CanvasKindFasta)
 		}
 		rows = append(rows, model.CanvasRow{
 			Kind:  model.CanvasKindFasta,
@@ -312,6 +352,73 @@ func (w *BlastWizard) canvasRowsFromFastaInput(input string) ([]model.CanvasRow,
 		return nil, fmt.Errorf("no FASTA rows could be created")
 	}
 	return rows, nil
+}
+
+func splitCanvasFastaHeaderAndSequence(input string) (string, string) {
+	value := strings.TrimSpace(strings.ReplaceAll(input, "\r", ""))
+	if value == "" || !strings.HasPrefix(value, ">") {
+		return "", ""
+	}
+	lines := strings.Split(value, "\n")
+	if len(lines) == 0 {
+		return "", ""
+	}
+	header := strings.TrimSpace(strings.TrimPrefix(lines[0], ">"))
+	if header == "" {
+		return "", ""
+	}
+	sequenceLines := make([]string, 0, len(lines)-1)
+	for _, line := range lines[1:] {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, ">") {
+			continue
+		}
+		sequenceLines = append(sequenceLines, line)
+	}
+	return header, sanitizeSequence(strings.Join(sequenceLines, "\n"))
+}
+
+func canvasImportSourceOnlyHeaderMetadata(source *model.QuerySequenceSource) *model.QuerySequenceSource {
+	if source == nil {
+		return nil
+	}
+	next := *source
+	header := strings.TrimSpace(next.Annotation)
+	if parsed, ok := parsePhgoFastaHeader(header); ok {
+		next.LabelName = parsed.LabelName
+		next.GeneID = parsed.GeneID
+		next.OrganismShort = parsed.Species
+		next.Annotation = parsed.RawHeader
+		next.BlastSourceLabelName = parsed.BlastSourceLabelName
+		next.BlastSourceGeneID = parsed.BlastSourceGeneID
+		next.PhgoRowNumber = parsed.RowNumber
+		next.PhgoHasRowNumber = parsed.HasRowPart
+		next.PreferredSequenceID = ""
+		next.ProteinID = ""
+		next.TranscriptID = ""
+		next.PhgoAliases = ""
+		next.Aliases = ""
+		next.Symbols = ""
+		next.Synonyms = ""
+		next.AutoDefine = ""
+		return &next
+	}
+	next.LabelName = ""
+	next.GeneID = ""
+	next.OrganismShort = ""
+	next.BlastSourceLabelName = ""
+	next.BlastSourceGeneID = ""
+	next.PhgoRowNumber = 0
+	next.PhgoHasRowNumber = false
+	next.PreferredSequenceID = ""
+	next.ProteinID = ""
+	next.TranscriptID = ""
+	next.PhgoAliases = ""
+	next.Aliases = ""
+	next.Symbols = ""
+	next.Synonyms = ""
+	next.AutoDefine = ""
+	return &next
 }
 
 func normalizeCanvasSelection(selected []bool, size int) []bool {
@@ -513,6 +620,10 @@ func snapshotCanvasItems(items []model.CanvasItem) []sessionsnapshot.CanvasItemV
 		for j := range items[i].Rows {
 			out[i].Rows[j].RowNumber = items[i].Rows[j].RowNumber
 			out[i].Rows[j].Kind = items[i].Rows[j].Kind
+			if items[i].Rows[j].SequenceReady != nil {
+				ready := *items[i].Rows[j].SequenceReady
+				out[i].Rows[j].SequenceReady = &ready
+			}
 			if items[i].Rows[j].KeywordRow != nil {
 				copyRow := *items[i].Rows[j].KeywordRow
 				out[i].Rows[j].KeywordRow = &copyRow
@@ -584,7 +695,7 @@ func canvasItemFromKeywordSnapshot(module *sessionsnapshot.KeywordResultV2) mode
 	selected := make([]bool, 0, len(rows))
 	for _, row := range rows {
 		copyRow := row
-		itemRows = append(itemRows, model.CanvasRow{Kind: model.CanvasKindKeyword, KeywordRow: &copyRow})
+		itemRows = append(itemRows, model.CanvasRow{Kind: model.CanvasKindKeyword, KeywordRow: &copyRow, SequenceReady: canvasKeywordSequenceReady(row)})
 		selected = append(selected, true)
 	}
 	title := strings.TrimSpace(module.SelectedSpecies.DisplayLabel())
@@ -612,7 +723,7 @@ func canvasItemsFromBlastSnapshot(module *sessionsnapshot.BlastResultV2) []model
 		selected := make([]bool, 0, len(run.Results.Rows))
 		for _, row := range run.Results.Rows {
 			copyRow := row
-			rows = append(rows, model.CanvasRow{Kind: model.CanvasKindBlast, BlastRow: &copyRow})
+			rows = append(rows, model.CanvasRow{Kind: model.CanvasKindBlast, BlastRow: &copyRow, SequenceReady: canvasBlastSequenceReady(row)})
 			selected = append(selected, true)
 		}
 		items = append(items, model.CanvasItem{
@@ -639,7 +750,7 @@ func canvasItemFromBlastRows(title string, sourceLabel string, rows []model.Blas
 	}
 	for _, row := range rows {
 		copyRow := row
-		itemRows = append(itemRows, model.CanvasRow{Kind: model.CanvasKindBlast, BlastRow: &copyRow})
+		itemRows = append(itemRows, model.CanvasRow{Kind: model.CanvasKindBlast, BlastRow: &copyRow, SequenceReady: canvasBlastSequenceReady(row)})
 	}
 	title = strings.TrimSpace(title)
 	if title == "" {
@@ -658,9 +769,46 @@ func canvasItemFromBlastRows(title string, sourceLabel string, rows []model.Blas
 	}
 }
 
-func canvasItemsFromKeywordSelection(groups []model.KeywordSearchGroup, selectedRows []model.KeywordResultRow) []model.CanvasItem {
+func canvasItemsFromKeywordSelection(groups []model.KeywordSearchGroup, selectedRows []model.KeywordResultRow, selectedByGroup [][]bool) []model.CanvasItem {
 	if len(selectedRows) == 0 {
 		return nil
+	}
+	if len(selectedByGroup) == len(groups) {
+		items := make([]model.CanvasItem, 0, len(groups))
+		for groupIndex, group := range groups {
+			mask := selectedByGroup[groupIndex]
+			itemRows := make([]model.CanvasRow, 0, len(group.Rows))
+			selectedMask := make([]bool, 0, len(group.Rows))
+			for rowIndex, row := range group.Rows {
+				if rowIndex >= len(mask) || !mask[rowIndex] {
+					continue
+				}
+				copyRow := row
+				itemRows = append(itemRows, model.CanvasRow{Kind: model.CanvasKindKeyword, KeywordRow: &copyRow, SequenceReady: canvasKeywordSequenceReady(row)})
+				selectedMask = append(selectedMask, true)
+			}
+			if len(itemRows) == 0 {
+				continue
+			}
+			title := strings.TrimSpace(group.SearchTerm)
+			if title == "" {
+				title = strings.TrimSpace(group.LabelName)
+			}
+			if title == "" {
+				title = "1"
+			}
+			items = append(items, model.CanvasItem{
+				Title:       title,
+				Subtitle:    fmt.Sprintf("%d/%d lines", len(itemRows), len(itemRows)),
+				Kind:        model.CanvasKindKeyword,
+				Rows:        assignCanvasRowNumbers(itemRows, 1),
+				Selected:    selectedMask,
+				SourceLabel: strings.TrimSpace(group.LabelName),
+			})
+		}
+		if len(items) > 0 {
+			return items
+		}
 	}
 	selectedKeys := make(map[string]int, len(selectedRows))
 	for i, row := range selectedRows {
@@ -677,7 +825,7 @@ func canvasItemsFromKeywordSelection(groups []model.KeywordSearchGroup, selected
 			}
 			selectedKeys[key]--
 			copyRow := row
-			itemRows = append(itemRows, model.CanvasRow{Kind: model.CanvasKindKeyword, KeywordRow: &copyRow})
+			itemRows = append(itemRows, model.CanvasRow{Kind: model.CanvasKindKeyword, KeywordRow: &copyRow, SequenceReady: canvasKeywordSequenceReady(row)})
 			selectedMask = append(selectedMask, true)
 		}
 		if len(itemRows) == 0 {
@@ -704,7 +852,7 @@ func canvasItemsFromKeywordSelection(groups []model.KeywordSearchGroup, selected
 		selectedMask := make([]bool, 0, len(selectedRows))
 		for _, row := range selectedRows {
 			copyRow := row
-			itemRows = append(itemRows, model.CanvasRow{Kind: model.CanvasKindKeyword, KeywordRow: &copyRow})
+			itemRows = append(itemRows, model.CanvasRow{Kind: model.CanvasKindKeyword, KeywordRow: &copyRow, SequenceReady: canvasKeywordSequenceReady(row)})
 			selectedMask = append(selectedMask, true)
 		}
 		items = append(items, model.CanvasItem{
@@ -747,6 +895,73 @@ func canvasItemsFromBlastRuns(runs []blastQueryRun, selectedByRun [][]bool) []mo
 	return items
 }
 
+func canvasKeywordSequenceReady(row model.KeywordResultRow) *bool {
+	if strings.TrimSpace(row.SequenceID) == "" && strings.TrimSpace(row.ProteinID) == "" && strings.TrimSpace(row.TranscriptID) == "" {
+		return &canvasSequenceReadyFalse
+	}
+	return nil
+}
+
+func canvasBlastSequenceReady(row model.BlastResultRow) *bool {
+	if strings.TrimSpace(firstNonEmpty(row.SequenceID, row.TranscriptID, row.Protein, row.SubjectID)) == "" {
+		return &canvasSequenceReadyFalse
+	}
+	return nil
+}
+
+func markKeywordCanvasSequenceAvailability(items []model.CanvasItem, results map[string]sequenceFetchResult) {
+	if len(results) == 0 {
+		return
+	}
+	for itemIndex := range items {
+		for rowIndex := range items[itemIndex].Rows {
+			row := &items[itemIndex].Rows[rowIndex]
+			if row.Kind != model.CanvasKindKeyword || row.KeywordRow == nil {
+				continue
+			}
+			sequenceID := strings.TrimSpace(row.KeywordRow.SequenceID)
+			if sequenceID == "" {
+				row.SequenceReady = &canvasSequenceReadyFalse
+				continue
+			}
+			if fetched, ok := results[sequenceID]; ok {
+				if fetched.err != nil || strings.TrimSpace(fetched.data.Sequence) == "" {
+					row.SequenceReady = &canvasSequenceReadyFalse
+				} else {
+					row.SequenceReady = &canvasSequenceReadyTrue
+				}
+			}
+		}
+	}
+}
+
+func markBlastCanvasSequenceAvailability(items []model.CanvasItem, results map[string]sequenceFetchResult) {
+	if len(results) == 0 {
+		return
+	}
+	for itemIndex := range items {
+		for rowIndex := range items[itemIndex].Rows {
+			row := &items[itemIndex].Rows[rowIndex]
+			if row.Kind != model.CanvasKindBlast || row.BlastRow == nil {
+				continue
+			}
+			sequenceID := strings.TrimSpace(firstNonEmpty(row.BlastRow.SequenceID, row.BlastRow.TranscriptID, row.BlastRow.Protein))
+			if sequenceID == "" {
+				row.SequenceReady = &canvasSequenceReadyFalse
+				continue
+			}
+			key := fmt.Sprintf("%d:%s", row.BlastRow.TargetID, sequenceID)
+			if fetched, ok := results[key]; ok {
+				if fetched.err != nil || strings.TrimSpace(fetched.data.Sequence) == "" {
+					row.SequenceReady = &canvasSequenceReadyFalse
+				} else {
+					row.SequenceReady = &canvasSequenceReadyTrue
+				}
+			}
+		}
+	}
+}
+
 func canvasKeywordRowKey(row model.KeywordResultRow, index int) string {
 	return strings.Join([]string{
 		strings.TrimSpace(row.SourceDatabase),
@@ -769,12 +984,12 @@ func countTrueBools(values []bool) int {
 	return count
 }
 
-func (w *BlastWizard) runKeywordRowsCanvasMode(ctx context.Context, selected model.SpeciesCandidate, groups []model.KeywordSearchGroup, rows []model.KeywordResultRow) error {
-	_ = selected
-	items := canvasItemsFromKeywordSelection(groups, rows)
+func (w *BlastWizard) runKeywordRowsCanvasMode(ctx context.Context, selected model.SpeciesCandidate, groups []model.KeywordSearchGroup, rows []model.KeywordResultRow, selectedByGroup [][]bool) error {
+	items := canvasItemsFromKeywordSelection(groups, rows, selectedByGroup)
 	if len(items) == 0 {
 		return nil
 	}
+	markKeywordCanvasSequenceAvailability(items, w.prefetchKeywordSequences(ctx, selected, rows, nil))
 	return w.openCanvasChildOrInline(ctx, items, 0, nextCanvasNumericID(items))
 }
 
@@ -783,7 +998,9 @@ func (w *BlastWizard) runBlastRowsCanvasMode(ctx context.Context, title string, 
 		return nil
 	}
 	item := canvasItemFromBlastRows("1", sourceLabel, rows, nil)
-	return w.openCanvasChildOrInline(ctx, []model.CanvasItem{item}, 0, nextCanvasNumericID([]model.CanvasItem{item}))
+	items := []model.CanvasItem{item}
+	markBlastCanvasSequenceAvailability(items, w.prefetchBlastSequences(ctx, rows, nil))
+	return w.openCanvasChildOrInline(ctx, items, 0, nextCanvasNumericID(items))
 }
 
 func (w *BlastWizard) runBlastRunsCanvasMode(ctx context.Context, runs []blastQueryRun, selectedByRun [][]bool) error {
@@ -791,6 +1008,15 @@ func (w *BlastWizard) runBlastRunsCanvasMode(ctx context.Context, runs []blastQu
 	if len(items) == 0 {
 		return nil
 	}
+	rows := make([]model.BlastResultRow, 0)
+	for _, item := range items {
+		for _, row := range item.Rows {
+			if row.BlastRow != nil {
+				rows = append(rows, *row.BlastRow)
+			}
+		}
+	}
+	markBlastCanvasSequenceAvailability(items, w.prefetchBlastSequences(ctx, rows, nil))
 	return w.openCanvasChildOrInline(ctx, items, 0, nextCanvasNumericID(items))
 }
 
@@ -829,6 +1055,10 @@ func cloneCanvasItems(items []model.CanvasItem) []model.CanvasItem {
 			row := items[i].Rows[j]
 			out[i].Rows[j].RowNumber = row.RowNumber
 			out[i].Rows[j].Kind = row.Kind
+			if row.SequenceReady != nil {
+				ready := *row.SequenceReady
+				out[i].Rows[j].SequenceReady = &ready
+			}
 			if row.KeywordRow != nil {
 				copyRow := *row.KeywordRow
 				if row.KeywordRow.ExtraColumns != nil {

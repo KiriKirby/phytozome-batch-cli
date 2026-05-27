@@ -519,6 +519,10 @@ func canvasItemsFromSnapshot(items []sessionsnapshot.CanvasItemV1) []model.Canva
 		for j := range items[i].Rows {
 			out[i].Rows[j].RowNumber = items[i].Rows[j].RowNumber
 			out[i].Rows[j].Kind = items[i].Rows[j].Kind
+			if items[i].Rows[j].SequenceReady != nil {
+				ready := *items[i].Rows[j].SequenceReady
+				out[i].Rows[j].SequenceReady = &ready
+			}
 			if items[i].Rows[j].KeywordRow != nil {
 				copyRow := *items[i].Rows[j].KeywordRow
 				out[i].Rows[j].KeywordRow = &copyRow

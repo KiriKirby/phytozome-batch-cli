@@ -270,6 +270,20 @@ func TestButtonRowPlacesPrimaryExtrasBeforeDefaultPrimaryButtons(t *testing.T) {
 	}
 }
 
+func TestLeftPrimaryButtonUsesNormalStyle(t *testing.T) {
+	row := buttonRow(
+		buttonSpec{Label: "Add canvas", Shortcut: "F2", Visible: true, LeftPrimary: true},
+		buttonSpec{Label: ButtonExport, Shortcut: ShortcutExport, Visible: true, Primary: true},
+	)
+	positions := row.buttonPositions(80)
+	if len(positions) != 2 {
+		t.Fatalf("button positions = %d, want 2", len(positions))
+	}
+	if !strings.Contains(positions[0].label, "Add canvas") {
+		t.Fatalf("left primary button not rendered in left group: %#v", positions)
+	}
+}
+
 func TestNormalizeDetailPagesPrefersStructuredPages(t *testing.T) {
 	row := TableRow{
 		Detail: "legacy",
@@ -752,8 +766,11 @@ func TestDetailOverlayAddsExplicitCloseButton(t *testing.T) {
 	if len(overlay.buttons.buttons) != 3 {
 		t.Fatalf("detail overlay button count = %d, want 3", len(overlay.buttons.buttons))
 	}
-	if overlay.buttons.buttons[1].Label != ButtonClose || overlay.buttons.buttons[1].Shortcut != ShortcutBack {
-		t.Fatalf("detail overlay close button = %#v, want Close (Esc)", overlay.buttons.buttons[1])
+	if overlay.buttons.buttons[0].Label != ButtonClose || overlay.buttons.buttons[0].Shortcut != ShortcutBack {
+		t.Fatalf("detail overlay first button = %#v, want Close (Esc)", overlay.buttons.buttons[0])
+	}
+	if overlay.buttons.buttons[1].Label != ButtonCopy || overlay.buttons.buttons[1].Shortcut != ShortcutCopy {
+		t.Fatalf("detail overlay second button = %#v, want Copy (Ctrl+Y)", overlay.buttons.buttons[1])
 	}
 	if overlay.buttons.buttons[2].Label != ButtonRunBLAST || overlay.buttons.buttons[2].Shortcut != ShortcutBlast {
 		t.Fatalf("detail overlay third button = %#v, want Run BLAST (Ctrl+B)", overlay.buttons.buttons[2])

@@ -130,9 +130,10 @@ type MultiLinePage struct {
 }
 
 type MultiLineResult struct {
-	Text   string
-	Nav    NavAction
-	Action string
+	Text       string
+	Nav        NavAction
+	Action     string
+	SourcePath string
 }
 
 type TableColumn struct {
@@ -145,12 +146,14 @@ type TableColumn struct {
 }
 
 type TableRow struct {
-	Cells        []string
-	Group        string
-	Detail       string
-	DetailPages  []DetailPage
-	FilterFlag   bool
-	FilterReason string
+	Cells         []string
+	Group         string
+	Detail        string
+	DetailPages   []DetailPage
+	FilterFlag    bool
+	FilterReason  string
+	Selectable    bool
+	SelectableSet bool
 }
 
 type DetailPage struct {
@@ -362,6 +365,7 @@ type CanvasPage struct {
 	AliasColumnID string
 	LoadAliases   func(runIndex int, rowIndex int) RowAliasChoices
 	ApplyAlias    func(runIndex int, rowIndex int, alias string) (TableRow, error)
+	LoadDetail    func(runIndex int, rowIndex int, pageIndex int, itemIndex int) (DetailItem, bool, error)
 }
 
 type CanvasResult struct {
@@ -371,6 +375,7 @@ type CanvasResult struct {
 	GenerateFile  bool
 	DoneAll       bool
 	Action        string
+	ActionRow     int
 	Nav           NavAction
 	State         BlastRunSelectionState
 	RunIndex      int
@@ -402,7 +407,7 @@ func RunCanvasPage(page CanvasPage) (CanvasResult, error) {
 		actions := []buttonSpec{
 			{Label: ButtonBack, Shortcut: ShortcutBack, Action: func() { result.Nav = NavBack; app.Stop() }, Visible: page.AllowBack},
 			{Label: ButtonHome, Shortcut: ShortcutHome, Action: func() { result.Nav = NavHome; app.Stop() }, Visible: page.AllowHome},
-			{Label: "Add canvas", Shortcut: "F2", Action: func() { result.Action = "add_item"; app.Stop() }, Visible: true},
+			{Label: "Add canvas", Shortcut: "F2", Action: func() { result.Action = "add_item"; app.Stop() }, Visible: true, LeftPrimary: true},
 			{Label: conciseActionLabel(page.GenerateText, ButtonSave), Shortcut: ShortcutExport, Action: func() { result.GenerateFile = true; app.Stop() }, Visible: true, Primary: true},
 		}
 		addButtonRow(body, buttonRow(actions...))
@@ -467,6 +472,7 @@ func RunCanvasPage(page CanvasPage) (CanvasResult, error) {
 		AliasColumnID:      page.AliasColumnID,
 		LoadAliases:        page.LoadAliases,
 		ApplyAlias:         page.ApplyAlias,
+		LoadDetail:         page.LoadDetail,
 	})
 	if err != nil {
 		return CanvasResult{}, err
@@ -476,6 +482,7 @@ func RunCanvasPage(page CanvasPage) (CanvasResult, error) {
 		GenerateFile:  blastResult.GenerateFile,
 		DoneAll:       blastResult.DoneAll,
 		Action:        blastResult.Action,
+		ActionRow:     blastResult.ActionRow,
 		Nav:           blastResult.Nav,
 		State:         blastResult.State,
 		NextNumericID: page.NextNumericID,
@@ -849,6 +856,11 @@ func (t *rowSelectionTable) MouseHandler() func(action tview.MouseAction, event 
 		if event == nil || !t.InRect(event.Position()) {
 			return false, nil
 		}
+		if action == tview.MouseLeftDown || action == tview.MouseLeftClick {
+			if setFocus != nil {
+				setFocus(t)
+			}
+		}
 		switch action {
 		case tview.MouseScrollLeft:
 			t.scrollColumns(-1)
@@ -1038,6 +1050,7 @@ type Action struct {
 	Label         string
 	Shortcut      string
 	Primary       bool
+	LeftPrimary   bool
 	ListOnly      bool
 	TableOnly     bool
 	RequiresItems bool
@@ -1106,6 +1119,7 @@ type ExportSettingsPage struct {
 	ReportInitial          bool
 	SessionLabel           string
 	SessionInitial         bool
+	SnapshotOnly           bool
 	WriteText              bool
 	WriteExcel             bool
 	WriteRawExcel          bool
@@ -1692,15 +1706,17 @@ func RunMultiLinePage(page MultiLinePage) (MultiLineResult, error) {
 
 	pasteStatus := newPasteStatus(func() { app.SetFocus(area) })
 	confirm := func() {
-		text, err := pageInputText(page.RawInput, area.GetText())
+		input, err := pageInput(page.RawInput, area.GetText())
 		if err != nil {
 			showInputFileError(pasteStatus, err)
 			return
 		}
+		text := input.Text
 		if text == "" && !page.AllowEmpty && strings.TrimSpace(page.EmptyAction) == "" {
 			return
 		}
 		result.Text = text
+		result.SourcePath = input.SourcePath
 		if text == "" && strings.TrimSpace(page.EmptyAction) != "" {
 			result.Action = strings.TrimSpace(page.EmptyAction)
 		} else {
@@ -1709,15 +1725,17 @@ func RunMultiLinePage(page MultiLinePage) (MultiLineResult, error) {
 		app.Stop()
 	}
 	secondary := func() {
-		text, err := pageInputText(page.RawInput, area.GetText())
+		input, err := pageInput(page.RawInput, area.GetText())
 		if err != nil {
 			showInputFileError(pasteStatus, err)
 			return
 		}
+		text := input.Text
 		if text == "" && !page.AllowEmpty && strings.TrimSpace(page.EmptyAction) == "" {
 			return
 		}
 		result.Text = text
+		result.SourcePath = input.SourcePath
 		result.Action = firstNonEmptyText(page.SecondaryAction, "secondary")
 		app.Stop()
 	}
@@ -1810,6 +1828,11 @@ func RunMultiLinePage(page MultiLinePage) (MultiLineResult, error) {
 
 	if err := runApp(app); err != nil {
 		return MultiLineResult{}, err
+	}
+	if result.SourcePath == "" {
+		if input, err := pageInput(page.RawInput, area.GetText()); err == nil {
+			result.SourcePath = input.SourcePath
+		}
 	}
 	return result, nil
 }
@@ -2388,6 +2411,29 @@ func RunRowSelectionPage(page RowSelectionPage) (RowSelectionResult, error) {
 	updateModeText()
 
 	var refresh func()
+	table.SetMouseCapture(func(action tview.MouseAction, event *tcell.EventMouse) (tview.MouseAction, *tcell.EventMouse) {
+		if event != nil && (action == tview.MouseLeftDown || action == tview.MouseLeftClick) {
+			x, y := event.Position()
+			row, column := table.CellAt(x, y)
+			if row >= 0 && row < layout.firstDataRow {
+				controlHeaders = true
+				if column <= 1 {
+					headerColumn = -1
+				} else {
+					headerColumn = column - rowSelectionFirstDataColumn
+					if headerColumn >= len(page.Columns) {
+						headerColumn = len(page.Columns) - 1
+					}
+				}
+				updateModeText()
+				refresh()
+			} else if row >= layout.firstDataRow {
+				controlHeaders = false
+				updateModeText()
+			}
+		}
+		return action, event
+	})
 	sortRows := func() {
 		if page.GroupSort && len(groups) > 0 {
 			order = order[:0]
@@ -3096,6 +3142,8 @@ func RunRowSelectionPage(page RowSelectionPage) (RowSelectionResult, error) {
 			rowHeader += rowSelectionSortArrow(sortState.Direction)
 		}
 		rowHeaderCell := paddedTableCell(rowHeader).SetSelectable(controlHeaders).SetClickedFunc(func() bool {
+			controlHeaders = true
+			headerColumn = -1
 			cycleSort(-1)
 			return true
 		})
@@ -3120,6 +3168,8 @@ func RunRowSelectionPage(page RowSelectionPage) (RowSelectionResult, error) {
 			if col.Sortable {
 				columnIndex := i
 				cell.SetClickedFunc(func() bool {
+					controlHeaders = true
+					headerColumn = columnIndex
 					cycleSort(columnIndex)
 					return true
 				})
@@ -3674,10 +3724,22 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 		itemLayout := newRowSelectionLayout(item.Columns)
 		columnWidthsByRun[i] = rowSelectionColumnWidths(item.Columns, item.Rows, itemLayout, false)
 	}
+	var updateAliasButtonVisibility func()
+	var rebuildActionRow func()
 
 	list := newBlastRunSidebar()
 	setFocusBorder(list.Box, false)
 	attachFocusBorder(list.Box)
+	list.SetMouseCapture(func(action tview.MouseAction, event *tcell.EventMouse) (tview.MouseAction, *tcell.EventMouse) {
+		if event != nil && (action == tview.MouseLeftDown || action == tview.MouseLeftClick) {
+			controlMode = 2
+			if updateAliasButtonVisibility != nil {
+				updateAliasButtonVisibility()
+			}
+			rebuildActionRow()
+		}
+		return action, event
+	})
 	if title := strings.TrimSpace(page.SidebarTitle); title != "" {
 		list.SetTitle(" " + trimColon(title) + " ")
 	}
@@ -3700,7 +3762,6 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 	table.SetSelectedStyle(tcell.StyleDefault.Background(colorAction).Foreground(colorActionText).Bold(true))
 	setFocusBorder(table.Box, true)
 	attachFocusBorder(table.Box)
-
 	emptyView := textPanel(firstNonEmptyText(page.EmptyTitle, "No BLAST results"), firstNonEmptyText(page.EmptyMessage, "No BLAST hits returned for the selected query."))
 	emptyView.SetBorder(true)
 	emptyView.SetTitle(" " + trimColon(firstNonEmptyText(page.EmptyTitle, "BLAST results")) + " ")
@@ -3718,7 +3779,6 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 	var aliasModalCapture inputCaptureFunc
 	var exportScopeCapture inputCaptureFunc
 	var actionButtonRow *buttonRowPrimitive
-	var updateAliasButtonVisibility func()
 	closeModal := func() {}
 
 	sortState := TableSort{Column: -1, Direction: SortAscending}
@@ -3811,6 +3871,17 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 	currentItem := func() BlastRunItem {
 		return page.Items[currentRun]
 	}
+	currentRowSelectable := func(originalRow int) bool {
+		item := currentItem()
+		if originalRow < 0 || originalRow >= len(item.Rows) {
+			return false
+		}
+		row := item.Rows[originalRow]
+		if row.SelectableSet {
+			return row.Selectable
+		}
+		return true
+	}
 	currentRowNumbers := func() []int {
 		item := currentItem()
 		if len(item.RowNumbers) == len(item.Rows) {
@@ -3828,6 +3899,32 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 	currentFilterFlags := func() []bool {
 		return filterFlagsByRun[currentRun]
 	}
+	table.SetMouseCapture(func(action tview.MouseAction, event *tcell.EventMouse) (tview.MouseAction, *tcell.EventMouse) {
+		if event != nil && (action == tview.MouseLeftDown || action == tview.MouseLeftClick) {
+			x, y := event.Position()
+			row, column := table.CellAt(x, y)
+			if row >= 0 && row < layout.firstDataRow {
+				controlMode = 1
+				if column <= 1 {
+					headerColumn = -1
+				} else {
+					headerColumn = column - rowSelectionFirstDataColumn
+					if headerColumn >= len(currentItem().Columns) {
+						headerColumn = len(currentItem().Columns) - 1
+					}
+				}
+			} else if row >= layout.firstDataRow {
+				controlMode = 0
+			}
+			if updateAliasButtonVisibility != nil {
+				updateAliasButtonVisibility()
+			}
+			if rebuildActionRow != nil {
+				rebuildActionRow()
+			}
+		}
+		return action, event
+	})
 	runActionForRow := func(action string, runIndex int, actionRow int) {
 		action = strings.TrimSpace(action)
 		if action == "" {
@@ -4086,7 +4183,10 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 			markerColor = colorSelectionOn
 		}
 		table.SetCell(rowSelectionHeaderRow, 0, paddedTableCell(tview.Escape(marker)).SetTextColor(markerColor).SetAlign(tview.AlignCenter).SetSelectable(false).SetClickedFunc(func() bool {
-			setAll(currentSelected(), !allSelected())
+			nextValue := !allSelected()
+			for i := range currentSelected() {
+				currentSelected()[i] = nextValue && currentRowSelectable(i)
+			}
 			syncVisibleSelectionMarkers()
 			setSelectionHeader()
 			refreshList()
@@ -4105,12 +4205,18 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 		}
 		rowMarker := "[ ]"
 		rowMarkerColor := colorSelectionOff
-		if currentSelected()[originalRow] {
+		selectable := currentRowSelectable(originalRow)
+		if !selectable {
+			rowMarker = ""
+		} else if currentSelected()[originalRow] {
 			rowMarker = "[x]"
 			rowMarkerColor = colorSelectionOn
 		}
 		rowIndex := originalRow
 		table.SetCell(displayRow, 0, paddedTableCell(tview.Escape(rowMarker)).SetTextColor(rowMarkerColor).SetAlign(tview.AlignCenter).SetClickedFunc(func() bool {
+			if !currentRowSelectable(rowIndex) {
+				return true
+			}
 			currentSelected()[rowIndex] = !currentSelected()[rowIndex]
 			updateMarkerRow(displayRow, rowIndex)
 			setSelectionHeader()
@@ -4143,6 +4249,7 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 				rowHeader += rowSelectionSortArrow(sortState.Direction)
 			}
 			rowHeaderCell := paddedTableCell(rowHeader).SetSelectable(controlMode == 1).SetClickedFunc(func() bool {
+				controlMode = 1
 				if sortState.Column == -1 && sortState.Direction == SortAscending {
 					sortState.Direction = SortDescending
 				} else {
@@ -4173,6 +4280,7 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 				cell := paddedTableCell(header).SetSelectable(controlMode == 1 && col.Sortable)
 				if col.Sortable {
 					cell.SetClickedFunc(func() bool {
+						controlMode = 1
 						direction := SortAscending
 						if sortState.Column == columnIndex && sortState.Direction == SortAscending {
 							direction = SortDescending
@@ -4432,7 +4540,7 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 			return
 		}
 		originalRow := currentOriginalRow()
-		if originalRow >= 0 && originalRow < len(currentSelected()) {
+		if originalRow >= 0 && originalRow < len(currentSelected()) && currentRowSelectable(originalRow) {
 			row, _ := table.GetSelection()
 			currentSelected()[originalRow] = !currentSelected()[originalRow]
 			updateMarkerRow(row, originalRow)
@@ -4500,6 +4608,18 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 		item := currentItem()
 		if dataColumn < 0 || dataColumn >= len(item.Columns) || !strings.EqualFold(item.Columns[dataColumn].ID, aliasColumnID) {
 			return false
+		}
+		originalRow := currentOriginalRow()
+		return currentRun >= 0 && currentRun < len(page.Items) && originalRow >= 0 && originalRow < len(item.Rows)
+	}
+	canRenameCurrent := func() bool {
+		dataColumn := currentDataColumn()
+		item := currentItem()
+		if dataColumn < 0 || dataColumn >= len(item.Columns) {
+			return false
+		}
+		if strings.EqualFold(item.Columns[dataColumn].ID, aliasColumnID) {
+			return canAliasCurrent()
 		}
 		originalRow := currentOriginalRow()
 		return currentRun >= 0 && currentRun < len(page.Items) && originalRow >= 0 && originalRow < len(item.Rows)
@@ -4731,6 +4851,108 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 		app.SetRoot(overlayRootOn(pageRoot, box, 68, rowSelectionAliasOverlayHeight(len(aliases))), true)
 		app.SetFocus(list)
 	}
+	showCellRenameModal := func() {
+		if !canRenameCurrent() {
+			showInfoModal(page.Title, "Rename is available only when a normal data cell is selected.", 64, 10)
+			return
+		}
+		if canAliasCurrent() {
+			showAliasModal()
+			return
+		}
+		runIndex := currentRun
+		originalRow := currentOriginalRow()
+		dataColumn := currentDataColumn()
+		item := currentItem()
+		if dataColumn < 0 || dataColumn >= len(item.Columns) || originalRow < 0 || originalRow >= len(item.Rows) {
+			showInfoModal(page.Title, "No editable cell is selected.", 58, 10)
+			return
+		}
+		currentValue := ""
+		if dataColumn < len(item.Rows[originalRow].Cells) {
+			currentValue = strings.TrimSpace(item.Rows[originalRow].Cells[dataColumn])
+		}
+		input := tview.NewInputField().SetLabel("name ").SetText(currentValue).SetFieldWidth(32)
+		input.SetFieldTextColor(tview.Styles.PrimaryTextColor)
+		input.SetLabelColor(tview.Styles.SecondaryTextColor)
+		input.SetFieldBackgroundColor(colorPanel)
+		message := hintView("")
+		closeInputModal := func() {
+			modalOpen = false
+			modalText = nil
+			helpModal = nil
+			detailModal = nil
+			aliasModalCapture = nil
+			exportScopeCapture = nil
+			if pageRoot != nil {
+				app.SetRoot(pageRoot, true)
+			}
+			app.SetFocus(table)
+		}
+		confirmInput := func() {
+			name := strings.TrimSpace(input.GetText())
+			if runIndex < 0 || runIndex >= len(page.Items) || originalRow < 0 || originalRow >= len(page.Items[runIndex].Rows) {
+				message.SetText("No editable cell is selected.")
+				return
+			}
+			row := page.Items[runIndex].Rows[originalRow]
+			if dataColumn >= len(row.Cells) {
+				message.SetText("No editable cell is selected.")
+				return
+			}
+			row.Cells[dataColumn] = name
+			page.Items[runIndex].Rows[originalRow] = row
+			if runIndex >= 0 && runIndex < len(columnWidthsByRun) {
+				itemLayout := newRowSelectionLayout(page.Items[runIndex].Columns)
+				columnWidthsByRun[runIndex] = rowSelectionColumnWidths(page.Items[runIndex].Columns, page.Items[runIndex].Rows, itemLayout, false)
+			}
+			if currentRun == runIndex {
+				sortRows()
+				refresh()
+				selectOriginalRow(originalRow, displayColumn(dataColumn))
+			}
+			closeInputModal()
+		}
+		box := newButtonFlex()
+		box.SetBorder(true)
+		box.SetTitle(" Rename cell ")
+		box.SetTitleAlign(tview.AlignCenter)
+		box.AddItem(input, 1, 0, true)
+		box.AddItem(message, 1, 0, false)
+		addButtonRow(box, modalButtons([]buttonSpec{
+			{Label: ButtonClose, Shortcut: ShortcutBack, Action: closeInputModal, Visible: true},
+		}, true, "Rename", ShortcutApply, func(NavAction) {}, confirmInput))
+		closeModal = closeInputModal
+		modalOpen = true
+		modalText = nil
+		helpModal = nil
+		detailModal = nil
+		aliasModalCapture = func(event *tcell.EventKey) *tcell.EventKey {
+			if event == nil {
+				return nil
+			}
+			switch event.Key() {
+			case tcell.KeyEscape:
+				closeInputModal()
+				return nil
+			case tcell.KeyEnter:
+				if event.Modifiers()&tcell.ModCtrl != 0 {
+					return nil
+				}
+				confirmInput()
+				return nil
+			case tcell.KeyTab, tcell.KeyBacktab:
+				return nil
+			}
+			if inputFieldEditKey(event) {
+				deliverInputFieldKey(input, event, app)
+				return nil
+			}
+			return nil
+		}
+		app.SetRoot(overlayRootOn(pageRoot, box, 44, 7), true)
+		app.SetFocus(input)
+	}
 	actions := []buttonSpec{
 		{Label: ButtonBack, Shortcut: ShortcutBack, Action: func() { result.Nav = NavBack; result.State = captureState(); app.Stop() }, Visible: page.AllowBack},
 		{Label: ButtonHome, Shortcut: ShortcutHome, Action: func() { result.Nav = NavHome; result.State = captureState(); app.Stop() }, Visible: page.AllowHome},
@@ -4747,9 +4969,18 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 		button := buttonSpec{
 			Label:    conciseActionLabel(extra.Label, ButtonRunBLAST),
 			Shortcut: firstNonEmptyText(extra.Shortcut, ShortcutBlast),
-			Action:   func() { runActionForRow(extra.Value, currentRun, -1) },
-			Visible:  true,
-			Primary:  extra.Primary,
+			Action: func() {
+				actionRow := -1
+				if extra.TableOnly {
+					actionRow = currentOriginalRow()
+				}
+				runActionForRow(extra.Value, currentRun, actionRow)
+			},
+			Visible:     true,
+			Primary:     extra.Primary,
+			LeftPrimary: extra.LeftPrimary,
+			ListOnly:    extra.ListOnly,
+			TableOnly:   extra.TableOnly,
 		}
 		if extra.Primary {
 			primaryActions = append(primaryActions, button)
@@ -4780,15 +5011,34 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 		for i := range actionButtonRow.buttons {
 			button := &actionButtonRow.buttons[i]
 			if strings.EqualFold(button.Label, "Aliases") && strings.EqualFold(button.Shortcut, "Ctrl+L") {
-				actionButtonRow.buttons[i].Visible = visible
+				if controlMode == 0 && canvasEditButtonRow(orderedExtraActions) {
+					button.Visible = false
+				} else {
+					button.Visible = visible
+				}
+				continue
+			}
+			if button.LeftPrimary && controlMode == 1 {
+				button.Visible = false
+				continue
+			}
+			if strings.EqualFold(strings.TrimSpace(button.Shortcut), "F4") && button.LeftPrimary && button.TableOnly && controlMode == 0 {
+				if canAliasCurrent() {
+					button.Label = "Aliases"
+					button.Action = showAliasModal
+				} else {
+					button.Label = "Rename"
+					button.Action = showCellRenameModal
+				}
+				button.Visible = hasItems && controlMode == 0 && canRenameCurrent()
 				continue
 			}
 			if strings.EqualFold(button.Label, conciseActionLabel(page.GenerateText, ButtonExport)) && strings.EqualFold(button.Shortcut, ShortcutExport) {
-				button.Visible = !listFocused
+				button.Visible = true
 				continue
 			}
 			if strings.EqualFold(button.Label, conciseActionLabel(page.ConfirmText, ButtonView)) && strings.EqualFold(button.Shortcut, ShortcutConfirm) {
-				button.Visible = !listFocused
+				button.Visible = true
 				continue
 			}
 			switch strings.TrimSpace(button.Shortcut) {
@@ -4804,26 +5054,21 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 					show = listFocused
 				}
 				if extra.TableOnly {
-					show = !listFocused
+					show = controlMode == 0
 				}
 				if extra.RequiresItems && !hasItems {
+					show = false
+				}
+				if controlMode == 1 && button.LeftPrimary {
 					show = false
 				}
 				button.Visible = show
 			}
 		}
 	}
-	rebuildActionRow := func() {
+	rebuildActionRow = func() {
 		if actionButtonRow == nil {
 			return
-		}
-		for i := range actionButtonRow.buttons {
-			if actionButtonRow.buttons[i].Visible && strings.EqualFold(actionButtonRow.buttons[i].Shortcut, ShortcutExport) && controlMode == 2 {
-				actionButtonRow.buttons[i].Visible = false
-			}
-			if actionButtonRow.buttons[i].Visible && strings.EqualFold(actionButtonRow.buttons[i].Shortcut, ShortcutConfirm) && controlMode == 2 {
-				actionButtonRow.buttons[i].Visible = false
-			}
 		}
 	}
 	updateAliasButtonVisibility()
@@ -4914,9 +5159,32 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 			showAliasModal()
 			return nil
 		}
+		if event.Key() == tcell.KeyF4 && controlMode == 0 && canRenameCurrent() {
+			showCellRenameModal()
+			return nil
+		}
 		for _, extra := range orderedExtraActions {
+			if extra.LeftPrimary && controlMode == 1 {
+				continue
+			}
+			if extra.ListOnly && controlMode != 2 {
+				continue
+			}
+			if extra.TableOnly && controlMode != 0 {
+				continue
+			}
+			if extra.RequiresItems && len(page.Items) == 0 {
+				continue
+			}
+			if event.Key() == tcell.KeyF4 && controlMode == 0 && strings.EqualFold(strings.TrimSpace(extra.Shortcut), "F4") {
+				continue
+			}
 			if shortcutMatchesEvent(firstNonEmptyText(extra.Shortcut, ShortcutBlast), event) {
-				runActionForRow(extra.Value, currentRun, -1)
+				actionRow := -1
+				if extra.TableOnly {
+					actionRow = currentOriginalRow()
+				}
+				runActionForRow(extra.Value, currentRun, actionRow)
 				return nil
 			}
 		}
@@ -4952,7 +5220,9 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 			return nil
 		case tcell.KeyCtrlA:
 			if len(currentSelected()) > 0 {
-				setAll(currentSelected(), true)
+				for i := range currentSelected() {
+					currentSelected()[i] = currentRowSelectable(i)
+				}
 				syncVisibleSelectionMarkers()
 				setSelectionHeader()
 				refreshList()
@@ -5451,6 +5721,9 @@ func tuiFastaHeaderModeIndex(mode string, values []string) int {
 func RunExportSettingsModal(page ExportSettingsPage) (ExportSettingsResult, error) {
 	app := newApp()
 	var result ExportSettingsResult
+	if page.SnapshotOnly {
+		return runSnapshotExportSettingsModal(app, page)
+	}
 	fileLabel := firstNonEmptyText(page.FileLabel, "File name")
 	fileInput := tview.NewInputField().
 		SetLabel(fileLabel + " ").
@@ -5799,6 +6072,162 @@ func RunExportSettingsModal(page ExportSettingsPage) (ExportSettingsResult, erro
 		}
 		if current.input != nil && inputFieldEditKey(event) {
 			deliverInputFieldKey(current.input, event, app)
+			return nil
+		}
+		return nil
+	})
+	if err := runApp(app); err != nil {
+		return ExportSettingsResult{}, err
+	}
+	return result, nil
+}
+
+func runSnapshotExportSettingsModal(app *tview.Application, page ExportSettingsPage) (ExportSettingsResult, error) {
+	var result ExportSettingsResult
+	fileLabel := firstNonEmptyText(page.FileLabel, "File name")
+	fileInput := tview.NewInputField().
+		SetLabel(fileLabel + " ").
+		SetText(page.FileInitial).
+		SetFieldWidth(-1)
+	fileInput.SetBorder(true)
+	fileInput.SetTitle(" " + fileLabel + " ")
+	fileInput.SetTitleAlign(tview.AlignCenter)
+	fileInput.SetFieldBackgroundColor(colorPanel)
+	fileInput.SetFieldTextColor(tview.Styles.PrimaryTextColor)
+	setFocusBorder(fileInput.Box, true)
+	attachFocusBorder(fileInput.Box)
+
+	writeSession := page.SessionInitial
+	sessionBox := newCheckboxModule(firstNonEmptyText(page.SessionLabel, "Session snapshot (.pgo)"), func() bool {
+		return writeSession
+	}, func() {
+		writeSession = !writeSession
+	})
+	sessionBox.SetBorder(true)
+	sessionBox.SetTitle(" Snapshot file ")
+	sessionBox.SetTitleAlign(tview.AlignCenter)
+	setFocusBorder(sessionBox.Box, false)
+	attachFocusBorder(sessionBox.Box)
+
+	fields := []tview.Primitive{clipPrimitive(fileInput), sessionBox}
+	focusIndex := 0
+	focusCurrent := func() {
+		for i, field := range fields {
+			if box := primitiveBox(field); box != nil {
+				setFocusBorder(box, i == focusIndex)
+			}
+		}
+		app.SetFocus(fields[focusIndex])
+	}
+	closeWithNav := func(nav NavAction) {
+		result.Nav = nav
+		app.Stop()
+	}
+	submit := func() {
+		result.FileName = strings.TrimSpace(fileInput.GetText())
+		result.WriteSession = writeSession
+		app.Stop()
+	}
+	focusNext := func() {
+		focusIndex++
+		if focusIndex >= len(fields) {
+			submit()
+			return
+		}
+		focusCurrent()
+	}
+	focusPrevious := func() {
+		focusIndex--
+		if focusIndex < 0 {
+			focusIndex = len(fields) - 1
+		}
+		focusCurrent()
+	}
+	pasteStatus := newPasteStatus(focusCurrent)
+	paste := func() {
+		if focusIndex != 0 {
+			pasteStatus.view.SetTextColor(colorMuted)
+			pasteStatus.view.SetText("Paste is available only in the file name field.")
+			focusCurrent()
+			return
+		}
+		runInlinePaste(app, pasteStatus, func(text string) {
+			if handler := fileInput.PasteHandler(); handler != nil {
+				handler(text, func(p tview.Primitive) { app.SetFocus(p) })
+			}
+		})
+	}
+
+	modalBody := newButtonFlex()
+	modalBody.SetBorder(true)
+	modalBody.SetTitle(" " + trimColon(page.Title) + " ")
+	modalBody.SetTitleAlign(tview.AlignCenter)
+	setFocusBorder(modalBody.Box, true)
+	attachFocusBorder(modalBody.Box)
+	contentHeight := 0
+	if strings.TrimSpace(page.Message) != "" {
+		messageHeight := minInt(4, maxInt(2, textViewLineCount(page.Message)))
+		modalBody.AddItem(textBlock(page.Message), messageHeight, 0, false)
+		contentHeight += messageHeight
+	}
+	modalBody.AddItem(fields[0], 3, 0, true)
+	modalBody.AddItem(fields[1], 3, 0, false)
+	modalBody.AddItem(pasteStatus.view, 1, 0, false)
+	contentHeight += 7
+	addButtonRow(modalBody, closeOnlyModalButtons([]buttonSpec{
+		{Label: ButtonPaste, Shortcut: ShortcutPaste, Action: paste, Visible: true},
+	}, true, page.ConfirmText, "Enter", func() { closeWithNav(NavBack) }, submit))
+	contentHeight++
+	addHints(modalBody, []string{"Tab switches fields. Space toggles the snapshot option. Enter saves from the final field."})
+	contentHeight++
+
+	height := modalHeightForContent(contentHeight+2, 13, 18)
+	app.SetRoot(infoModalRoot(modalFramePage(page.Breadcrumb, page.Path, page.Title), modalBody, 90, height), true)
+	focusCurrent()
+	fileInput.SetDoneFunc(func(key tcell.Key) {
+		if key == tcell.KeyEnter {
+			focusNext()
+		}
+	})
+	installInputCapture(app, func(event *tcell.EventKey) *tcell.EventKey {
+		if event == nil {
+			return nil
+		}
+		switch event.Key() {
+		case tcell.KeyEscape:
+			if page.AllowBack {
+				closeWithNav(NavBack)
+			}
+			return nil
+		case tcell.KeyCtrlO:
+			if page.AllowHome {
+				closeWithNav(NavHome)
+			}
+			return nil
+		case tcell.KeyCtrlV:
+			paste()
+			return nil
+		case tcell.KeyTab:
+			focusNext()
+			return nil
+		case tcell.KeyBacktab:
+			focusPrevious()
+			return nil
+		case tcell.KeyEnter:
+			focusNext()
+			return nil
+		case tcell.KeyRune:
+			if focusIndex == 1 && event.Rune() == ' ' {
+				sessionBox.toggleChecked()
+				return nil
+			}
+			if focusIndex == 0 {
+				deliverInputFieldKey(fileInput, event, app)
+				return nil
+			}
+		}
+		if focusIndex == 0 && inputFieldEditKey(event) {
+			deliverInputFieldKey(fileInput, event, app)
 			return nil
 		}
 		return nil
@@ -9943,8 +10372,8 @@ func newDetailOverlay(app *tview.Application, title string, pages []DetailPage, 
 	overlay.body.AddItem(overlay.tabs, 1, 0, false)
 	overlay.body.AddItem(overlay.list, 0, 1, true)
 	overlay.buttons = buttonRow(
-		buttonSpec{Label: ButtonCopy, Shortcut: ShortcutCopy, Action: func() { _ = onCopy() }, Visible: true},
 		buttonSpec{Label: ButtonClose, Shortcut: ShortcutBack, Action: close, Visible: true},
+		buttonSpec{Label: ButtonCopy, Shortcut: ShortcutCopy, Action: func() { _ = onCopy() }, Visible: true},
 		buttonSpec{Label: ButtonRunBLAST, Shortcut: ShortcutBlast, Action: func() {
 			if overlay.extra == nil {
 				return
@@ -10912,6 +11341,21 @@ func (b *buttonRowPrimitive) primaryButton() *buttonSpec {
 	return nil
 }
 
+func canvasEditButtonRow(extras []Action) bool {
+	hasCanvasAdd := false
+	hasRowAliasSlot := false
+	for _, extra := range extras {
+		value := strings.TrimSpace(extra.Value)
+		if value == "add_item" && extra.ListOnly && strings.EqualFold(strings.TrimSpace(extra.Shortcut), "F2") {
+			hasCanvasAdd = true
+		}
+		if value == "rename_row" && extra.TableOnly && strings.EqualFold(strings.TrimSpace(extra.Shortcut), "F4") {
+			hasRowAliasSlot = true
+		}
+	}
+	return hasCanvasAdd && hasRowAliasSlot
+}
+
 func inputConfirmText(confirmText string, skipWhenEmpty bool, emptyText string, text string) string {
 	if skipWhenEmpty && strings.TrimSpace(text) == "" {
 		if strings.TrimSpace(emptyText) != "" {
@@ -11165,7 +11609,7 @@ func (b *buttonRowPrimitive) visibleButtonGroups() ([]buttonSpec, []buttonSpec) 
 		if !button.Visible {
 			continue
 		}
-		if button.Primary {
+		if button.Primary && !button.LeftPrimary {
 			primaryButtons = append(primaryButtons, button)
 		} else {
 			navButtons = append(navButtons, button)
@@ -11380,31 +11824,55 @@ func runInlinePaste(app *tview.Application, status *pasteStatus, insert func(str
 	}()
 }
 
-func resolveInputFileText(text string) (string, error) {
+type resolvedInputText struct {
+	Text       string
+	SourcePath string
+}
+
+func resolveInputFile(text string) (resolvedInputText, error) {
 	text = strings.TrimSpace(text)
 	path, ok, err := pastedFilePath(text)
 	if err != nil {
-		return "", err
+		return resolvedInputText{}, err
 	}
 	if !ok {
-		return text, nil
+		return resolvedInputText{Text: text}, nil
+	}
+	if strings.EqualFold(filepath.Ext(path), ".pgo") {
+		return resolvedInputText{Text: path, SourcePath: path}, nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", fmt.Errorf("read %s: %w", filepath.Base(path), err)
+		return resolvedInputText{}, fmt.Errorf("read %s: %w", filepath.Base(path), err)
 	}
 	fileText, err := sanitizePastedText(string(data))
 	if err != nil {
-		return "", fmt.Errorf("read %s: %w", filepath.Base(path), err)
+		return resolvedInputText{}, fmt.Errorf("read %s: %w", filepath.Base(path), err)
 	}
-	return fileText, nil
+	return resolvedInputText{Text: fileText, SourcePath: path}, nil
+}
+
+func resolveInputFileText(text string) (string, error) {
+	input, err := resolveInputFile(text)
+	if err != nil {
+		return "", err
+	}
+	return input.Text, nil
+}
+
+func pageInput(raw bool, text string) (resolvedInputText, error) {
+	if raw {
+		return resolvedInputText{Text: strings.TrimSpace(text)}, nil
+	}
+	return resolveInputFile(text)
 }
 
 func pageInputText(raw bool, text string) (string, error) {
-	if raw {
-		return strings.TrimSpace(text), nil
+	input, err := pageInput(raw, text)
+	if err != nil {
+		return "", err
 	}
-	return resolveInputFileText(text)
+	return input.Text, nil
 }
 
 func showInputFileError(status *pasteStatus, err error) {

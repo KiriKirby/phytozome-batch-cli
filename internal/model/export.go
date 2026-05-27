@@ -107,29 +107,29 @@ type KeywordSearchGroup struct {
 }
 
 type QuerySequenceSource struct {
-	Sequence            string
-	ProteinSequence     string
-	NucleotideSequence  string
-	SequenceKind        SequenceKind
-	PreferredSequenceID string
-	OriginalInputURL    string
-	NormalizedURL       string
-	SourceDatabase      string
-	SourceProteomeID    int
-	SourceJBrowseName   string
-	SourceGenomeLabel   string
-	LabelName           string
-	PhgoAliases         string
-	Aliases             string
-	Symbols             string
-	Synonyms            string
-	AutoDefine          string
-	UniProtAccession    string
-	GeneID              string
-	TranscriptID        string
-	ProteinID           string
-	OrganismShort       string
-	Annotation          string
+	Sequence             string
+	ProteinSequence      string
+	NucleotideSequence   string
+	SequenceKind         SequenceKind
+	PreferredSequenceID  string
+	OriginalInputURL     string
+	NormalizedURL        string
+	SourceDatabase       string
+	SourceProteomeID     int
+	SourceJBrowseName    string
+	SourceGenomeLabel    string
+	LabelName            string
+	PhgoAliases          string
+	Aliases              string
+	Symbols              string
+	Synonyms             string
+	AutoDefine           string
+	UniProtAccession     string
+	GeneID               string
+	TranscriptID         string
+	ProteinID            string
+	OrganismShort        string
+	Annotation           string
 	BlastSourceLabelName string
 	BlastSourceGeneID    string
 	PhgoRowNumber        int
@@ -145,19 +145,20 @@ const (
 )
 
 type CanvasRow struct {
-	RowNumber  int                  `json:"row_number"`
-	Kind       CanvasKind           `json:"kind"`
-	KeywordRow *KeywordResultRow    `json:"keyword_row,omitempty"`
-	BlastRow   *BlastResultRow      `json:"blast_row,omitempty"`
-	FASTA      *QuerySequenceSource `json:"fasta,omitempty"`
+	RowNumber     int                  `json:"row_number"`
+	Kind          CanvasKind           `json:"kind"`
+	KeywordRow    *KeywordResultRow    `json:"keyword_row,omitempty"`
+	BlastRow      *BlastResultRow      `json:"blast_row,omitempty"`
+	FASTA         *QuerySequenceSource `json:"fasta,omitempty"`
+	SequenceReady *bool                `json:"sequence_ready,omitempty"`
 }
 
 type CanvasItem struct {
-	Title       string      `json:"title"`
-	Subtitle    string      `json:"subtitle"`
-	Kind        CanvasKind  `json:"kind"`
-	Rows        []CanvasRow `json:"rows"`
-	Selected    []bool      `json:"selected,omitempty"`
-	SourceLabel string      `json:"source_label,omitempty"`
-	ImportedFrom string     `json:"imported_from,omitempty"`
+	Title        string      `json:"title"`
+	Subtitle     string      `json:"subtitle"`
+	Kind         CanvasKind  `json:"kind"`
+	Rows         []CanvasRow `json:"rows"`
+	Selected     []bool      `json:"selected,omitempty"`
+	SourceLabel  string      `json:"source_label,omitempty"`
+	ImportedFrom string      `json:"imported_from,omitempty"`
 }

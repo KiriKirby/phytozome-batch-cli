@@ -557,11 +557,12 @@ var ErrAutoIdentifyRequested = errors.New("auto identify protein labels")
 var ErrExitRequested = errors.New("exit requested")
 
 type KeywordRowSelection struct {
-	Rows         []model.KeywordResultRow
-	Selected     []bool
-	GenerateFile bool
-	RunBlast     bool
-	CreateCanvas bool
+	Rows            []model.KeywordResultRow
+	Selected        []bool
+	SelectedByGroup [][]bool
+	GenerateFile    bool
+	RunBlast        bool
+	CreateCanvas    bool
 }
 
 type BlastRowSelection struct {
@@ -589,6 +590,7 @@ type CanvasSelection struct {
 	NextNumericID int
 	GenerateFile  bool
 	Action        string
+	ActionRow     int
 	SaveBaseName  string
 	WriteSession  bool
 }
@@ -3245,25 +3247,24 @@ func (p *Prompter) OpenSessionInput() (string, error) {
 	return strings.TrimSpace(result.Text), nil
 }
 
-func (p *Prompter) CanvasAddItemInput() (string, error) {
+func (p *Prompter) CanvasAddItemInput() (string, string, error) {
 	result, err := tui.RunMultiLinePage(tui.MultiLinePage{
 		Path:           p.tuiPath("Startup", "Explore", "Canvas", "Add canvas"),
 		Title:          "Add canvas",
 		Description:    "Paste FASTA / phgo FASTA text, or enter one snapshot path or output file name. FASTA creates a new canvas item. Snapshot import can bring in one or more saved tables.",
 		AllowEmpty:     false,
-		RawInput:       true,
-		ConfirmOnEnter: true,
+		ConfirmOnEnter: false,
 		AllowBack:      true,
 		AllowHome:      p.allowHome(true),
 		ConfirmText:    tui.ButtonApply,
 	})
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if navErr := tuiNavError(result.Nav, ErrBackToRowSelection); navErr != nil {
-		return "", navErr
+		return "", "", navErr
 	}
-	return strings.TrimSpace(result.Text), nil
+	return strings.TrimSpace(result.Text), strings.TrimSpace(result.SourcePath), nil
 }
 
 func (p *Prompter) CanvasAddRowsInput() (string, error) {
@@ -3272,8 +3273,7 @@ func (p *Prompter) CanvasAddRowsInput() (string, error) {
 		Title:          "Add rows",
 		Description:    "Paste FASTA / phgo FASTA text to append rows to the current canvas table. Snapshot import is not supported here.",
 		AllowEmpty:     false,
-		RawInput:       true,
-		ConfirmOnEnter: true,
+		ConfirmOnEnter: false,
 		AllowBack:      true,
 		AllowHome:      p.allowHome(true),
 		ConfirmText:    tui.ButtonApply,
@@ -3362,16 +3362,18 @@ func (p *Prompter) CanvasRenameInput(initial string) (string, error) {
 }
 
 func (p *Prompter) CanvasSaveSettings(defaultBaseName string, backTarget error) (CanvasSaveSettings, error) {
-	result, err := tui.RunTextInputPage(tui.TextInputPage{
-		Path:        p.tuiPath("Startup", "Explore", "Canvas", "Save snapshot"),
-		Title:       "Save canvas snapshot",
-		Description: p.t("Save the whole canvas as one .pgo snapshot. The file name controls the snapshot name."),
-		Label:       "File name",
-		Initial:     strings.TrimSpace(defaultBaseName),
-		AllowEmpty:  false,
-		AllowBack:   true,
-		AllowHome:   p.allowHome(true),
-		ConfirmText: tui.ButtonSave,
+	result, err := tui.RunExportSettingsModal(tui.ExportSettingsPage{
+		Path:           p.tuiPath("Startup", "Explore", "Canvas", "Save snapshot"),
+		Title:          "Save canvas snapshot",
+		Message:        p.t("Save the whole canvas as one .pgo snapshot. The file name controls the snapshot name."),
+		FileLabel:      "File name",
+		FileInitial:    strings.TrimSpace(defaultBaseName),
+		SessionLabel:   p.t("Save session snapshot (.pgo)"),
+		SessionInitial: true,
+		SnapshotOnly:   true,
+		AllowBack:      true,
+		AllowHome:      p.allowHome(true),
+		ConfirmText:    tui.ButtonSave,
 	})
 	if err != nil {
 		return CanvasSaveSettings{}, err
@@ -3379,11 +3381,11 @@ func (p *Prompter) CanvasSaveSettings(defaultBaseName string, backTarget error) 
 	if navErr := tuiNavError(result.Nav, backTarget); navErr != nil {
 		return CanvasSaveSettings{}, navErr
 	}
-	baseName := sanitizeFileName(result.Text)
+	baseName := sanitizeFileName(result.FileName)
 	if baseName == "" {
 		return CanvasSaveSettings{}, fmt.Errorf("file name cannot be empty")
 	}
-	return CanvasSaveSettings{BaseName: baseName, WriteSession: true}, nil
+	return CanvasSaveSettings{BaseName: baseName, WriteSession: result.WriteSession}, nil
 }
 
 func (p *Prompter) keywordWideSearchContext() bool {
@@ -3549,7 +3551,7 @@ func (p *Prompter) selectKeywordRows(groups []model.KeywordSearchGroup, initial 
 				}
 				sequence, err := p.loadKeywordFASTA(row)
 				if err != nil {
-					return tui.DetailItem{}, true, err
+					return detailFASTAUnavailableItem(err), true, nil
 				}
 				p.detailFASTACache[cacheKey] = strings.TrimSpace(sequence)
 				return detailFASTALoadedItem(sequence), true, nil
@@ -3571,23 +3573,43 @@ func (p *Prompter) selectKeywordRows(groups []model.KeywordSearchGroup, initial 
 				chosen = append(chosen, flatRows[i])
 			}
 		}
+		selectedByGroup := make([][]bool, len(groups))
+		for groupIndex, group := range groups {
+			selectedByGroup[groupIndex] = make([]bool, len(group.Rows))
+		}
+		for i, ok := range selected {
+			if i < len(flatRefs) {
+				ref := flatRefs[i]
+				if ref.group >= 0 && ref.group < len(selectedByGroup) && ref.row >= 0 && ref.row < len(selectedByGroup[ref.group]) {
+					selectedByGroup[ref.group][ref.row] = ok
+				}
+			}
+		}
 		if len(chosen) == 0 {
 			return KeywordRowSelection{}, fmt.Errorf("no rows selected")
 		}
 		if result.Action == "blast" {
 			if result.ActionRow >= 0 && result.ActionRow < len(flatRows) {
-				return KeywordRowSelection{Rows: []model.KeywordResultRow{flatRows[result.ActionRow]}, Selected: append([]bool(nil), selected...), RunBlast: true}, nil
+				return KeywordRowSelection{Rows: []model.KeywordResultRow{flatRows[result.ActionRow]}, Selected: append([]bool(nil), selected...), SelectedByGroup: selectedByGroup, RunBlast: true}, nil
 			}
-			return KeywordRowSelection{Rows: chosen, Selected: append([]bool(nil), selected...), RunBlast: true}, nil
+			return KeywordRowSelection{Rows: chosen, Selected: append([]bool(nil), selected...), SelectedByGroup: selectedByGroup, RunBlast: true}, nil
 		}
 		if result.Action == "canvas" {
 			if result.ActionRow >= 0 && result.ActionRow < len(flatRows) {
-				return KeywordRowSelection{Rows: []model.KeywordResultRow{flatRows[result.ActionRow]}, Selected: append([]bool(nil), selected...), CreateCanvas: true}, nil
+				singleSelectedByGroup := make([][]bool, len(groups))
+				for groupIndex, group := range groups {
+					singleSelectedByGroup[groupIndex] = make([]bool, len(group.Rows))
+				}
+				ref := flatRefs[result.ActionRow]
+				if ref.group >= 0 && ref.group < len(singleSelectedByGroup) && ref.row >= 0 && ref.row < len(singleSelectedByGroup[ref.group]) {
+					singleSelectedByGroup[ref.group][ref.row] = true
+				}
+				return KeywordRowSelection{Rows: []model.KeywordResultRow{flatRows[result.ActionRow]}, Selected: append([]bool(nil), selected...), SelectedByGroup: singleSelectedByGroup, CreateCanvas: true}, nil
 			}
-			return KeywordRowSelection{Rows: chosen, Selected: append([]bool(nil), selected...), CreateCanvas: true}, nil
+			return KeywordRowSelection{Rows: chosen, Selected: append([]bool(nil), selected...), SelectedByGroup: selectedByGroup, CreateCanvas: true}, nil
 		}
 		if result.GenerateFile {
-			return KeywordRowSelection{Rows: chosen, Selected: append([]bool(nil), selected...), GenerateFile: true}, nil
+			return KeywordRowSelection{Rows: chosen, Selected: append([]bool(nil), selected...), SelectedByGroup: selectedByGroup, GenerateFile: true}, nil
 		}
 	}
 
@@ -3740,7 +3762,7 @@ func (p *Prompter) selectBlastRunsWithState(runs []BlastRunView, backTarget erro
 				}
 				sequence, err := p.loadBlastFASTA(row)
 				if err != nil {
-					return tui.DetailItem{}, true, err
+					return detailFASTAUnavailableItem(err), true, nil
 				}
 				p.detailFASTACache[cacheKey] = strings.TrimSpace(sequence)
 				return detailFASTALoadedItem(sequence), true, nil
@@ -3839,7 +3861,12 @@ func (p *Prompter) selectBlastRunsWithState(runs []BlastRunView, backTarget erro
 		}
 		if result.Action == "canvas" {
 			if result.RunIndex >= 0 && result.RunIndex < len(runs) && result.ActionRow >= 0 && result.ActionRow < len(runs[result.RunIndex].Rows) {
-				return BlastRowSelection{Rows: []model.BlastResultRow{runs[result.RunIndex].Rows[result.ActionRow]}, CreateCanvas: true, RunIndex: result.RunIndex}, nil
+				selectedByRun := make([][]bool, len(runs))
+				for runIndex, run := range runs {
+					selectedByRun[runIndex] = make([]bool, len(run.Rows))
+				}
+				selectedByRun[result.RunIndex][result.ActionRow] = true
+				return BlastRowSelection{Rows: []model.BlastResultRow{runs[result.RunIndex].Rows[result.ActionRow]}, CreateCanvas: true, RunIndex: result.RunIndex, SelectedByRun: selectedByRun}, nil
 			}
 			rows := make([]model.BlastResultRow, 0)
 			for runIndex := range items {
@@ -3852,7 +3879,7 @@ func (p *Prompter) selectBlastRunsWithState(runs []BlastRunView, backTarget erro
 					}
 				}
 			}
-			return BlastRowSelection{Rows: rows, CreateCanvas: true, RunIndex: result.RunIndex}, nil
+			return BlastRowSelection{Rows: rows, CreateCanvas: true, RunIndex: result.RunIndex, SelectedByRun: cloneBoolMatrixPrompt(result.SelectedByRun)}, nil
 		}
 		if result.RunIndex < 0 || result.RunIndex >= len(runs) {
 			result.RunIndex = 0
@@ -3974,6 +4001,17 @@ func detailFASTALoadedItem(value string) tui.DetailItem {
 	return tui.DetailItem{
 		Label: "FASTA",
 		Value: strings.TrimSpace(value),
+	}
+}
+
+func detailFASTAUnavailableItem(err error) tui.DetailItem {
+	message := "Sequence is unavailable for this row."
+	if err != nil {
+		message = "Sequence is unavailable for this row: " + err.Error()
+	}
+	return tui.DetailItem{
+		Label: "FASTA",
+		Value: message,
 	}
 }
 
@@ -4156,7 +4194,7 @@ func (p *Prompter) selectBlastRowsWithInitial(rows []model.BlastResultRow, allow
 				}
 				sequence, err := p.loadBlastFASTA(row)
 				if err != nil {
-					return tui.DetailItem{}, true, err
+					return detailFASTAUnavailableItem(err), true, nil
 				}
 				p.detailFASTACache[cacheKey] = strings.TrimSpace(sequence)
 				return detailFASTALoadedItem(sequence), true, nil
@@ -4504,8 +4542,8 @@ func buildCanvasSelectionTable(item model.CanvasItem) ([]tui.TableColumn, []tui.
 		{ID: "species", Header: "species", Sortable: true},
 		{ID: "label_name", Header: "label_name", Sortable: true},
 		{ID: "gene_id", Header: "geneid", Sortable: true},
-		{ID: "source_label_name", Header: "source label", Sortable: true},
-		{ID: "source_gene_id", Header: "source geneid", Sortable: true},
+		{ID: "source_label_name", Header: "blast_labelname", Sortable: true},
+		{ID: "source_gene_id", Header: "blast_geneid", Sortable: true},
 		{ID: "source_row", Header: "source row", Sortable: true},
 	}
 	rows := make([]tui.TableRow, 0, len(item.Rows))
@@ -4522,8 +4560,10 @@ func buildCanvasSelectionTable(item model.CanvasItem) ([]tui.TableColumn, []tui.
 				view.SourceGeneID,
 				view.SourceRow,
 			},
-			Detail:      view.Detail,
-			DetailPages: view.DetailPages,
+			Detail:        view.Detail,
+			DetailPages:   view.DetailPages,
+			Selectable:    canvasRowHasSequence(row),
+			SelectableSet: true,
 		})
 	}
 	return columns, rows
@@ -4555,24 +4595,21 @@ func canvasSelectionRowView(row model.CanvasRow, fallback string) canvasSelectio
 				SourceLabelName: strings.TrimSpace(row.FASTA.BlastSourceLabelName),
 				SourceGeneID:    strings.TrimSpace(row.FASTA.BlastSourceGeneID),
 				SourceRow:       canvasOptionalRowNumberText(row.FASTA.PhgoRowNumber, row.FASTA.PhgoHasRowNumber),
-				Detail:          canvasFastaDetail(*row.FASTA),
-				DetailPages:     blastRowDetailPages(canvasFastaRowAsBlastRow(*row.FASTA, fallback)),
+				Detail:          firstNonEmptyText(canvasFastaDetail(*row.FASTA), blastRowDetail(canvasFastaRowAsBlastRow(*row.FASTA, fallback))),
+				DetailPages:     canvasFastaDetailPages(*row.FASTA, fallback),
 			}
 		}
 	case model.CanvasKindKeyword:
 		if row.KeywordRow != nil {
 			blastRow := canvasKeywordRowAsBlastRow(*row.KeywordRow, fallback)
 			return canvasSelectionView{
-				SourceType:      strings.TrimSpace(firstNonEmptyText(row.KeywordRow.SourceDatabase, string(model.CanvasKindKeyword))),
-				Head:            strings.TrimSpace(firstNonEmptyText(row.KeywordRow.SequenceHeaderLabel, row.KeywordRow.ProteinID, row.KeywordRow.TranscriptID, row.KeywordRow.GeneIdentifier)),
-				Species:         strings.TrimSpace(row.KeywordRow.Genome),
-				LabelName:       strings.TrimSpace(row.KeywordRow.LabelName),
-				GeneID:          strings.TrimSpace(row.KeywordRow.GeneIdentifier),
-				SourceLabelName: "",
-				SourceGeneID:    "",
-				SourceRow:       "",
-				Detail:          blastRowDetail(blastRow),
-				DetailPages:     blastRowDetailPages(blastRow),
+				SourceType:  strings.TrimSpace(firstNonEmptyText(row.KeywordRow.SourceDatabase, string(model.CanvasKindKeyword))),
+				Head:        strings.TrimSpace(firstNonEmptyText(row.KeywordRow.SequenceHeaderLabel, row.KeywordRow.ProteinID, row.KeywordRow.TranscriptID, row.KeywordRow.GeneIdentifier)),
+				Species:     strings.TrimSpace(row.KeywordRow.Genome),
+				LabelName:   strings.TrimSpace(row.KeywordRow.LabelName),
+				GeneID:      strings.TrimSpace(row.KeywordRow.GeneIdentifier),
+				Detail:      blastRowDetail(blastRow),
+				DetailPages: blastRowDetailPages(blastRow),
 			}
 		}
 	case model.CanvasKindBlast:
@@ -4582,16 +4619,37 @@ func canvasSelectionRowView(row model.CanvasRow, fallback string) canvasSelectio
 				Head:            strings.TrimSpace(firstNonEmptyText(row.BlastRow.SubjectID, row.BlastRow.Protein, row.BlastRow.SequenceID)),
 				Species:         strings.TrimSpace(row.BlastRow.Species),
 				LabelName:       strings.TrimSpace(row.BlastRow.LabelName),
-				GeneID:          strings.TrimSpace(firstNonEmptyText(row.BlastRow.SequenceID, row.BlastRow.TranscriptID, row.BlastRow.Protein)),
+				GeneID:          strings.TrimSpace(firstNonEmptyText(row.BlastRow.SequenceID, row.BlastRow.TranscriptID, row.BlastRow.SubjectID, row.BlastRow.Protein)),
 				SourceLabelName: strings.TrimSpace(row.BlastRow.BlastLabelName),
 				SourceGeneID:    strings.TrimSpace(row.BlastRow.BlastGeneID),
-				SourceRow:       "",
 				Detail:          blastRowDetail(*row.BlastRow),
 				DetailPages:     blastRowDetailPages(*row.BlastRow),
 			}
 		}
 	}
 	return canvasSelectionView{SourceType: string(row.Kind)}
+}
+
+func canvasRowHasSequence(row model.CanvasRow) bool {
+	if row.SequenceReady != nil {
+		return *row.SequenceReady
+	}
+	switch row.Kind {
+	case model.CanvasKindFasta:
+		return row.FASTA != nil && strings.TrimSpace(firstNonEmptyText(row.FASTA.Sequence, row.FASTA.ProteinSequence, row.FASTA.NucleotideSequence)) != ""
+	case model.CanvasKindKeyword:
+		if row.KeywordRow == nil {
+			return false
+		}
+		return strings.TrimSpace(firstNonEmptyText(row.KeywordRow.SequenceID, row.KeywordRow.ProteinID, row.KeywordRow.TranscriptID)) != ""
+	case model.CanvasKindBlast:
+		if row.BlastRow == nil {
+			return false
+		}
+		return strings.TrimSpace(firstNonEmptyText(row.BlastRow.SequenceID, row.BlastRow.Protein, row.BlastRow.TranscriptID, row.BlastRow.SubjectID)) != ""
+	default:
+		return false
+	}
 }
 
 func canvasOptionalRowNumberText(value int, ok bool) string {
@@ -4602,8 +4660,8 @@ func canvasOptionalRowNumberText(value int, ok bool) string {
 }
 
 func canvasFastaHead(source model.QuerySequenceSource, fallback string) string {
-	if label := strings.TrimSpace(source.LabelName); label != "" {
-		return label
+	if label := strings.TrimSpace(source.Annotation); label != "" {
+		return strings.TrimSpace(strings.TrimPrefix(label, ">"))
 	}
 	if label := strings.TrimSpace(source.PreferredSequenceID); label != "" {
 		return label
@@ -4617,8 +4675,8 @@ func canvasFastaHead(source model.QuerySequenceSource, fallback string) string {
 	if label := strings.TrimSpace(source.GeneID); label != "" {
 		return label
 	}
-	if label := strings.TrimSpace(source.Annotation); label != "" {
-		return firstFastaHeaderToken(label)
+	if label := strings.TrimSpace(source.LabelName); label != "" {
+		return label
 	}
 	return strings.TrimSpace(fallback)
 }
@@ -4638,6 +4696,35 @@ func canvasFastaDetail(source model.QuerySequenceSource) string {
 		parts = append(parts, "protein "+value)
 	}
 	return strings.Join(parts, " | ")
+}
+
+func canvasFastaSequence(source model.QuerySequenceSource) string {
+	return strings.TrimSpace(firstNonEmptyText(source.Sequence, source.ProteinSequence, source.NucleotideSequence))
+}
+
+func canvasFastaDetailFASTA(source model.QuerySequenceSource, fallback string) string {
+	sequence := canvasFastaSequence(source)
+	if sequence == "" {
+		return ""
+	}
+	header := strings.TrimSpace(source.Annotation)
+	header = strings.TrimSpace(strings.TrimPrefix(header, ">"))
+	if header == "" {
+		header = strings.TrimSpace(firstNonEmptyText(source.PreferredSequenceID, source.ProteinID, source.TranscriptID, source.GeneID, source.LabelName, fallback))
+	}
+	if header == "" {
+		header = "sequence"
+	}
+	return ">" + header + "\n" + sequence
+}
+
+func canvasFastaDetailPages(source model.QuerySequenceSource, fallback string) []tui.DetailPage {
+	blastRow := canvasFastaRowAsBlastRow(source, fallback)
+	pages := blastRowDetailPages(blastRow)
+	if fasta := canvasFastaDetailFASTA(source, fallback); fasta != "" && len(pages) > 0 {
+		pages[len(pages)-1] = tui.DetailPage{Title: "FASTA", Items: []tui.DetailItem{detailFASTALoadedItem(fasta)}}
+	}
+	return pages
 }
 
 func firstFastaHeaderToken(value string) string {
@@ -4665,6 +4752,11 @@ func (p *Prompter) SelectCanvas(initial []model.CanvasItem, currentItem int, nex
 				selected = make([]bool, len(item.Rows))
 				for i := range selected {
 					selected[i] = true
+				}
+			}
+			for i, row := range item.Rows {
+				if i < len(selected) && !canvasRowHasSequence(row) {
+					selected[i] = false
 				}
 			}
 			lineCount := fmt.Sprintf("%d/%d lines", len(item.Rows), len(item.Rows))
@@ -4698,11 +4790,12 @@ func (p *Prompter) SelectCanvas(initial []model.CanvasItem, currentItem int, nex
 			ConfirmText:   tui.ButtonView,
 			GenerateText:  "Save snapshot",
 			ExtraActions: []tui.Action{
-				{Value: "add_item", Label: "Add canvas", Shortcut: "F2", ListOnly: true},
-				{Value: "rename_item", Label: "Rename canvas", Shortcut: "F3", ListOnly: true, RequiresItems: true},
-				{Value: "delete_item", Label: "Delete canvas", Shortcut: "F4", ListOnly: true, RequiresItems: true},
-				{Value: "add_rows", Label: "Add rows", Shortcut: "F5", TableOnly: true, RequiresItems: true, Primary: true},
-				{Value: "delete_rows", Label: "Delete rows", Shortcut: "F6", TableOnly: true, RequiresItems: true, Primary: true},
+				{Value: "add_item", Label: "Add canvas", Shortcut: "F2", ListOnly: true, LeftPrimary: true},
+				{Value: "delete_item", Label: "Delete canvas", Shortcut: "F3", ListOnly: true, RequiresItems: true, LeftPrimary: true},
+				{Value: "rename_item", Label: "Rename canvas", Shortcut: "F4", ListOnly: true, RequiresItems: true, LeftPrimary: true},
+				{Value: "add_rows", Label: "Add row", Shortcut: "F2", TableOnly: true, RequiresItems: true, LeftPrimary: true},
+				{Value: "delete_rows", Label: "Delete row", Shortcut: "F3", TableOnly: true, RequiresItems: true, LeftPrimary: true},
+				{Value: "rename_row", Label: "Rename", Shortcut: "F4", TableOnly: true, RequiresItems: true, LeftPrimary: true},
 			},
 			State:         p.blastRunStates[stateKey],
 			AliasColumnID: "label_name",
@@ -4728,6 +4821,79 @@ func (p *Prompter) SelectCanvas(initial []model.CanvasItem, currentItem int, nex
 				}
 				return refreshedRows[rowIndex], nil
 			},
+			LoadDetail: func(runIndex int, rowIndex int, pageIndex int, itemIndex int) (tui.DetailItem, bool, error) {
+				if runIndex < 0 || runIndex >= len(items) || rowIndex < 0 || rowIndex >= len(items[runIndex].Rows) {
+					return tui.DetailItem{}, false, nil
+				}
+				row := items[runIndex].Rows[rowIndex]
+				if !detailPageIsFASTA(pageIndex, itemIndex, len(canvasSelectionRowView(row, items[runIndex].Title).DetailPages)) {
+					return tui.DetailItem{}, false, nil
+				}
+				switch row.Kind {
+				case model.CanvasKindFasta:
+					if row.FASTA == nil {
+						return tui.DetailItem{}, false, nil
+					}
+					if fasta := canvasFastaDetailFASTA(*row.FASTA, items[runIndex].Title); fasta != "" {
+						return detailFASTALoadedItem(fasta), true, nil
+					}
+					return tui.DetailItem{
+						Label:       "FASTA",
+						Value:       "This canvas row has no stored sequence payload.",
+						ActionLabel: "Click here",
+						ActionHint:  "or press Enter to retry",
+						ActionKey:   "Enter",
+					}, true, nil
+				case model.CanvasKindKeyword:
+					if row.KeywordRow == nil {
+						return tui.DetailItem{}, false, nil
+					}
+					cacheKey := keywordDetailFASTACacheKey(*row.KeywordRow)
+					if cached := strings.TrimSpace(p.detailFASTACache[cacheKey]); cached != "" {
+						return detailFASTALoadedItem(cached), true, nil
+					}
+					if p.loadKeywordFASTA == nil {
+						return tui.DetailItem{
+							Label:       "FASTA",
+							Value:       "Sequence loading is unavailable in this context.",
+							ActionLabel: "Click here",
+							ActionHint:  "or press Enter to retry",
+							ActionKey:   "Enter",
+						}, true, nil
+					}
+					sequence, err := p.loadKeywordFASTA(*row.KeywordRow)
+					if err != nil {
+						return detailFASTAUnavailableItem(err), true, nil
+					}
+					p.detailFASTACache[cacheKey] = strings.TrimSpace(sequence)
+					return detailFASTALoadedItem(sequence), true, nil
+				case model.CanvasKindBlast:
+					if row.BlastRow == nil {
+						return tui.DetailItem{}, false, nil
+					}
+					cacheKey := blastDetailFASTACacheKey(*row.BlastRow)
+					if cached := strings.TrimSpace(p.detailFASTACache[cacheKey]); cached != "" {
+						return detailFASTALoadedItem(cached), true, nil
+					}
+					if p.loadBlastFASTA == nil {
+						return tui.DetailItem{
+							Label:       "FASTA",
+							Value:       "Sequence loading is unavailable in this context.",
+							ActionLabel: "Click here",
+							ActionHint:  "or press Enter to retry",
+							ActionKey:   "Enter",
+						}, true, nil
+					}
+					sequence, err := p.loadBlastFASTA(*row.BlastRow)
+					if err != nil {
+						return detailFASTAUnavailableItem(err), true, nil
+					}
+					p.detailFASTACache[cacheKey] = strings.TrimSpace(sequence)
+					return detailFASTALoadedItem(sequence), true, nil
+				default:
+					return tui.DetailItem{}, false, nil
+				}
+			},
 		})
 		if err != nil {
 			return CanvasSelection{}, err
@@ -4748,6 +4914,7 @@ func (p *Prompter) SelectCanvas(initial []model.CanvasItem, currentItem int, nex
 			NextNumericID: nextNumericID,
 			GenerateFile:  result.GenerateFile || result.DoneAll,
 			Action:        result.Action,
+			ActionRow:     result.ActionRow,
 		}, nil
 	}
 }
@@ -4814,7 +4981,12 @@ func cloneCanvasItems(items []model.CanvasItem) []model.CanvasItem {
 		}
 		for j := range items[i].Rows {
 			row := items[i].Rows[j]
+			out[i].Rows[j].RowNumber = row.RowNumber
 			out[i].Rows[j].Kind = row.Kind
+			if row.SequenceReady != nil {
+				ready := *row.SequenceReady
+				out[i].Rows[j].SequenceReady = &ready
+			}
 			if row.KeywordRow != nil {
 				copyRow := *row.KeywordRow
 				if row.KeywordRow.ExtraColumns != nil {

@@ -106,6 +106,7 @@ func TestBuildCanvasSelectionTableForFastaUsesFixedCanvasColumns(t *testing.T) {
 			Kind: model.CanvasKindFasta,
 			FASTA: &model.QuerySequenceSource{
 				Annotation:    ">seq1 some header",
+				Sequence:      "MPEPTIDE",
 				ProteinID:     "P1",
 				LabelName:     "PAL1",
 				OrganismShort: "Athaliana",
@@ -124,12 +125,77 @@ func TestBuildCanvasSelectionTableForFastaUsesFixedCanvasColumns(t *testing.T) {
 	if len(rows) != 1 || len(rows[0].Cells) != len(wantIDs) {
 		t.Fatalf("canvas FASTA rows = %#v, want one fixed-column row", rows)
 	}
-	if rows[0].Cells[1] != "PAL1" || rows[0].Cells[2] != "Athaliana" || rows[0].Cells[3] != "PAL1" || rows[0].Cells[4] != "" || rows[0].Cells[5] != "" || rows[0].Cells[6] != "" || rows[0].Cells[7] != "" {
+	if rows[0].Cells[1] != "seq1 some header" || rows[0].Cells[2] != "Athaliana" || rows[0].Cells[3] != "PAL1" || rows[0].Cells[4] != "" || rows[0].Cells[5] != "" || rows[0].Cells[6] != "" || rows[0].Cells[7] != "" {
 		t.Fatalf("canvas FASTA row cells = %#v", rows[0].Cells)
+	}
+	if !rows[0].SelectableSet || !rows[0].Selectable {
+		t.Fatalf("canvas FASTA row should be selectable when sequence is present: %#v", rows[0])
+	}
+}
+
+func TestBuildCanvasSelectionTableForPhgoFastaKeepsHeadAndMetadata(t *testing.T) {
+	item := model.CanvasItem{
+		Title: "1",
+		Kind:  model.CanvasKindFasta,
+		Rows: []model.CanvasRow{{
+			Kind: model.CanvasKindFasta,
+			FASTA: &model.QuerySequenceSource{
+				Annotation:           "phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\7",
+				Sequence:             "MPEPTIDE",
+				LabelName:            "C4H",
+				GeneID:               "Sp7498_C4H_001",
+				OrganismShort:        "Sp7498",
+				BlastSourceLabelName: "PAL1",
+				BlastSourceGeneID:    "AT2G37040",
+				PhgoRowNumber:        7,
+				PhgoHasRowNumber:     true,
+			},
+		}},
+	}
+	_, rows := buildCanvasSelectionTable(item)
+	if len(rows) != 1 {
+		t.Fatalf("canvas rows = %#v", rows)
+	}
+	want := []string{"fasta", "phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\7", "Sp7498", "C4H", "Sp7498_C4H_001", "PAL1", "AT2G37040", "7"}
+	if strings.Join(rows[0].Cells, "|") != strings.Join(want, "|") {
+		t.Fatalf("phgo canvas cells = %#v, want %#v", rows[0].Cells, want)
+	}
+}
+
+func TestBuildCanvasSelectionTableDisablesRowsWithoutSequence(t *testing.T) {
+	item := model.CanvasItem{
+		Title: "1",
+		Kind:  model.CanvasKindFasta,
+		Rows: []model.CanvasRow{{
+			Kind:  model.CanvasKindFasta,
+			FASTA: &model.QuerySequenceSource{Annotation: "seq1 header"},
+		}},
+	}
+	_, rows := buildCanvasSelectionTable(item)
+	if len(rows) != 1 || !rows[0].SelectableSet || rows[0].Selectable {
+		t.Fatalf("row without FASTA sequence should be non-selectable: %#v", rows)
+	}
+}
+
+func TestBuildCanvasSelectionTableDisablesRowsMarkedSequenceUnavailable(t *testing.T) {
+	ready := false
+	item := model.CanvasItem{
+		Title: "1",
+		Kind:  model.CanvasKindKeyword,
+		Rows: []model.CanvasRow{{
+			Kind:          model.CanvasKindKeyword,
+			KeywordRow:    &model.KeywordResultRow{SequenceID: "AT1G01010.1", TranscriptID: "AT1G01010.1"},
+			SequenceReady: &ready,
+		}},
+	}
+	_, rows := buildCanvasSelectionTable(item)
+	if len(rows) != 1 || !rows[0].SelectableSet || rows[0].Selectable {
+		t.Fatalf("row marked without sequence should be non-selectable: %#v", rows)
 	}
 }
 
 func TestCloneCanvasItemsPreservesMetadata(t *testing.T) {
+	ready := false
 	items := []model.CanvasItem{{
 		Title:        "group 1",
 		Subtitle:     "1/1 lines",
@@ -138,13 +204,21 @@ func TestCloneCanvasItemsPreservesMetadata(t *testing.T) {
 		SourceLabel:  "PAL1",
 		ImportedFrom: "snapshot",
 		Rows: []model.CanvasRow{{
-			Kind:       model.CanvasKindKeyword,
-			KeywordRow: &model.KeywordResultRow{LabelName: "PAL1"},
+			RowNumber:     9,
+			Kind:          model.CanvasKindKeyword,
+			KeywordRow:    &model.KeywordResultRow{LabelName: "PAL1"},
+			SequenceReady: &ready,
 		}},
 	}}
 	cloned := cloneCanvasItems(items)
 	if len(cloned) != 1 || cloned[0].SourceLabel != "PAL1" || cloned[0].ImportedFrom != "snapshot" {
 		t.Fatalf("clone did not preserve canvas metadata: %#v", cloned)
+	}
+	if len(cloned[0].Rows) != 1 || cloned[0].Rows[0].RowNumber != 9 {
+		t.Fatalf("clone did not preserve row number: %#v", cloned[0].Rows)
+	}
+	if cloned[0].Rows[0].SequenceReady == nil || *cloned[0].Rows[0].SequenceReady {
+		t.Fatalf("clone did not preserve sequence availability: %#v", cloned[0].Rows[0])
 	}
 }
 
@@ -512,6 +586,27 @@ func TestDetailFASTACacheKeyIsStableAndCacheable(t *testing.T) {
 	got := p.detailFASTACache[blastDetailFASTACacheKey(row)]
 	if !strings.Contains(got, "MPEPTIDE") {
 		t.Fatalf("cache lookup failed: %q", got)
+	}
+}
+
+func TestCanvasFastaDetailPagesUseLoadedSequence(t *testing.T) {
+	source := model.QuerySequenceSource{
+		Annotation: "phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\7",
+		Sequence:   "MPEPTIDE",
+	}
+	pages := canvasFastaDetailPages(source, "canvas")
+	if len(pages) == 0 {
+		t.Fatal("expected detail pages")
+	}
+	last := pages[len(pages)-1]
+	if last.Title != "FASTA" {
+		t.Fatalf("last page title = %q, want FASTA", last.Title)
+	}
+	if len(last.Items) != 1 || last.Items[0].AutoLoad {
+		t.Fatalf("expected loaded FASTA item, got %#v", last.Items)
+	}
+	if !strings.Contains(last.Items[0].Value, "MPEPTIDE") {
+		t.Fatalf("loaded FASTA value = %q", last.Items[0].Value)
 	}
 }
 

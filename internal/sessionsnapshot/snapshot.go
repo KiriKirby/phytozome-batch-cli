@@ -136,11 +136,12 @@ type CanvasItemV2 struct {
 }
 
 type CanvasRowV2 struct {
-	RowNumber  int                        `json:"row_number"`
-	Kind       model.CanvasKind           `json:"kind"`
-	KeywordRow *model.KeywordResultRow    `json:"keyword_row,omitempty"`
-	BlastRow   *model.BlastResultRow      `json:"blast_row,omitempty"`
-	FASTA      *model.QuerySequenceSource `json:"fasta,omitempty"`
+	RowNumber     int                        `json:"row_number"`
+	Kind          model.CanvasKind           `json:"kind"`
+	KeywordRow    *model.KeywordResultRow    `json:"keyword_row,omitempty"`
+	BlastRow      *model.BlastResultRow      `json:"blast_row,omitempty"`
+	FASTA         *model.QuerySequenceSource `json:"fasta,omitempty"`
+	SequenceReady *bool                      `json:"sequence_ready,omitempty"`
 }
 
 type BlastRunV2 struct {
