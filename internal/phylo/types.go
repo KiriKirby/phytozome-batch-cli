@@ -3,7 +3,8 @@ package phylo
 import "time"
 
 const (
-	DefaultDisplayNameSource = "label_name"
+	PHgoDisplayNameSource    = "phgo_label_format"
+	DefaultDisplayNameSource = PHgoDisplayNameSource
 	DefaultAlignmentMethod   = AlignmentClustalW
 	DefaultTreeMethod        = TreeNeighborJoining
 	DefaultConversionTarget  = ConversionTargetProtein

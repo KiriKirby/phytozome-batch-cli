@@ -86,20 +86,33 @@ func (w *BlastWizard) runCanvasMode(ctx context.Context, state canvasLaunchState
 			if saveBaseName == "" {
 				saveBaseName = "canvas"
 			}
-			outputDir, outErr := appfs.OutputDir()
+			defaultOutputDir, outErr := appfs.OutputDir()
 			if outErr != nil {
 				if infoErr := w.showInfo("Canvas export", outErr.Error(), prompt.ErrBackToDatabaseSelection); infoErr != nil {
 					return infoErr
 				}
 				continue
 			}
+			outputDir, outErr := w.selectExportOutputDir(defaultOutputDir)
+			if outErr != nil {
+				if errors.Is(outErr, prompt.ErrBackToRowSelection) {
+					continue
+				}
+				if infoErr := w.showInfo("Canvas export", outErr.Error(), prompt.ErrBackToDatabaseSelection); infoErr != nil {
+					return infoErr
+				}
+				continue
+			}
 			settings := exportSettings{
-				BaseName:        saveBaseName,
-				OutputDir:       outputDir,
-				WriteSession:    saveSettings.WriteSession,
-				WriteText:       saveSettings.WriteText,
-				FastaHeaderMode: model.NormalizeFastaHeaderMode(saveSettings.FastaHeaderMode, saveSettings.UsePhgoHeader),
-				UsePhgoHeader:   model.NormalizeFastaHeaderMode(saveSettings.FastaHeaderMode, saveSettings.UsePhgoHeader) == model.FastaHeaderModePhgo,
+				BaseName:            saveBaseName,
+				OutputDir:           outputDir,
+				WriteSession:        saveSettings.WriteSession,
+				WriteText:           saveSettings.WriteText,
+				WriteConvertedFasta: saveSettings.WriteConvertedFasta,
+				WriteAllRows:        saveSettings.WriteAllRows,
+				FastaHeaderMode:     model.NormalizeFastaHeaderMode(saveSettings.FastaHeaderMode, saveSettings.UsePhgoHeader),
+				UsePhgoHeader:       model.NormalizeFastaHeaderMode(saveSettings.FastaHeaderMode, saveSettings.UsePhgoHeader) == model.FastaHeaderModePhgo,
+				TreeSettings:        selection.TreeSettings,
 			}
 			if err := w.exportCanvasSelections(ctx, state, settings); err != nil {
 				if infoErr := w.showInfo("Canvas export", err.Error(), prompt.ErrBackToDatabaseSelection); infoErr != nil {
@@ -148,6 +161,7 @@ func (w *BlastWizard) runCanvasMode(ctx context.Context, state canvasLaunchState
 				}
 				continue
 			}
+			applyCanvasDisplayNameSourceToItems(items, selection.TreeSettings.DisplayNameSource)
 			state.Items = append(state.Items, items...)
 			state.CurrentItem = len(state.Items) - 1
 			state.NextNumericID = nextCanvasNumericID(state.Items)
@@ -179,6 +193,7 @@ func (w *BlastWizard) runCanvasMode(ctx context.Context, state canvasLaunchState
 					item.Selected[i] = true
 				}
 			}
+			applyCanvasDisplayNameSource(item, selection.TreeSettings.DisplayNameSource)
 			updateCanvasItemSubtitle(item)
 		case "delete_rows":
 			if len(state.Items) == 0 || state.CurrentItem < 0 || state.CurrentItem >= len(state.Items) {
@@ -321,7 +336,7 @@ func (w *BlastWizard) ensureCanvasTreeRuntimeInteractive(ctx context.Context) er
 }
 
 func (w *BlastWizard) refreshCanvasTree(ctx context.Context, state canvasLaunchState, settings phylo.TreeSettings) error {
-	selectedRows := w.selectedCanvasRowsInCurrentOrder(state.Items)
+	selectedRows := w.selectedCanvasRowsInCurrentOrder(state.Items, false)
 	if len(selectedRows) == 0 {
 		return fmt.Errorf("no selected canvas rows are available for tree analysis")
 	}
@@ -1088,6 +1103,7 @@ func canvasTreeTableValues(row model.CanvasRow, fallback string) map[string]stri
 		"blast_labelname": canvasRowColumnValue(row, "source_label_name", fallback),
 		"blast_geneid":    canvasRowColumnValue(row, "source_gene_id", fallback),
 	}
+	values[phylo.PHgoDisplayNameSource] = phylo.FormatPHgoLabel(values["species"], values["geneid"], values["label_name"])
 	if phgoAlias := canvasRowColumnValue(row, "phgo_alias", fallback); phgoAlias != "" {
 		values["phgo_alias"] = phgoAlias
 	}
@@ -1128,7 +1144,7 @@ func canvasRowStoredSequence(row model.CanvasRow) string {
 	switch row.Kind {
 	case model.CanvasKindKeyword:
 		if row.KeywordRow != nil {
-			return strings.TrimSpace(extractInlineKeywordSequence(*row.KeywordRow))
+			return strings.TrimSpace(inlineKeywordProteinSequenceData(*row.KeywordRow).Sequence)
 		}
 	case model.CanvasKindBlast:
 		if row.BlastRow != nil {
@@ -1166,9 +1182,41 @@ func canvasRowOriginalHead(row model.CanvasRow, fallback string) string {
 	return strings.TrimSpace(fallback)
 }
 
+func applyCanvasDisplayNameSourceToItems(items []model.CanvasItem, sourceColumnID string) {
+	for i := range items {
+		applyCanvasDisplayNameSource(&items[i], sourceColumnID)
+	}
+}
+
+func applyCanvasDisplayNameSource(item *model.CanvasItem, sourceColumnID string) {
+	if item == nil {
+		return
+	}
+	sourceColumnID = strings.TrimSpace(sourceColumnID)
+	if sourceColumnID == "" {
+		sourceColumnID = phylo.DefaultDisplayNameSource
+	}
+	for i := range item.Rows {
+		if item.Rows[i].DisplayNameLocked {
+			continue
+		}
+		value := strings.TrimSpace(canvasRowColumnValue(item.Rows[i], sourceColumnID, item.Title))
+		if value == "" {
+			value = canvasRowOriginalHead(item.Rows[i], item.Title)
+		}
+		item.Rows[i].DisplayName = value
+	}
+}
+
 func canvasRowColumnValue(row model.CanvasRow, columnID string, fallback string) string {
 	columnID = strings.TrimSpace(columnID)
 	switch columnID {
+	case phylo.PHgoDisplayNameSource:
+		return phylo.FormatPHgoLabel(
+			canvasRowColumnValue(row, "species", fallback),
+			canvasRowColumnValue(row, "gene_id", fallback),
+			canvasRowColumnValue(row, "label_name", fallback),
+		)
 	case "source_type":
 		switch row.Kind {
 		case model.CanvasKindFasta:
@@ -1239,7 +1287,7 @@ func canvasRowColumnValue(row model.CanvasRow, columnID string, fallback string)
 			}
 		case model.CanvasKindKeyword:
 			if row.KeywordRow != nil {
-				return strings.TrimSpace(row.KeywordRow.GeneIdentifier)
+				return strings.TrimSpace(firstNonEmpty(row.KeywordRow.GeneLocus, row.KeywordRow.GeneIdentifier))
 			}
 		case model.CanvasKindBlast:
 			if row.BlastRow != nil {
@@ -1789,10 +1837,15 @@ func (w *BlastWizard) canvasRowsFromFastaInput(input string, includeBlastSource 
 		if strings.TrimSpace(source.SourceDatabase) == "" || strings.EqualFold(source.SourceDatabase, "fasta") {
 			source.SourceDatabase = string(model.CanvasKindFasta)
 		}
-		rows = append(rows, model.CanvasRow{
+		row := model.CanvasRow{
 			Kind:  model.CanvasKindFasta,
 			FASTA: source,
-		})
+		}
+		if displayName := strings.TrimSpace(source.PhgoCanvasDisplay); displayName != "" {
+			row.DisplayName = displayName
+			row.DisplayNameLocked = true
+		}
+		rows = append(rows, row)
 	}
 	if len(rows) == 0 {
 		return nil, fmt.Errorf("no FASTA rows could be created")
@@ -1878,6 +1931,10 @@ func canvasImportSourceOnlyHeaderMetadata(source *model.QuerySequenceSource) *mo
 		next.PhgoRowNumber = parsed.RowNumber
 		next.PhgoHasRowNumber = parsed.HasRowPart
 		next.PhgoBlastQuerySource = parsed.IsBlastQuerySource
+		next.PhgoCanvasRawRow = parsed.CanvasRawRowNumber
+		next.PhgoCanvasHasRawRow = parsed.CanvasHasRawRow
+		next.PhgoCanvasTitle = parsed.CanvasItemTitle
+		next.PhgoCanvasDisplay = parsed.CanvasDisplayName
 		next.PreferredSequenceID = ""
 		next.ProteinID = ""
 		next.TranscriptID = ""
@@ -1896,6 +1953,10 @@ func canvasImportSourceOnlyHeaderMetadata(source *model.QuerySequenceSource) *mo
 	next.PhgoRowNumber = 0
 	next.PhgoHasRowNumber = false
 	next.PhgoBlastQuerySource = false
+	next.PhgoCanvasRawRow = 0
+	next.PhgoCanvasHasRawRow = false
+	next.PhgoCanvasTitle = ""
+	next.PhgoCanvasDisplay = ""
 	next.PreferredSequenceID = ""
 	next.ProteinID = ""
 	next.TranscriptID = ""
@@ -2075,7 +2136,7 @@ func canvasRowsSorted(rows []model.CanvasRow) []model.CanvasRow {
 }
 
 func (w *BlastWizard) writeCanvasSessionSnapshot(state canvasLaunchState, settings exportSettings) error {
-	path := sessionsnapshot.DefaultFilePath(mustOutputDir(), firstNonEmpty(settings.BaseName, "canvas"))
+	path := sessionsnapshot.DefaultFilePath(settings.OutputDir, firstNonEmpty(settings.BaseName, "canvas"))
 	return w.writeSessionSnapshotWithProgress(path, "Writing canvas session snapshot...", func(ctx context.Context, update func(int, string)) (sessionsnapshot.Snapshot, error) {
 		progress := safeProgress(update)
 		progress(0, "Preparing canvas snapshot data...")
@@ -2116,7 +2177,7 @@ func (w *BlastWizard) snapshotCanvasTreeState(currentItems ...[]model.CanvasItem
 	plan := w.canvasTreeLastPlan
 	payload := w.canvasTreeLastPayload
 	if len(currentItems) > 0 {
-		payload, plan = syncCanvasTreeSnapshotPreview(payload, plan, w.selectedCanvasRowsInCurrentOrder(currentItems[0]), panelState)
+		payload, plan = syncCanvasTreeSnapshotPreview(payload, plan, w.selectedCanvasRowsInCurrentOrder(currentItems[0], false), panelState)
 	}
 	if strings.TrimSpace(plan.BaseDir) == "" && !panelState.EnabledEver && strings.TrimSpace(panelState.DisplayNameSource) == "" {
 		return nil, nil, nil, nil
@@ -2157,6 +2218,7 @@ func syncCanvasTreeSnapshotPreview(payload phylo.ViewerPayload, plan phylo.RunPl
 	}
 	remaining := append([]phylo.InputRecord(nil), payload.Metadata.Records...)
 	records := make([]phylo.InputRecord, 0, len(selected))
+	displaySource := firstNonEmpty(strings.TrimSpace(panelState.DisplayNameSource), payload.Metadata.DisplayNameSource, phylo.DefaultDisplayNameSource)
 	for _, current := range selected {
 		match := -1
 		for i := range remaining {
@@ -2170,16 +2232,16 @@ func syncCanvasTreeSnapshotPreview(payload phylo.ViewerPayload, plan phylo.RunPl
 		}
 		record := remaining[match]
 		row := current.Row
-		record.DisplayName = canvasRowDisplayName(row, current.ItemTitle)
 		record.SourceType = string(row.Kind)
 		record.OriginalHead = canvasRowOriginalHead(row, current.ItemTitle)
 		record.CanvasItem = strings.TrimSpace(current.ItemTitle)
 		record.CanvasRow = current.RowIndex
 		record.TableValues = canvasTreeTableValues(row, current.ItemTitle)
+		record.DisplayName = canvasTreeDisplayNameFromSource(row, current.ItemTitle, displaySource, record.TableValues)
 		records = append(records, record)
 		remaining = append(remaining[:match], remaining[match+1:]...)
 	}
-	payload.Metadata.DisplayNameSource = firstNonEmpty(strings.TrimSpace(panelState.DisplayNameSource), payload.Metadata.DisplayNameSource, phylo.DefaultDisplayNameSource)
+	payload.Metadata.DisplayNameSource = displaySource
 	payload.Metadata.Records = records
 	payload.Metadata.GeneratedAt = time.Now()
 	if strings.TrimSpace(payload.AlignedFASTA) == "" {
@@ -2207,6 +2269,21 @@ func syncCanvasTreeSnapshotPreview(payload phylo.ViewerPayload, plan phylo.RunPl
 	fingerprints.Preview = preview.Preview
 	plan.Fingerprints = fingerprints
 	return payload, plan
+}
+
+func canvasTreeDisplayNameFromSource(row model.CanvasRow, fallback string, sourceColumn string, values map[string]string) string {
+	if row.DisplayNameLocked {
+		if name := strings.TrimSpace(row.DisplayName); name != "" {
+			return name
+		}
+	}
+	sourceColumn = strings.TrimSpace(sourceColumn)
+	if sourceColumn == phylo.PHgoDisplayNameSource {
+		if value := strings.TrimSpace(values[sourceColumn]); value != "" {
+			return value
+		}
+	}
+	return canvasRowDisplayName(row, fallback)
 }
 
 func canvasTreeRecordMatchesSelectedRow(record phylo.InputRecord, selected canvasSelectedRow) bool {
@@ -2287,10 +2364,13 @@ type canvasSelectedRow struct {
 func canvasExportCompleteMessage(settings exportSettings) string {
 	lines := make([]string, 0, 2)
 	if settings.WriteText {
-		lines = append(lines, "Canvas FASTA export saved to output.")
+		lines = append(lines, "Canvas FASTA export saved to "+settings.OutputDir+".")
+	}
+	if settings.WriteConvertedFasta {
+		lines = append(lines, "Canvas converted FASTA export saved to "+settings.OutputDir+".")
 	}
 	if settings.WriteSession {
-		lines = append(lines, "Canvas snapshot saved to output.")
+		lines = append(lines, "Canvas snapshot saved to "+settings.OutputDir+".")
 	}
 	if len(lines) == 0 {
 		return "Nothing was exported."
@@ -2299,14 +2379,14 @@ func canvasExportCompleteMessage(settings exportSettings) string {
 }
 
 func (w *BlastWizard) exportCanvasSelections(ctx context.Context, state canvasLaunchState, settings exportSettings) error {
-	if !settings.WriteText && !settings.WriteSession {
+	if !settings.WriteText && !settings.WriteConvertedFasta && !settings.WriteSession {
 		return nil
 	}
+	selectedRows := w.selectedCanvasRowsInCurrentOrder(state.Items, settings.WriteAllRows)
+	if (settings.WriteText || settings.WriteConvertedFasta) && len(selectedRows) == 0 {
+		return fmt.Errorf("no selected canvas rows are available for FASTA export")
+	}
 	if settings.WriteText {
-		selectedRows := w.selectedCanvasRowsInCurrentOrder(state.Items)
-		if len(selectedRows) == 0 {
-			return fmt.Errorf("no selected canvas rows are available for FASTA export")
-		}
 		records, err := w.canvasSequenceRecordsForExport(ctx, selectedRows)
 		if err != nil {
 			return err
@@ -2314,6 +2394,18 @@ func (w *BlastWizard) exportCanvasSelections(ctx context.Context, state canvasLa
 		records = applyCanvasHeaderMode(records, selectedRows, settings.fastaHeaderMode())
 		textPath := filepath.Join(settings.OutputDir, settings.BaseName+".fasta")
 		if err := withSpinner(w.out, "Writing canvas FASTA file...", func() error {
+			return export.WriteProteinSequencesText(textPath, records)
+		}); err != nil {
+			return err
+		}
+	}
+	if settings.WriteConvertedFasta {
+		records, err := w.canvasConvertedSequenceRecordsForExport(ctx, state, selectedRows, settings.TreeSettings, settings.fastaHeaderMode())
+		if err != nil {
+			return err
+		}
+		textPath := filepath.Join(settings.OutputDir, settings.BaseName+"_converted.fasta")
+		if err := withSpinner(w.out, "Writing converted canvas FASTA file...", func() error {
 			return export.WriteProteinSequencesText(textPath, records)
 		}); err != nil {
 			return err
@@ -2327,8 +2419,68 @@ func (w *BlastWizard) exportCanvasSelections(ctx context.Context, state canvasLa
 	return nil
 }
 
-func (w *BlastWizard) selectedCanvasRowsInCurrentOrder(items []model.CanvasItem) []canvasSelectedRow {
-	return selectedCanvasRowsInVisibleOrder(items, w.prompt.SnapshotCanvasReviewState(canvasStateKey("canvas")))
+func (w *BlastWizard) canvasConvertedSequenceRecordsForExport(ctx context.Context, state canvasLaunchState, selectedRows []canvasSelectedRow, treeSettings phylo.TreeSettings, headerMode model.FastaHeaderMode) ([]model.ProteinSequenceRecord, error) {
+	if err := w.ensureCanvasTreeRuntimeInteractive(ctx); err != nil {
+		return nil, err
+	}
+	result, err := withSpinnerValue(w.out, "Converting selected canvas FASTA records with PHgo tree settings...", prompt.ErrBackToRowSelection, func(taskCtx context.Context) (phylo.RunResult, error) {
+		return w.buildCanvasTreeArtifacts(taskCtx, state, selectedRows, treeSettings)
+	})
+	if err != nil {
+		return nil, err
+	}
+	sequences, err := canvasConvertedSequencesFromAlignedFASTA(result.Plan.AlignedFASTA)
+	if err != nil {
+		return nil, err
+	}
+	if len(sequences) != len(selectedRows) {
+		return nil, fmt.Errorf("converted FASTA contains %d sequence(s) for %d selected row(s)", len(sequences), len(selectedRows))
+	}
+	records, err := w.canvasSequenceRecordsForExport(ctx, selectedRows)
+	if err != nil {
+		return nil, err
+	}
+	records = applyCanvasHeaderMode(records, selectedRows, headerMode)
+	for i := range records {
+		if i >= len(sequences) {
+			break
+		}
+		records[i].Sequence = sanitizeSequence(sequences[i])
+	}
+	return records, nil
+}
+
+func canvasConvertedSequencesFromAlignedFASTA(alignedFASTA string) ([]string, error) {
+	lines := strings.Split(strings.ReplaceAll(alignedFASTA, "\r\n", "\n"), "\n")
+	sequences := make([]string, 0)
+	var current strings.Builder
+	flush := func() {
+		if current.Len() == 0 {
+			return
+		}
+		sequences = append(sequences, strings.ReplaceAll(current.String(), "-", ""))
+		current.Reset()
+	}
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, ">") {
+			flush()
+			continue
+		}
+		current.WriteString(line)
+	}
+	flush()
+	if len(sequences) == 0 {
+		return nil, fmt.Errorf("converted FASTA export could not read any runtime FASTA sequences")
+	}
+	return sequences, nil
+}
+
+func (w *BlastWizard) selectedCanvasRowsInCurrentOrder(items []model.CanvasItem, includeUnchecked bool) []canvasSelectedRow {
+	return selectedCanvasRowsInVisibleOrder(items, w.prompt.SnapshotCanvasReviewState(canvasStateKey("canvas")), includeUnchecked)
 }
 
 func selectedCanvasRowsInOrder(items []model.CanvasItem) []canvasSelectedRow {
@@ -2349,7 +2501,7 @@ func selectedCanvasRowsInOrder(items []model.CanvasItem) []canvasSelectedRow {
 	return out
 }
 
-func selectedCanvasRowsInVisibleOrder(items []model.CanvasItem, reviewState tui.BlastRunSelectionState) []canvasSelectedRow {
+func selectedCanvasRowsInVisibleOrder(items []model.CanvasItem, reviewState tui.BlastRunSelectionState, includeUnchecked bool) []canvasSelectedRow {
 	out := make([]canvasSelectedRow, 0)
 	for _, item := range items {
 		selected := normalizeCanvasSelection(item.Selected, len(item.Rows))
@@ -2365,7 +2517,10 @@ func selectedCanvasRowsInVisibleOrder(items []model.CanvasItem, reviewState tui.
 				continue
 			}
 			row := item.Rows[rowIndex]
-			if rowIndex >= len(selected) || !selected[rowIndex] || !canvasRowHasSequenceForExport(row) {
+			if !includeUnchecked && (rowIndex >= len(selected) || !selected[rowIndex]) {
+				continue
+			}
+			if !canvasRowHasSequenceForExport(row) {
 				continue
 			}
 			out = append(out, canvasSelectedRow{
@@ -2517,6 +2672,8 @@ func applyCanvasHeaderMode(records []model.ProteinSequenceRecord, rows []canvasS
 		return applyOriginalHeaders(records)
 	case model.FastaHeaderModeMinimal:
 		return applyCanvasMinimalHeaders(records, rows)
+	case model.FastaHeaderModeDisplayName:
+		return applyCanvasDisplayNameHeaders(records, rows)
 	default:
 		return applyCanvasPhgoHeaders(records, rows)
 	}
@@ -2559,53 +2716,131 @@ func applyCanvasMinimalHeaders(records []model.ProteinSequenceRecord, rows []can
 	return out
 }
 
+func applyCanvasDisplayNameHeaders(records []model.ProteinSequenceRecord, rows []canvasSelectedRow) []model.ProteinSequenceRecord {
+	out := append([]model.ProteinSequenceRecord(nil), records...)
+	limit := minInt(len(out), len(rows))
+	for i := 0; i < limit; i++ {
+		if header := displayNameFastaHeader(canvasRowDisplayName(rows[i].Row, rows[i].ItemTitle)); header != "" {
+			out[i].Header = header
+			continue
+		}
+		if header := minimalFastaHeader(recordMinimalHeaderID(out[i])); header != "" {
+			out[i].Header = header
+		}
+	}
+	for i := limit; i < len(out); i++ {
+		if header := minimalFastaHeader(recordMinimalHeaderID(out[i])); header != "" {
+			out[i].Header = header
+		}
+	}
+	return out
+}
+
+func displayNameFastaHeader(name string) string {
+	name = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(name, "\r", " "), "\n", " "))
+	name = strings.Join(strings.Fields(name), " ")
+	if name == "" {
+		return ""
+	}
+	return ">" + name
+}
+
 func canvasPhgoHeader(selected canvasSelectedRow, record model.ProteinSequenceRecord) string {
-	rowNumber := selected.Row.RowNumber
+	species, label, geneID := canvasPhgoSelfParts(selected, record)
+	sourceLabel, sourceID := canvasPhgoSourceParts(selected, record)
+	rawRow := selected.Row.RowNumber
+	if rawRow == 0 {
+		rawRow = selected.RowIndex + 1
+	}
+	itemTitle := strings.TrimSpace(selected.ItemTitle)
+	if itemTitle == "" {
+		itemTitle = "canvas"
+	}
+	displayName := canvasRowDisplayName(selected.Row, selected.ItemTitle)
+	if displayName == "" {
+		displayName = recordMinimalHeaderID(record)
+	}
+	return buildCanvasPhgoHeader(species, label, geneID, sourceLabel, sourceID, rawRow, itemTitle, displayName)
+}
+
+func buildCanvasPhgoHeader(species string, label string, geneID string, sourceLabel string, sourceID string, rawRow int, itemTitle string, displayName string) string {
+	species = phgoHeaderPartOrPlaceholder(sanitizePhgoHeaderPart(species))
+	label = phgoHeaderPartOrPlaceholder(sanitizePhgoHeaderPart(label))
+	geneID = phgoHeaderPartOrPlaceholder(sanitizePhgoHeaderPart(geneID))
+	sourceLabel = phgoHeaderPartOrPlaceholder(sanitizePhgoHeaderPart(sourceLabel))
+	sourceID = phgoHeaderPartOrPlaceholder(sanitizePhgoHeaderPart(sourceID))
+	itemTitle = phgoHeaderPartOrPlaceholder(sanitizePhgoHeaderPart(itemTitle))
+	displayName = phgoHeaderPartOrPlaceholder(sanitizePhgoHeaderPart(displayName))
+	return buildPhgoHeaderWithGroups(
+		species,
+		label,
+		geneID,
+		sourceLabel+"/"+sourceID,
+		fmt.Sprintf("%d/%s", rawRow, itemTitle),
+		displayName,
+	)
+}
+
+func canvasPhgoSelfParts(selected canvasSelectedRow, record model.ProteinSequenceRecord) (string, string, string) {
 	switch selected.Row.Kind {
 	case model.CanvasKindKeyword:
-		if selected.Row.KeywordRow == nil {
-			return ""
-		}
-		row := *selected.Row.KeywordRow
-		header := keywordPhgoHeader(row, rowNumber)
-		if header != "" {
-			return header
+		if selected.Row.KeywordRow != nil {
+			row := *selected.Row.KeywordRow
+			return firstNonEmpty(strings.TrimSpace(row.SequenceHeaderLabel), strings.TrimSpace(row.Genome)),
+				rowKeywordLabelName(row),
+				firstNonEmpty(strings.TrimSpace(row.TranscriptID), stripTranscriptDecorations(strings.TrimSpace(row.GeneIdentifier)), strings.TrimSpace(row.SequenceID), strings.TrimSpace(row.ProteinID))
 		}
 	case model.CanvasKindBlast:
-		if selected.Row.BlastRow == nil {
-			return ""
-		}
-		row := *selected.Row.BlastRow
-		header := blastPhgoHeader(row, rowNumber)
-		if header != "" {
-			return header
+		if selected.Row.BlastRow != nil {
+			row := *selected.Row.BlastRow
+			return strings.TrimSpace(row.Species),
+				firstNonEmpty(strings.TrimSpace(row.LabelName), strings.TrimSpace(row.BlastLabelName)),
+				blastRowID2(row)
 		}
 	case model.CanvasKindFasta:
-		if selected.Row.FASTA == nil {
-			return ""
-		}
-		source := *selected.Row.FASTA
-		if header := strings.TrimSpace(source.Annotation); header != "" {
-			if parsed, ok := parsePhgoFastaHeader(header); ok {
-				raw := strings.TrimSpace(parsed.RawHeader)
-				if raw != "" && !strings.HasPrefix(raw, ">") {
-					raw = ">" + raw
-				}
-				return raw
+		if selected.Row.FASTA != nil {
+			source := *selected.Row.FASTA
+			if parsed, ok := parsePhgoFastaHeader(source.Annotation); ok {
+				return parsed.Species, parsed.LabelName, parsed.GeneID
 			}
-		}
-		species := strings.TrimSpace(source.OrganismShort)
-		label := strings.TrimSpace(source.LabelName)
-		geneID := strings.TrimSpace(firstNonEmpty(source.TranscriptID, source.GeneID, source.ProteinID, source.PreferredSequenceID))
-		if header := buildPhgoHeaderWithGroups(species, label, geneID, fmt.Sprintf("%d", rowNumber)); header != "" {
-			return header
+			return strings.TrimSpace(source.OrganismShort),
+				strings.TrimSpace(source.LabelName),
+				strings.TrimSpace(firstNonEmpty(source.TranscriptID, source.GeneID, source.ProteinID, source.PreferredSequenceID, canvasRecordFallbackID(record)))
 		}
 	}
-	header := strings.TrimSpace(record.OriginalHeader)
-	if header == "" {
-		header = strings.TrimSpace(record.Header)
+	return "", "", canvasRecordFallbackID(record)
+}
+
+func canvasPhgoSourceParts(selected canvasSelectedRow, record model.ProteinSequenceRecord) (string, string) {
+	switch selected.Row.Kind {
+	case model.CanvasKindKeyword:
+		if selected.Row.KeywordRow != nil {
+			return "", ""
+		}
+	case model.CanvasKindBlast:
+		if selected.Row.BlastRow != nil {
+			row := *selected.Row.BlastRow
+			return strings.TrimSpace(row.BlastLabelName), strings.TrimSpace(row.BlastGeneID)
+		}
+	case model.CanvasKindFasta:
+		if selected.Row.FASTA != nil {
+			source := *selected.Row.FASTA
+			if parsed, ok := parsePhgoFastaHeader(source.Annotation); ok {
+				return parsed.BlastSourceLabelName, parsed.BlastSourceGeneID
+			}
+			return strings.TrimSpace(source.BlastSourceLabelName), strings.TrimSpace(source.BlastSourceGeneID)
+		}
 	}
-	return header
+	return "", ""
+}
+
+func canvasRecordFallbackID(record model.ProteinSequenceRecord) string {
+	for _, header := range []string{record.OriginalHeader, record.Header} {
+		if id := primaryIDFromFastaHeader(header); id != "" {
+			return id
+		}
+	}
+	return "sequence"
 }
 
 func canvasMinimalHeaderID(selected canvasSelectedRow, record model.ProteinSequenceRecord) string {

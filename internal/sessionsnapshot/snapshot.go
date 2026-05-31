@@ -30,10 +30,11 @@ import (
 const (
 	FileExtension = ".pgo"
 	FormatName    = "phgo-session-snapshot"
-	FormatVersion = "2.2"
+	FormatVersion = "2.3"
 
 	contextModuleName       = "context"
 	keywordModuleName       = "keyword-result"
+	keywordSourceName       = "keyword-source-state"
 	blastModuleName         = "blast-result"
 	canvasModuleName        = "canvas-result"
 	keywordReviewName       = "keyword-review-state"
@@ -47,6 +48,7 @@ const (
 	runtimeCacheName        = "runtime-cache"
 	contextModulePath       = "modules/context-v2.xml"
 	keywordModulePath       = "modules/keyword-result-v2.xml"
+	keywordSourceModulePath = "modules/keyword-source-state-v3.xml"
 	blastModulePath         = "modules/blast-result-v2.xml"
 	canvasModulePath        = "modules/canvas-result-v2.xml"
 	keywordReviewModulePath = "modules/keyword-review-state-v2.xml"
@@ -63,6 +65,7 @@ const (
 type Snapshot struct {
 	Context            ContextV2
 	Keyword            *KeywordResultV2
+	KeywordSource      *KeywordSourceStateV3
 	Blast              *BlastResultV2
 	Canvas             *CanvasResultV2
 	KeywordReview      *KeywordReviewStateV2
@@ -95,6 +98,26 @@ type KeywordResultV2 struct {
 	Groups          []model.KeywordSearchGroup `json:"groups"`
 	Selected        []bool                     `json:"selected"`
 	ReportContext   ReportContextV2            `json:"report_context"`
+}
+
+type KeywordSourceStateV3 struct {
+	Database     string               `json:"database"`
+	SourceKind   string               `json:"source_kind"`
+	Engine       string               `json:"engine"`
+	ResultDomain string               `json:"result_domain"`
+	SearchTypes  []string             `json:"search_types,omitempty"`
+	Terms        []string             `json:"terms,omitempty"`
+	Extra        map[string]string    `json:"extra,omitempty"`
+	NCBI         *NCBIKeywordSourceV3 `json:"ncbi,omitempty"`
+}
+
+type NCBIKeywordSourceV3 struct {
+	EntrezDatabase    string   `json:"entrez_database"`
+	RecordType        string   `json:"record_type"`
+	EUtilitiesBaseURL string   `json:"eutilities_base_url"`
+	EngineSchema      string   `json:"engine_schema"`
+	Accessions        []string `json:"accessions,omitempty"`
+	UIDs              []string `json:"uids,omitempty"`
 }
 
 type ReportContextV2 struct {
@@ -223,6 +246,8 @@ type PromptExportSettingsV2 struct {
 	WriteReport           bool                  `json:"write_report"`
 	WriteSession          bool                  `json:"write_session"`
 	WriteText             bool                  `json:"write_text"`
+	WriteConvertedFasta   bool                  `json:"write_converted_fasta"`
+	WriteAllRows          bool                  `json:"write_all_rows"`
 	WriteExcel            bool                  `json:"write_excel"`
 	WriteRawExcel         bool                  `json:"write_raw_excel"`
 	FastaHeaderMode       model.FastaHeaderMode `json:"fasta_header_mode"`
@@ -449,6 +474,9 @@ func WriteFile(path string, snapshot Snapshot) error {
 	if snapshot.Keyword != nil {
 		addModule(keywordModuleName, "2", keywordModulePath, snapshot.Keyword)
 	}
+	if snapshot.KeywordSource != nil {
+		addModule(keywordSourceName, "3", keywordSourceModulePath, snapshot.KeywordSource)
+	}
 	if snapshot.Blast != nil {
 		addModule(blastModuleName, "2", blastModulePath, snapshot.Blast)
 	}
@@ -582,6 +610,12 @@ func ReadFile(path string) (Snapshot, error) {
 				return Snapshot{}, err
 			}
 			snapshot.Keyword = &keyword
+		case keywordSourceName:
+			var source KeywordSourceStateV3
+			if err := readModule(file, &source); err != nil {
+				return Snapshot{}, err
+			}
+			snapshot.KeywordSource = &source
 		case blastModuleName:
 			var blast BlastResultV2
 			if err := readModule(file, &blast); err != nil {

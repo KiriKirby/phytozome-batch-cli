@@ -32,6 +32,7 @@ import (
 	"github.com/KiriKirby/phytozome-go/internal/labelname"
 	"github.com/KiriKirby/phytozome-go/internal/lemna"
 	"github.com/KiriKirby/phytozome-go/internal/model"
+	"github.com/KiriKirby/phytozome-go/internal/ncbi"
 	"github.com/KiriKirby/phytozome-go/internal/phylo"
 	"github.com/KiriKirby/phytozome-go/internal/phytozome"
 	"github.com/KiriKirby/phytozome-go/internal/progressctx"
@@ -71,6 +72,7 @@ type BlastWizard struct {
 	lastKeywordSpecies      model.SpeciesCandidate
 	rewindKeywordToInput    bool
 	lastExternalRefs        externalReferenceConfig
+	ncbiReplacementChoice   string
 	suppressTaskModals      bool
 	ensureCanvasTreeRuntime func(context.Context) error
 	transferKind            string
@@ -186,6 +188,17 @@ type keywordSearchRecoveryError struct {
 	Err     error
 }
 
+type keywordNoRowsError struct {
+	Keyword string
+}
+
+func (e keywordNoRowsError) Error() string {
+	if strings.TrimSpace(e.Keyword) == "" {
+		return "no keyword search results were found"
+	}
+	return fmt.Sprintf("no keyword search results were found for %q", strings.TrimSpace(e.Keyword))
+}
+
 func (e *keywordSearchRecoveryError) Error() string {
 	if e == nil {
 		return ""
@@ -296,11 +309,14 @@ type exportSettings struct {
 	WriteReport           bool
 	WriteSession          bool
 	WriteText             bool
+	WriteConvertedFasta   bool
+	WriteAllRows          bool
 	WriteExcel            bool
 	WriteRawExcel         bool
 	FastaHeaderMode       model.FastaHeaderMode
 	UsePhgoHeader         bool
 	PrependOnlyFirstQuery bool
+	TreeSettings          phylo.TreeSettings
 }
 
 type exportFileResult struct {
@@ -1013,6 +1029,8 @@ func (w *BlastWizard) dataSourceForDatabase(database string) (source.DataSource,
 		return lemna.NewClient(w.httpClient), nil
 	case "tair":
 		return tair.NewClient(w.httpClient), nil
+	case "ncbi":
+		return ncbi.NewClient(w.httpClient), nil
 	default:
 		return nil, fmt.Errorf("unsupported BLAST target database %q", database)
 	}
@@ -1136,6 +1154,8 @@ func (w *BlastWizard) chooseDataSource() (source.DataSource, error) {
 			return lemna.NewClient(w.httpClient), nil
 		case "tair":
 			return tair.NewClient(w.httpClient), nil
+		case "ncbi":
+			return ncbi.NewClient(w.httpClient), nil
 		default:
 			return nil, fmt.Errorf("unsupported database %q", choice.Database)
 		}
@@ -1377,57 +1397,49 @@ func (w *BlastWizard) detectLemnaBlastCapabilities(ctx context.Context, lc *lemn
 	return tui.RunTaskValueContext(tui.TaskPage{
 		Path:        w.tuiPath("BLAST", "Capability check"),
 		Title:       title,
-		Description: "Checking lemna.org server databases and local FASTA downloads for the selected species.",
+		Description: "Checking local FASTA downloads for the selected species so BLAST+ can run fully offline against local data.",
 		Initial:     fmt.Sprintf("Checking BLAST availability for %s...", selected.DisplayLabel()),
 		CancelError: prompt.ErrBackToQueryInput,
 	}, func(taskCtx context.Context, update func(string)) (lemna.BlastCapability, error) {
-		safeTaskUpdate(update)("Checking online BLAST databases and local FASTA files...")
+		safeTaskUpdate(update)("Checking local FASTA files for offline BLAST+...")
 		return lc.DetectBlastCapabilities(mergeContexts(ctx, taskCtx), selected)
 	})
 }
 
 func availableBlastProgramsFromCapability(cap lemna.BlastCapability) []string {
 	progs := make([]string, 0, 4)
-	if cap.ServerBlastNAvailable || cap.HasNucleotideFasta {
+	if cap.HasNucleotideFasta {
 		progs = append(progs, "blastn")
 	}
-	if cap.ServerBlastXAvailable || cap.HasProteinFasta {
+	if cap.HasProteinFasta {
 		progs = append(progs, "blastx")
 	}
-	if cap.ServerTBlastNAvailable || cap.HasNucleotideFasta {
+	if cap.HasNucleotideFasta {
 		progs = append(progs, "tblastn")
 	}
-	if cap.ServerBlastPAvailable || cap.HasProteinFasta {
+	if cap.HasProteinFasta {
 		progs = append(progs, "blastp")
 	}
 	return progs
 }
 
 func (w *BlastWizard) chooseLemnaBlastExecution(cap lemna.BlastCapability, selected model.SpeciesCandidate, program string) (string, error) {
-	serverOK := false
 	localOK := false
 	switch strings.ToLower(strings.TrimSpace(program)) {
 	case "blastn":
-		serverOK = cap.ServerBlastNAvailable
 		localOK = cap.HasNucleotideFasta
 	case "tblastn":
-		serverOK = cap.ServerTBlastNAvailable
 		localOK = cap.HasNucleotideFasta
 	case "blastx":
-		serverOK = cap.ServerBlastXAvailable
 		localOK = cap.HasProteinFasta
 	case "blastp":
-		serverOK = cap.ServerBlastPAvailable
 		localOK = cap.HasProteinFasta
 	}
 
-	if serverOK {
-		return "server", nil
-	}
 	if localOK {
 		return "local", nil
 	}
-	return "", fmt.Errorf("no server or local execution target is available for %s on %s", program, selected.DisplayLabel())
+	return "", fmt.Errorf("no local FASTA execution target is available for %s on %s", program, selected.DisplayLabel())
 }
 
 func (w *BlastWizard) loadSpeciesCandidates(ctx context.Context) ([]model.SpeciesCandidate, error) {
@@ -1638,6 +1650,10 @@ func (w *BlastWizard) selectSpecies(candidates []model.SpeciesCandidate) (model.
 	const smallListThreshold = 16
 
 	for {
+		if _, ok := w.source.(*ncbi.Client); ok && len(candidates) == 1 {
+			return candidates[0], nil
+		}
+
 		if _, ok := w.source.(*tair.Client); ok && len(candidates) <= smallListThreshold {
 			selected, err := w.prompt.SelectTAIRVersion(candidates)
 			if err == nil {
@@ -1795,6 +1811,33 @@ keywordInputLoop:
 				continue
 			}
 
+			autoIdentifyGeneLoci := false
+			var manualGeneLoci []string
+			if _, ok := w.source.(*ncbi.Client); ok {
+				loci, locusErr := w.prompt.KeywordGeneLoci(len(keywords), prompt.ErrBackToQueryInput)
+				manualGeneLoci = loci
+				if errors.Is(locusErr, prompt.ErrAutoIdentifyRequested) {
+					autoIdentifyGeneLoci = true
+					locusErr = nil
+				}
+				if locusErr != nil {
+					if errors.Is(locusErr, prompt.ErrBackToQueryInput) {
+						continue keywordInputLoop
+					}
+					if errors.Is(locusErr, prompt.ErrBackToSpeciesSelection) || errors.Is(locusErr, prompt.ErrBackToModeSelection) || errors.Is(locusErr, prompt.ErrBackToDatabaseSelection) || errors.Is(locusErr, prompt.ErrExitRequested) {
+						return locusErr
+					}
+					retry, navErr := w.retryWorkflowStep(fmt.Sprintf("read Gene locus values: %v", locusErr), prompt.ErrBackToQueryInput)
+					if navErr != nil {
+						return navErr
+					}
+					if !retry {
+						return locusErr
+					}
+					continue
+				}
+			}
+
 			var err error
 			groups, err = w.searchKeywordGroups(ctx, selected, keywords, nil, keywordInput.WideSearch)
 			if err != nil {
@@ -1810,6 +1853,23 @@ keywordInputLoop:
 				}
 				continue
 			}
+			groups, err = w.applyNCBIProteinReplacementChoicesWithProgress(ctx, selected, groups)
+			if err != nil {
+				if errors.Is(err, prompt.ErrDialogClosed) || errors.Is(err, prompt.ErrBackToQueryInput) {
+					continue keywordInputLoop
+				}
+				if errors.Is(err, prompt.ErrBackToSpeciesSelection) || errors.Is(err, prompt.ErrBackToModeSelection) || errors.Is(err, prompt.ErrBackToDatabaseSelection) || errors.Is(err, prompt.ErrExitRequested) {
+					return err
+				}
+				retry, navErr := w.retryWorkflowStep(fmt.Sprintf("resolve NCBI protein updates: %v", err), prompt.ErrBackToQueryInput)
+				if navErr != nil {
+					return navErr
+				}
+				if !retry {
+					return err
+				}
+				continue
+			}
 			if autoIdentifyLabels {
 				identifications, err = w.autoIdentifyKeywordLabelsWithProgress(ctx, selected, groups)
 				if err != nil {
@@ -1817,6 +1877,23 @@ keywordInputLoop:
 						return err
 					}
 					retry, navErr := w.retryWorkflowStep(fmt.Sprintf("auto identify keyword labels: %v", err), prompt.ErrBackToQueryInput)
+					if navErr != nil {
+						return navErr
+					}
+					if !retry {
+						return err
+					}
+					continue
+				}
+			}
+			if len(manualGeneLoci) == len(keywords) {
+				applyKeywordGeneLoci(groups, manualGeneLoci, "user input")
+			} else if autoIdentifyGeneLoci {
+				if err := w.autoIdentifyNCBIKeywordGeneLociWithProgress(ctx, groups); err != nil {
+					if errors.Is(err, prompt.ErrBackToSpeciesSelection) || errors.Is(err, prompt.ErrBackToModeSelection) || errors.Is(err, prompt.ErrBackToDatabaseSelection) || errors.Is(err, prompt.ErrExitRequested) {
+						return err
+					}
+					retry, navErr := w.retryWorkflowStep(fmt.Sprintf("auto identify NCBI Gene locus values: %v", err), prompt.ErrBackToQueryInput)
 					if navErr != nil {
 						return navErr
 					}
@@ -1861,6 +1938,9 @@ keywordInputLoop:
 		if reportCtx != nil {
 			copied := *reportCtx
 			w.lastKeywordReport = &copied
+		}
+		if w.prompt != nil {
+			w.prompt.QueueKeywordResultTableCue()
 		}
 
 	keywordRowLoop:
@@ -3323,6 +3403,9 @@ func (w *BlastWizard) executeConfiguredBlastBatchWithReferences(ctx context.Cont
 			w.lastBlastReviewContext.Prepared = cloneBlastQueryItems(prepared)
 			w.lastBlastReviewContext.Runs = cloneBlastQueryRuns(queryRuns)
 		}
+	}
+	if w.prompt != nil {
+		w.prompt.QueueBlastResultTableCue()
 	}
 	return w.reviewBlastRuns(ctx, selected, prepared, queryRuns, configuredRequest, originalRunCount)
 }
@@ -7610,7 +7693,7 @@ func (w *BlastWizard) prepareExportSettings(defaultBaseName string, allowFolder 
 }
 
 func (w *BlastWizard) prepareExportSettingsWithFamilyOption(defaultBaseName string, allowFolder bool, allowEmptyFileName bool, mentionBlastHeaderFallback bool, showFamilyQueryPrepend bool, prependOnlyFirstQuery bool) (exportSettings, error) {
-	outputDir, err := appfs.OutputDir()
+	defaultOutputDir, err := appfs.OutputDir()
 	if err != nil {
 		return exportSettings{}, err
 	}
@@ -7628,6 +7711,10 @@ func (w *BlastWizard) prepareExportSettingsWithFamilyOption(defaultBaseName stri
 	if baseName == "" {
 		baseName = sanitizeExportName(time.Now().Format("20060102_150405"))
 	}
+	outputDir, err := w.selectExportOutputDir(defaultOutputDir)
+	if err != nil {
+		return exportSettings{}, err
+	}
 	resolved := outputDir
 	if allowFolder && strings.TrimSpace(settings.FolderName) != "" {
 		resolved = filepath.Join(outputDir, sanitizeExportName(settings.FolderName))
@@ -7639,7 +7726,7 @@ func (w *BlastWizard) prepareExportSettingsWithFamilyOption(defaultBaseName stri
 }
 
 func (w *BlastWizard) prepareBatchExportSettings(runs []blastQueryRun) (exportSettings, error) {
-	outputDir, err := appfs.OutputDir()
+	defaultOutputDir, err := appfs.OutputDir()
 	if err != nil {
 		return exportSettings{}, err
 	}
@@ -7648,6 +7735,10 @@ func (w *BlastWizard) prepareBatchExportSettings(runs []blastQueryRun) (exportSe
 		ShowFamilyQueryPrepend: showFamilyQueryPrepend,
 		PrependOnlyFirstQuery:  prependOnlyFirstQuery,
 	})
+	if err != nil {
+		return exportSettings{}, err
+	}
+	outputDir, err := w.selectExportOutputDir(defaultOutputDir)
 	if err != nil {
 		return exportSettings{}, err
 	}
@@ -7661,6 +7752,20 @@ func (w *BlastWizard) prepareBatchExportSettings(runs []blastQueryRun) (exportSe
 	return exportSettingsFromPrompt(settings, "", resolved), nil
 }
 
+func (w *BlastWizard) selectExportOutputDir(defaultOutputDir string) (string, error) {
+	if w.suppressTaskModals {
+		return defaultOutputDir, nil
+	}
+	dir, err := appfs.SelectFolder("Select export folder", defaultOutputDir)
+	if err != nil {
+		if errors.Is(err, appfs.ErrFolderSelectionCancelled) {
+			return "", prompt.ErrBackToRowSelection
+		}
+		return "", err
+	}
+	return dir, nil
+}
+
 func exportSettingsFromPrompt(settings prompt.ExportSettings, baseName string, outputDir string) exportSettings {
 	headerMode := model.NormalizeFastaHeaderMode(settings.FastaHeaderMode, settings.UsePhgoHeader)
 	return exportSettings{
@@ -7669,11 +7774,14 @@ func exportSettingsFromPrompt(settings prompt.ExportSettings, baseName string, o
 		WriteReport:           settings.WriteReport,
 		WriteSession:          settings.WriteSession,
 		WriteText:             settings.WriteText,
+		WriteConvertedFasta:   settings.WriteConvertedFasta,
+		WriteAllRows:          settings.WriteAllRows,
 		WriteExcel:            settings.WriteExcel,
 		WriteRawExcel:         settings.WriteRawExcel,
 		FastaHeaderMode:       headerMode,
 		UsePhgoHeader:         headerMode == model.FastaHeaderModePhgo,
 		PrependOnlyFirstQuery: settings.PrependOnlyFirstQuery,
+		TreeSettings:          phylo.DefaultTreeSettings(),
 	}
 }
 
@@ -9243,35 +9351,20 @@ func (w *BlastWizard) promptInstallBlastPlus(ctx context.Context, description st
 func (w *BlastWizard) submitBlastOnce(ctx context.Context, request model.BlastRequest) (model.BlastJob, error) {
 	if w.suppressTaskModals {
 		if lc, ok := w.source.(*lemna.Client); ok {
-			if isLocalBlastRequest(request) {
-				return lc.SubmitBlast(ctx, request)
-			}
-			return lc.SubmitBlastServerOnly(ctx, request)
+			return lc.SubmitBlast(ctx, request)
 		}
 		return w.source.SubmitBlast(ctx, request)
 	}
 	if lc, ok := w.source.(*lemna.Client); ok {
-		if isLocalBlastRequest(request) {
-			return tui.RunTaskValueContext(tui.TaskPage{
-				Path:        w.tuiPath("BLAST", "Local BLAST"),
-				Title:       "Running local BLAST",
-				Description: "Downloading required FASTA files when needed, preparing BLAST databases, and running BLAST+ locally.",
-				Initial:     "Starting local BLAST+...",
-				CancelError: prompt.ErrBackToQueryInput,
-			}, func(taskCtx context.Context, update func(string)) (model.BlastJob, error) {
-				safeTaskUpdate(update)("Preparing local BLAST+ run...")
-				return lc.SubmitBlast(mergeContexts(ctx, taskCtx), request)
-			})
-		}
 		return tui.RunTaskValueContext(tui.TaskPage{
-			Path:        w.tuiPath("BLAST", "Online BLAST"),
-			Title:       "Trying online BLAST",
-			Description: "Submitting the query to the lemna.org BLAST service. If it cannot return a usable result, the CLI will automatically continue with local BLAST+ when available.",
-			Initial:     "Submitting to lemna.org...",
+			Path:        w.tuiPath("BLAST", "Local BLAST"),
+			Title:       "Running local BLAST",
+			Description: "Downloading required FASTA files when needed, preparing BLAST databases, and running BLAST+ locally.",
+			Initial:     "Starting local BLAST+...",
 			CancelError: prompt.ErrBackToQueryInput,
 		}, func(taskCtx context.Context, update func(string)) (model.BlastJob, error) {
-			safeTaskUpdate(update)("Submitting to lemna.org BLAST...")
-			return lc.SubmitBlastServerOnly(mergeContexts(ctx, taskCtx), request)
+			safeTaskUpdate(update)("Preparing local BLAST+ run...")
+			return lc.SubmitBlast(mergeContexts(ctx, taskCtx), request)
 		})
 	}
 
@@ -9719,6 +9812,10 @@ func (w *BlastWizard) autoIdentifyKeywordLabelsWithProgress(ctx context.Context,
 			taskUpdate("Searching Phytozome label candidates for Lemna rows...")
 			return w.autoIdentifyLemnaKeywordLabelsWithProgress(labelCtx, selected, working), nil
 		}
+		if _, ok := w.source.(*ncbi.Client); ok {
+			taskUpdate("Selecting NCBI protein label candidates...")
+			return w.autoIdentifyNCBIKeywordLabelsWithProgress(labelCtx, working), nil
+		}
 		taskUpdate("Selecting label names...")
 		return autoIdentifyKeywordLabelIdentifications(working), nil
 	})
@@ -9733,6 +9830,46 @@ func (w *BlastWizard) autoIdentifyTAIRKeywordLabelsWithProgress(ctx context.Cont
 	taskUpdate("Collecting TAIR label candidates from Phytozome...")
 	identifications := w.autoIdentifyTAIRKeywordLabelsWithLookup(ctx, groups, phytozome.NewClient(w.httpClient))
 	taskUpdate("Selecting TAIR label names...")
+	return identifications
+}
+
+func (w *BlastWizard) autoIdentifyNCBIKeywordLabelsWithProgress(ctx context.Context, groups []model.KeywordSearchGroup) []keywordLabelIdentification {
+	return w.autoIdentifyNCBIKeywordLabels(ctx, groups, phytozome.NewClient(w.httpClient))
+}
+
+func (w *BlastWizard) autoIdentifyNCBIKeywordLabels(ctx context.Context, groups []model.KeywordSearchGroup, lookupSource source.DataSource) []keywordLabelIdentification {
+	taskTimestamp := keywordLabelTaskTimestamp(groups)
+	identifications := make([]keywordLabelIdentification, len(groups))
+	for i := range identifications {
+		identifications[i].TaskTimestamp = taskTimestamp
+		identifications[i].ItemIndex = i
+	}
+	phytozomeCandidates := []model.SpeciesCandidate(nil)
+	if lookupSource != nil {
+		if candidates, err := w.speciesCandidatesForSource(ctx, lookupSource, nil); err == nil {
+			phytozomeCandidates = candidates
+		}
+	}
+	requests := make([]labelname.AliasRankRequest, len(groups))
+	sourceTypes := make([]string, len(groups))
+	for i, group := range groups {
+		aliases, sourceType := ncbiKeywordGroupAliasCandidates(group)
+		if len(aliases) == 0 && lookupSource != nil {
+			aliases, sourceType = w.ncbiKeywordGroupPhytozomeAliasCandidates(ctx, group, lookupSource, phytozomeCandidates)
+		}
+		requests[i] = labelname.AliasRankRequest{
+			TaskTimestamp: taskTimestamp,
+			ItemIndex:     i,
+			SearchTerm:    group.SearchTerm,
+			Aliases:       aliases,
+		}
+		sourceTypes[i] = sourceType
+	}
+	results := labelname.RankAliasBatch(requests)
+	for i, ranked := range results {
+		identifications[i].Aliases = uniqueStrings(ranked.RankedAliases)
+		identifications[i].SourceType = sourceTypes[i]
+	}
 	return identifications
 }
 
@@ -10148,10 +10285,89 @@ func keywordRowLabelnameCandidates(row model.KeywordResultRow) []string {
 		}
 		return phytozomeKeywordFallbackAliasCandidates(row)
 	}
+	if strings.EqualFold(strings.TrimSpace(row.SourceDatabase), "ncbi") {
+		if candidates, _ := ncbiKeywordRowAliasCandidates(row); len(candidates) > 0 {
+			return candidates
+		}
+	}
 	if strings.EqualFold(strings.TrimSpace(row.SourceDatabase), "tair") {
 		return tairKeywordRowAliasCandidates(row)
 	}
 	return lemnaLocalKeywordRowAliasCandidates(row)
+}
+
+func ncbiKeywordGroupAliasCandidates(group model.KeywordSearchGroup) ([]string, string) {
+	aliases := make([]string, 0, len(group.Rows)*8+1)
+	aliases = append(aliases, group.LabelName)
+	sourceType := ""
+	for _, row := range group.Rows {
+		rowAliases, rowSource := ncbiKeywordRowAliasCandidates(row)
+		if sourceType == "" && rowSource != "" {
+			sourceType = rowSource
+		}
+		aliases = append(aliases, rowAliases...)
+	}
+	return uniqueStrings(aliases), sourceType
+}
+
+func ncbiKeywordRowAliasCandidates(row model.KeywordResultRow) ([]string, string) {
+	aliases := make([]string, 0, 16)
+	aliases = append(aliases, labelname.SplitAliases(row.Symbols)...)
+	aliases = append(aliases, labelname.SplitAliases(row.Synonyms)...)
+	aliases = append(aliases, labelname.SplitAliases(row.Aliases)...)
+	if row.ExtraColumns != nil {
+		for _, key := range []string{"ncbi_other_aliases", "ncbi_gene_name"} {
+			aliases = append(aliases, labelname.SplitAliases(row.ExtraColumns[key])...)
+		}
+	}
+	if aliases = uniqueStrings(aliases); len(aliases) > 0 {
+		return aliases, "ncbi gene aliases"
+	}
+	aliases = append(aliases, labelname.AutoDefineCandidates(row.AutoDefine)...)
+	aliases = append(aliases, labelname.AutoDefineCandidates(row.Description)...)
+	return uniqueStrings(aliases), "ncbi protein description"
+}
+
+func (w *BlastWizard) ncbiKeywordGroupPhytozomeAliasCandidates(ctx context.Context, group model.KeywordSearchGroup, lookupSource source.DataSource, candidates []model.SpeciesCandidate) ([]string, string) {
+	if lookupSource == nil || len(candidates) == 0 {
+		return nil, ""
+	}
+	for _, row := range group.Rows {
+		species, ok := matchPhytozomeSpeciesForFastaHeader(firstNonEmpty(row.SequenceHeaderLabel, row.Genome), candidates)
+		if !ok {
+			continue
+		}
+		terms := ncbiKeywordRowPhytozomeSearchTerms(row)
+		rowsByTerm := w.fetchKeywordRowsByTerms(ctx, lookupSource, species, terms)
+		for _, term := range terms {
+			rows := rowsByTerm[strings.ToLower(strings.TrimSpace(term))]
+			if candidates, labelType := phytozomeAliasCandidatesFromKeywordRows(rows); len(candidates) > 0 {
+				return candidates, labelType
+			}
+		}
+	}
+	return nil, ""
+}
+
+func ncbiKeywordRowPhytozomeSearchTerms(row model.KeywordResultRow) []string {
+	terms := make([]string, 0, 8)
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			terms = append(terms, value)
+		}
+	}
+	add(row.ProteinID)
+	add(row.SequenceID)
+	add(row.TranscriptID)
+	add(row.GeneIdentifier)
+	add(row.GeneLocus)
+	if row.ExtraColumns != nil {
+		for _, key := range []string{"ncbi_accession", "ncbi_gene_name", "ncbi_locus_tag", "ncbi_gene_id"} {
+			add(row.ExtraColumns[key])
+		}
+	}
+	return uniqueStrings(terms)
 }
 
 func tairKeywordRowAliasCandidates(row model.KeywordResultRow) []string {
@@ -10441,6 +10657,127 @@ func applyKeywordLabelIdentifications(groups []model.KeywordSearchGroup, identif
 	}
 }
 
+func applyKeywordGeneLoci(groups []model.KeywordSearchGroup, loci []string, sourceType string) {
+	if len(groups) != len(loci) {
+		return
+	}
+	sourceType = strings.TrimSpace(sourceType)
+	for i := range groups {
+		locus := strings.TrimSpace(loci[i])
+		if locus == "~" {
+			locus = ""
+		}
+		for r := range groups[i].Rows {
+			groups[i].Rows[r].GeneLocus = locus
+			if groups[i].Rows[r].ExtraColumns == nil {
+				groups[i].Rows[r].ExtraColumns = make(map[string]string)
+			}
+			if sourceType != "" {
+				groups[i].Rows[r].ExtraColumns["gene_locus_type"] = sourceType
+			}
+		}
+	}
+}
+
+func (w *BlastWizard) autoIdentifyNCBIKeywordGeneLociWithProgress(ctx context.Context, groups []model.KeywordSearchGroup) error {
+	if len(groups) == 0 {
+		return nil
+	}
+	run := func(taskCtx context.Context, update func(int, string)) error {
+		_, err := w.autoIdentifyNCBIKeywordGeneLoci(mergeContexts(ctx, taskCtx), groups, update)
+		return err
+	}
+	if w.suppressTaskModals {
+		return run(ctx, nil)
+	}
+	_, err := tui.RunProgressTaskValueContext(tui.TaskPage{
+		Path:        w.tuiPath("Keyword", "NCBI Gene locus"),
+		Title:       "Loading NCBI Gene locus values",
+		Description: "Finding Gene locus values for NCBI keyword rows.",
+		Initial:     "Loading NCBI Gene locus values...",
+		Total:       len(groups),
+		CancelError: prompt.ErrBackToQueryInput,
+	}, func(taskCtx context.Context, update func(int, string)) (struct{}, error) {
+		return struct{}{}, run(taskCtx, update)
+	})
+	return err
+}
+
+func (w *BlastWizard) autoIdentifyNCBIKeywordGeneLoci(ctx context.Context, groups []model.KeywordSearchGroup, update func(int, string)) ([]model.KeywordSearchGroup, error) {
+	if len(groups) == 0 {
+		return groups, nil
+	}
+	progress := safeProgress(update)
+	lookupSource := phytozome.NewClient(w.httpClient)
+	candidates, err := w.speciesCandidatesForSource(ctx, lookupSource, nil)
+	if err != nil {
+		applyExistingNCBIGeneLoci(groups)
+		progress(len(groups), "NCBI Gene locus values are ready.")
+		return groups, nil
+	}
+	for i := range groups {
+		progress(i, fmt.Sprintf("Finding Gene locus %d/%d (%s)...", i+1, len(groups), oneLinePreview(firstNonEmpty(groups[i].SearchTerm, groups[i].LabelName))))
+		locus, sourceType := ncbiKeywordGroupGeneLocus(groups[i], lookupSource, candidates, w, ctx)
+		if strings.TrimSpace(locus) == "" {
+			continue
+		}
+		for r := range groups[i].Rows {
+			groups[i].Rows[r].GeneLocus = locus
+			if groups[i].Rows[r].ExtraColumns == nil {
+				groups[i].Rows[r].ExtraColumns = make(map[string]string)
+			}
+			groups[i].Rows[r].ExtraColumns["gene_locus_type"] = sourceType
+		}
+	}
+	progress(len(groups), "NCBI Gene locus values are ready.")
+	return groups, nil
+}
+
+func applyExistingNCBIGeneLoci(groups []model.KeywordSearchGroup) {
+	for i := range groups {
+		locus := ""
+		for _, row := range groups[i].Rows {
+			if value := strings.TrimSpace(row.GeneLocus); value != "" {
+				locus = value
+				break
+			}
+		}
+		if locus == "" {
+			continue
+		}
+		for r := range groups[i].Rows {
+			groups[i].Rows[r].GeneLocus = locus
+		}
+	}
+}
+
+func ncbiKeywordGroupGeneLocus(group model.KeywordSearchGroup, lookupSource source.DataSource, candidates []model.SpeciesCandidate, w *BlastWizard, ctx context.Context) (string, string) {
+	for _, row := range group.Rows {
+		if locus := strings.TrimSpace(row.GeneLocus); locus != "" {
+			return locus, "ncbi gene locus"
+		}
+	}
+	if lookupSource == nil || w == nil {
+		return "", ""
+	}
+	for _, row := range group.Rows {
+		species, ok := matchPhytozomeSpeciesForFastaHeader(firstNonEmpty(row.SequenceHeaderLabel, row.Genome), candidates)
+		if !ok {
+			continue
+		}
+		terms := ncbiKeywordRowPhytozomeSearchTerms(row)
+		rowsByTerm := w.fetchKeywordRowsByTerms(ctx, lookupSource, species, terms)
+		for _, term := range terms {
+			for _, candidate := range rowsByTerm[strings.ToLower(strings.TrimSpace(term))] {
+				if locus := firstNonEmpty(candidate.GeneLocus, stripTranscriptDecorations(candidate.GeneIdentifier), candidate.TranscriptID); locus != "" {
+					return locus, "phytozome gene locus fallback"
+				}
+			}
+		}
+	}
+	return "", ""
+}
+
 func manualKeywordLabelIdentifications(labels []string, total int) []keywordLabelIdentification {
 	out := make([]keywordLabelIdentification, total)
 	taskTimestamp := time.Now().UTC().Format(time.RFC3339Nano)
@@ -10685,11 +11022,15 @@ func normalizeBlastSequence(sequence string, kind model.SequenceKind) string {
 }
 
 func (w *BlastWizard) exportSelections(ctx context.Context, rows []model.BlastResultRow, allRows []model.BlastResultRow, querySource *model.QuerySequenceSource, baseName string, settings exportSettings) error {
-	outputDir, err := appfs.OutputDir()
-	if err != nil {
-		return err
+	outputDir := strings.TrimSpace(settings.OutputDir)
+	if outputDir == "" {
+		var err error
+		outputDir, err = appfs.OutputDir()
+		if err != nil {
+			return err
+		}
 	}
-	_, err = w.exportSelectedBlastFiles(ctx, rows, allRows, nil, nil, querySource, baseName, outputDir, settings, true)
+	_, err := w.exportSelectedBlastFiles(ctx, rows, allRows, nil, nil, querySource, baseName, outputDir, settings, true)
 	return err
 }
 
@@ -11270,6 +11611,9 @@ func (w *BlastWizard) storeProteinSequenceMiss(cacheKey string, err error) {
 	if cacheKey == "" || err == nil {
 		return
 	}
+	if !isMissingProteinSequenceError(err) {
+		return
+	}
 	w.proteinSequenceMu.Lock()
 	w.proteinSequenceMiss[cacheKey] = err
 	w.proteinSequenceMu.Unlock()
@@ -11408,6 +11752,14 @@ func (w *BlastWizard) prefetchKeywordSequences(ctx context.Context, selected mod
 		}
 		seen[sequenceID] = struct{}{}
 		cacheKey := w.proteinSequenceCacheKey(targetID, sequenceID)
+		if inline := inlineKeywordProteinSequenceData(row); strings.TrimSpace(inline.Sequence) != "" {
+			if strings.TrimSpace(inline.OriginalHeader) == "" {
+				inline.OriginalHeader = keywordProteinSequenceHeader(row)
+			}
+			w.storeProteinSequence(cacheKey, inline)
+			results[sequenceID] = sequenceFetchResult{data: inline}
+			continue
+		}
 		if sequence, ok := w.cachedProteinSequence(cacheKey); ok {
 			results[sequenceID] = sequenceFetchResult{data: sequence}
 			continue
@@ -11468,6 +11820,13 @@ func keywordSequenceFetchTargetID(src source.DataSource, selected model.SpeciesC
 }
 
 func (w *BlastWizard) loadKeywordDetailFASTA(row model.KeywordResultRow) (string, error) {
+	if inline := inlineKeywordProteinSequenceData(row); strings.TrimSpace(inline.Sequence) != "" {
+		header := strings.TrimSpace(inline.OriginalHeader)
+		if header == "" {
+			header = keywordProteinSequenceHeader(row)
+		}
+		return formatDetailFASTA(header, inline.Sequence), nil
+	}
 	sequenceID := strings.TrimSpace(row.SequenceID)
 	if sequenceID == "" {
 		return "", fmt.Errorf("keyword row is missing sequence id")
@@ -11482,6 +11841,57 @@ func (w *BlastWizard) loadKeywordDetailFASTA(row model.KeywordResultRow) (string
 		header = keywordProteinSequenceHeader(row)
 	}
 	return formatDetailFASTA(header, record.Sequence), nil
+}
+
+func inlineKeywordProteinSequenceData(row model.KeywordResultRow) model.ProteinSequenceData {
+	header := strings.TrimSpace(keywordExtraColumn(row, "ncbi_fasta_header"))
+	if raw := strings.TrimSpace(keywordExtraColumn(row, "ncbi_fasta")); raw != "" {
+		rawHeader, sequence := splitFastaHeaderAndSequence(raw)
+		if strings.TrimSpace(rawHeader) != "" {
+			header = ensureFastaHeader(rawHeader)
+		}
+		if strings.TrimSpace(sequence) != "" {
+			return model.ProteinSequenceData{
+				Sequence:       strings.TrimSpace(sequence),
+				OriginalHeader: firstNonEmpty(header, keywordProteinSequenceHeader(row)),
+			}
+		}
+	}
+	sequence := strings.TrimSpace(extractInlineKeywordSequence(row))
+	if sequence == "" {
+		return model.ProteinSequenceData{}
+	}
+	if strings.HasPrefix(sequence, ">") {
+		rawHeader, rawSequence := splitFastaHeaderAndSequence(sequence)
+		if rawHeader != "" && rawSequence != "" {
+			return model.ProteinSequenceData{
+				Sequence:       strings.TrimSpace(rawSequence),
+				OriginalHeader: ensureFastaHeader(rawHeader),
+			}
+		}
+	}
+	return model.ProteinSequenceData{
+		Sequence:       sanitizeSequence(sequence),
+		OriginalHeader: firstNonEmpty(header, keywordProteinSequenceHeader(row)),
+	}
+}
+
+func keywordExtraColumn(row model.KeywordResultRow, key string) string {
+	if row.ExtraColumns == nil {
+		return ""
+	}
+	return strings.TrimSpace(row.ExtraColumns[key])
+}
+
+func ensureFastaHeader(header string) string {
+	header = strings.TrimSpace(header)
+	if header == "" {
+		return ""
+	}
+	if strings.HasPrefix(header, ">") {
+		return header
+	}
+	return ">" + header
 }
 
 func (w *BlastWizard) loadBlastDetailFASTA(row model.BlastResultRow) (string, error) {
@@ -11797,10 +12207,7 @@ func buildPhgoHeader(species string, label string, geneID string, rowNumber int)
 func buildBlastPhgoHeader(species string, label string, geneID string, blastSourceLabel string, blastSourceGeneID string, rowNumber int) string {
 	sourceLabel := sanitizePhgoHeaderPart(blastSourceLabel)
 	sourceGeneID := sanitizePhgoHeaderPart(blastSourceGeneID)
-	if sourceLabel == "" || sourceGeneID == "" {
-		return buildPhgoHeader(species, label, geneID, rowNumber)
-	}
-	groups := []string{sourceLabel + "/" + sourceGeneID}
+	groups := []string{phgoHeaderPartOrPlaceholder(sourceLabel) + "/" + phgoHeaderPartOrPlaceholder(sourceGeneID)}
 	if rowNumber > 0 {
 		groups = append(groups, strconv.Itoa(rowNumber))
 	}
@@ -11811,9 +12218,9 @@ func buildPhgoHeaderWithGroups(species string, label string, geneID string, grou
 	species = sanitizePhgoHeaderPart(species)
 	label = sanitizePhgoHeaderPart(label)
 	geneID = sanitizePhgoHeaderPart(geneID)
-	if species == "" || label == "" || geneID == "" {
-		return ""
-	}
+	species = phgoHeaderPartOrPlaceholder(species)
+	label = phgoHeaderPartOrPlaceholder(label)
+	geneID = phgoHeaderPartOrPlaceholder(geneID)
 	header := ">phgo://" + species + "/" + label + "/" + geneID
 	for _, group := range groups {
 		group = strings.TrimSpace(group)
@@ -11871,13 +12278,21 @@ func blastRowID2(row model.BlastResultRow) string {
 
 func sanitizePhgoHeaderPart(value string) string {
 	value = strings.TrimSpace(value)
-	if value == "" {
+	if value == "" || value == "~" {
 		return ""
 	}
 	value = strings.ReplaceAll(value, "\\", "_")
 	value = strings.ReplaceAll(value, "/", "_")
 	value = strings.Join(strings.Fields(value), " ")
 	return strings.TrimSpace(value)
+}
+
+func phgoHeaderPartOrPlaceholder(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "~"
+	}
+	return value
 }
 
 func keywordSequenceRecordSourceKey(row model.KeywordResultRow) string {
@@ -12032,6 +12447,8 @@ func databaseDisplayName(name string) string {
 		return "lemna.org"
 	case "tair":
 		return "TAIR"
+	case "ncbi":
+		return "NCBI"
 	default:
 		return strings.TrimSpace(name)
 	}
@@ -12102,6 +12519,10 @@ func parseFastaQuerySequenceInput(input string) (*model.QuerySequenceSource, boo
 		source.PhgoRowNumber = parsed.RowNumber
 		source.PhgoHasRowNumber = parsed.HasRowPart
 		source.PhgoBlastQuerySource = parsed.IsBlastQuerySource
+		source.PhgoCanvasRawRow = parsed.CanvasRawRowNumber
+		source.PhgoCanvasHasRawRow = parsed.CanvasHasRawRow
+		source.PhgoCanvasTitle = parsed.CanvasItemTitle
+		source.PhgoCanvasDisplay = parsed.CanvasDisplayName
 	}
 
 	return source, true
@@ -12197,6 +12618,11 @@ type phgoFastaHeader struct {
 	RowNumber            int
 	HasRowPart           bool
 	IsBlastQuerySource   bool
+	CanvasRawRowNumber   int
+	CanvasHasRawRow      bool
+	CanvasItemTitle      string
+	CanvasDisplayName    string
+	IsCanvasHeader       bool
 }
 
 func parsePhgoFastaHeader(header string) (phgoFastaHeader, bool) {
@@ -12212,7 +12638,7 @@ func parsePhgoFastaHeader(header string) (phgoFastaHeader, bool) {
 		return phgoFastaHeader{}, false
 	}
 	groups := strings.Split(body, "\\")
-	if len(groups) > 3 {
+	if len(groups) > 4 {
 		return phgoFastaHeader{}, false
 	}
 	selfParts := strings.Split(strings.TrimSpace(groups[0]), "/")
@@ -12227,9 +12653,9 @@ func parsePhgoFastaHeader(header string) (phgoFastaHeader, bool) {
 	}
 	parsed := phgoFastaHeader{
 		RawHeader: header,
-		Species:   selfParts[0],
-		LabelName: selfParts[1],
-		GeneID:    selfParts[2],
+		Species:   phgoHeaderFieldValue(selfParts[0]),
+		LabelName: phgoHeaderFieldValue(selfParts[1]),
+		GeneID:    phgoHeaderFieldValue(selfParts[2]),
 	}
 	if len(groups) == 1 {
 		return parsed, true
@@ -12264,8 +12690,34 @@ func parsePhgoFastaHeader(header string) (phgoFastaHeader, bool) {
 		if sourceParts[0] == "" || sourceParts[1] == "" {
 			return phgoFastaHeader{}, false
 		}
-		parsed.BlastSourceLabelName = sourceParts[0]
-		parsed.BlastSourceGeneID = sourceParts[1]
+		parsed.BlastSourceLabelName = phgoHeaderFieldValue(sourceParts[0])
+		parsed.BlastSourceGeneID = phgoHeaderFieldValue(sourceParts[1])
+		if len(groups) == 4 {
+			canvasParts := strings.SplitN(strings.TrimSpace(groups[2]), "/", 2)
+			if len(canvasParts) != 2 {
+				return phgoFastaHeader{}, false
+			}
+			rawPart := strings.TrimSpace(canvasParts[0])
+			if !isSignedInteger(rawPart) {
+				return phgoFastaHeader{}, false
+			}
+			raw, _ := strconv.Atoi(rawPart)
+			title := strings.TrimSpace(canvasParts[1])
+			displayName := strings.TrimSpace(groups[3])
+			if title == "" || displayName == "" {
+				return phgoFastaHeader{}, false
+			}
+			parsed.CanvasRawRowNumber = raw
+			parsed.CanvasHasRawRow = true
+			parsed.CanvasItemTitle = phgoHeaderFieldValue(title)
+			parsed.CanvasDisplayName = phgoHeaderFieldValue(displayName)
+			parsed.IsCanvasHeader = true
+			if raw > 0 {
+				parsed.RowNumber = raw
+				parsed.HasRowPart = true
+			}
+			return parsed, true
+		}
 		if len(groups) == 3 {
 			rowPart := strings.TrimSpace(groups[2])
 			if !isPositiveInteger(rowPart) {
@@ -12277,6 +12729,35 @@ func parsePhgoFastaHeader(header string) (phgoFastaHeader, bool) {
 		}
 		return parsed, true
 	}
+}
+
+func phgoHeaderFieldValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "~" {
+		return ""
+	}
+	return value
+}
+
+func isSignedInteger(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	digits := value
+	if strings.HasPrefix(digits, "-") || strings.HasPrefix(digits, "+") {
+		digits = strings.TrimSpace(digits[1:])
+	}
+	if digits == "" {
+		return false
+	}
+	for _, ch := range digits {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	_, err := strconv.Atoi(value)
+	return err == nil
 }
 
 func fastaHeaderPrimaryID(header string) string {
@@ -12543,6 +13024,9 @@ func (w *BlastWizard) searchKeywordResultsWithProgress(ctx context.Context, spec
 				defer wg.Done()
 				started := time.Now()
 				rows, err := w.searchKeywordRowsWithTimeout(ctx, species, keywords[resultIndex], forceWideSearch)
+				if err == nil && len(rows) == 0 {
+					err = keywordNoRowsError{Keyword: keywords[resultIndex]}
+				}
 				result := keywordSearchResult{
 					index:   resultIndex,
 					started: started,
@@ -12632,6 +13116,169 @@ func keywordRowsSearchType(rows []model.KeywordResultRow, keyword string, forceW
 		return "wide search"
 	}
 	return classifyKeywordInputType(keyword)
+}
+
+func assignKeywordGroupSearchTerm(rows []model.KeywordResultRow, searchTerm string) []model.KeywordResultRow {
+	searchTerm = strings.TrimSpace(searchTerm)
+	if searchTerm == "" {
+		return rows
+	}
+	for i := range rows {
+		rows[i].SearchTerm = searchTerm
+	}
+	return rows
+}
+
+type ncbiReplacementPlan struct {
+	groupIndex   int
+	oldAccession string
+	newAccession string
+	decision     string
+}
+
+func (w *BlastWizard) applyNCBIProteinReplacementChoicesWithProgress(ctx context.Context, selected model.SpeciesCandidate, groups []model.KeywordSearchGroup) ([]model.KeywordSearchGroup, error) {
+	if len(groups) == 0 || !strings.EqualFold(sourceDatabaseName(w.source), "ncbi") {
+		return groups, nil
+	}
+	out := cloneKeywordSearchGroups(groups)
+	plans := make([]ncbiReplacementPlan, 0, len(out))
+	needsReload := false
+	for groupIndex := range out {
+		oldAccession, newAccession, ok := ncbiGroupReplacement(out[groupIndex])
+		if !ok {
+			continue
+		}
+		choice := strings.TrimSpace(w.ncbiReplacementChoice)
+		if choice == "" {
+			if w.prompt == nil {
+				choice = "old"
+			} else {
+				selectedChoice, err := w.prompt.NCBIReplacementAction(oldAccession, newAccession)
+				if err != nil {
+					return groups, err
+				}
+				switch selectedChoice {
+				case "all_old":
+					w.ncbiReplacementChoice = "old"
+					choice = "old"
+				case "all_new":
+					w.ncbiReplacementChoice = "new"
+					choice = "new"
+				default:
+					choice = selectedChoice
+				}
+			}
+		}
+		if choice == "new" {
+			needsReload = true
+		}
+		plans = append(plans, ncbiReplacementPlan{
+			groupIndex:   groupIndex,
+			oldAccession: oldAccession,
+			newAccession: newAccession,
+			decision:     choice,
+		})
+	}
+	if len(plans) == 0 {
+		return out, nil
+	}
+
+	run := func(taskCtx context.Context, update func(int, string)) ([]model.KeywordSearchGroup, error) {
+		runCtx := mergeContexts(ctx, taskCtx)
+		progress := safeProgress(update)
+		applied := cloneKeywordSearchGroups(out)
+		for i, plan := range plans {
+			label := firstNonEmpty(strings.TrimSpace(applied[plan.groupIndex].SearchTerm), plan.oldAccession)
+			switch plan.decision {
+			case "new":
+				progress(i, fmt.Sprintf("Reloading updated NCBI protein %d/%d (%s)...", i+1, len(plans), oneLinePreview(label)))
+				rows, err := w.source.SearchKeywordRows(runCtx, selected, plan.newAccession)
+				if err != nil {
+					return nil, err
+				}
+				if len(rows) == 0 {
+					return nil, keywordNoRowsError{Keyword: plan.newAccession}
+				}
+				rows = annotateNCBIReplacementRows(rows, plan.oldAccession, plan.newAccession, "new")
+				rows = assignKeywordGroupSearchTerm(rows, applied[plan.groupIndex].SearchTerm)
+				applied[plan.groupIndex].Rows = rows
+				applied[plan.groupIndex].SearchType = keywordRowsSearchType(rows, applied[plan.groupIndex].SearchTerm, false)
+			default:
+				progress(i, fmt.Sprintf("Keeping requested NCBI protein %d/%d (%s)...", i+1, len(plans), oneLinePreview(label)))
+				applied[plan.groupIndex].Rows = annotateNCBIReplacementRows(applied[plan.groupIndex].Rows, plan.oldAccession, plan.newAccession, "old")
+				applied[plan.groupIndex].SearchType = keywordRowsSearchType(applied[plan.groupIndex].Rows, applied[plan.groupIndex].SearchTerm, false)
+			}
+		}
+		progress(len(plans), "NCBI protein updates are ready.")
+		return applied, nil
+	}
+	if w.suppressTaskModals || !needsReload {
+		applied, err := run(ctx, nil)
+		if err != nil {
+			return groups, err
+		}
+		return applied, nil
+	}
+	applied, err := tui.RunProgressTaskValueContext(tui.TaskPage{
+		Path:        w.tuiPath("Keyword", "NCBI protein update"),
+		Title:       "Loading updated NCBI proteins",
+		Description: "Reloading replacement accessions after your NCBI update choices.",
+		Initial:     "Loading updated NCBI proteins...",
+		Total:       len(plans),
+		CancelError: prompt.ErrBackToQueryInput,
+	}, run)
+	if err != nil {
+		return groups, err
+	}
+	return applied, nil
+}
+
+func (w *BlastWizard) applyNCBIProteinReplacementChoices(ctx context.Context, selected model.SpeciesCandidate, groups []model.KeywordSearchGroup) ([]model.KeywordSearchGroup, error) {
+	return w.applyNCBIProteinReplacementChoicesWithProgress(ctx, selected, groups)
+}
+
+func ncbiGroupReplacement(group model.KeywordSearchGroup) (string, string, bool) {
+	for _, row := range group.Rows {
+		if !strings.EqualFold(strings.TrimSpace(row.SourceDatabase), "ncbi") {
+			continue
+		}
+		if row.ExtraColumns == nil {
+			continue
+		}
+		replacedBy := strings.TrimSpace(row.ExtraColumns["ncbi_replaced_by"])
+		if replacedBy == "" {
+			continue
+		}
+		oldAccession := firstNonEmpty(strings.TrimSpace(row.ExtraColumns["ncbi_accession"]), strings.TrimSpace(row.SequenceID), strings.TrimSpace(row.ProteinID), strings.TrimSpace(group.SearchTerm))
+		if oldAccession == "" {
+			continue
+		}
+		return oldAccession, replacedBy, true
+	}
+	return "", "", false
+}
+
+func annotateNCBIReplacementRows(rows []model.KeywordResultRow, oldAccession string, newAccession string, decision string) []model.KeywordResultRow {
+	out := cloneKeywordResultRows(rows)
+	for i := range out {
+		if out[i].ExtraColumns == nil {
+			out[i].ExtraColumns = make(map[string]string)
+		}
+		out[i].ExtraColumns["ncbi_requested_accession"] = strings.TrimSpace(oldAccession)
+		out[i].ExtraColumns["ncbi_replacement_accession"] = strings.TrimSpace(newAccession)
+		out[i].ExtraColumns["ncbi_replacement_decision"] = strings.TrimSpace(decision)
+		baseSearchType := strings.TrimSpace(out[i].SearchType)
+		if baseSearchType == "" {
+			baseSearchType = classifyKeywordInputType(firstNonEmpty(out[i].SearchTerm, oldAccession))
+		}
+		switch strings.TrimSpace(decision) {
+		case "new":
+			out[i].SearchType = baseSearchType + " (accepted NCBI update)"
+		case "old":
+			out[i].SearchType = baseSearchType + " (kept old; NCBI update available)"
+		}
+	}
+	return out
 }
 
 func (w *BlastWizard) waitForBlastResultsWithProgress(ctx context.Context, jobID string, pollInterval time.Duration, timeout time.Duration) (model.BlastResult, error) {

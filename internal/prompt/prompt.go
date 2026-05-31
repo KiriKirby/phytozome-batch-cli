@@ -24,6 +24,7 @@ import (
 	"sync"
 
 	"github.com/KiriKirby/phytozome-go/internal/model"
+	"github.com/KiriKirby/phytozome-go/internal/notifyaudio"
 	"github.com/KiriKirby/phytozome-go/internal/phylo"
 	"github.com/KiriKirby/phytozome-go/internal/tui"
 )
@@ -49,6 +50,8 @@ type Prompter struct {
 	loadBlastFASTA         func(row model.BlastResultRow) (string, error)
 	canvasTreePanelChanged func(state tui.CanvasTreePanelState, opened bool)
 	detailFASTACache       map[string]string
+	keywordTableCuePending bool
+	blastTableCuePending   bool
 }
 
 type FamilySearchProvider func(keyword string, scope []model.SpeciesCandidate) []model.SpeciesCandidate
@@ -85,6 +88,60 @@ func (p *Prompter) SetDetailLoaders(keyword func(row model.KeywordResultRow) (st
 
 func (p *Prompter) SetCanvasTreePanelChanged(handler func(state tui.CanvasTreePanelState, opened bool)) {
 	p.canvasTreePanelChanged = handler
+}
+
+func (p *Prompter) QueueKeywordResultTableCue() {
+	if p == nil || p.familyContext() {
+		return
+	}
+	p.keywordTableCuePending = true
+}
+
+func (p *Prompter) QueueBlastResultTableCue() {
+	if p == nil || p.familyContext() {
+		return
+	}
+	p.blastTableCuePending = true
+}
+
+func (p *Prompter) consumeKeywordResultTableCue() bool {
+	if p == nil {
+		return false
+	}
+	ready := p.keywordTableCuePending
+	p.keywordTableCuePending = false
+	return ready
+}
+
+func (p *Prompter) consumeBlastResultTableCue() bool {
+	if p == nil {
+		return false
+	}
+	ready := p.blastTableCuePending
+	p.blastTableCuePending = false
+	return ready
+}
+
+func promptTaskUpdate(update func(string)) func(string) {
+	return func(message string) {
+		if update != nil {
+			update(message)
+		}
+	}
+}
+
+func prepareResultTableValue[T any](page tui.TaskPage, playCue bool, build func(update func(string)) (T, error)) (T, error) {
+	if !playCue {
+		return build(nil)
+	}
+	value, err := tui.RunTaskValueContext(page, func(ctx context.Context, update func(string)) (T, error) {
+		_ = ctx
+		return build(promptTaskUpdate(update))
+	})
+	if err == nil {
+		notifyaudio.PlayResultTableReady()
+	}
+	return value, err
 }
 
 func detailPageIsFASTA(pageIndex int, itemIndex int, totalPages int) bool {
@@ -629,6 +686,8 @@ type ExportSettings struct {
 	WriteReport           bool
 	WriteSession          bool
 	WriteText             bool
+	WriteConvertedFasta   bool
+	WriteAllRows          bool
 	WriteExcel            bool
 	WriteRawExcel         bool
 	FastaHeaderMode       model.FastaHeaderMode
@@ -637,11 +696,13 @@ type ExportSettings struct {
 }
 
 type CanvasSaveSettings struct {
-	BaseName        string
-	WriteSession    bool
-	WriteText       bool
-	FastaHeaderMode model.FastaHeaderMode
-	UsePhgoHeader   bool
+	BaseName            string
+	WriteSession        bool
+	WriteText           bool
+	WriteConvertedFasta bool
+	WriteAllRows        bool
+	FastaHeaderMode     model.FastaHeaderMode
+	UsePhgoHeader       bool
 }
 
 type BlastFilterSettingsResult struct {
@@ -897,6 +958,8 @@ func (p *Prompter) NewickBrowserTarget(backTarget error) (string, error) {
 		AllowBack:      true,
 		AllowHome:      p.allowHome(true),
 		ConfirmText:    tui.ButtonOpen,
+		AllowOpenFile:  true,
+		OpenFileTitle:  "Open tree or viewer snapshot",
 		Hints: []string{
 			p.t("Only one line is accepted here, and it must point to a .nwk or .pgv file."),
 			p.t("Each submission opens a new independent viewer page. Leaving this screen stops the local tree viewer service."),
@@ -1162,6 +1225,51 @@ func (p *Prompter) KeywordLabelNames(termCount int, backTarget error) ([]string,
 		}
 	}
 
+}
+
+func (p *Prompter) KeywordGeneLoci(termCount int, backTarget error) ([]string, error) {
+	for {
+		result, err := tui.RunMultiLinePage(tui.MultiLinePage{
+			Path:          p.tuiPath("Startup", "Keyword", "Gene locus"),
+			Title:         p.t("Gene locus:"),
+			Description:   fmt.Sprintf("Enter exactly %d Gene locus values, one per line. Use ~ for a blank value, or leave this page empty to auto-generate from NCBI and the secondary database.", termCount),
+			AllowEmpty:    true,
+			SkipWhenEmpty: true,
+			AllowBack:     true,
+			AllowHome:     p.allowHome(true),
+			ConfirmText:   tui.ButtonApply,
+			EmptyText:     tui.ButtonAuto,
+			EmptyAction:   "auto",
+			SkipText:      tui.ButtonSkip,
+			SkipShortcut:  tui.ShortcutRetry,
+			Hints:         []string{p.t("The Gene locus values stay aligned with the protein search terms in order.")},
+		})
+		if err != nil {
+			return nil, err
+		}
+		if navErr := tuiNavError(result.Nav, backTarget); navErr != nil {
+			return nil, navErr
+		}
+		if result.Action == "auto" {
+			return nil, ErrAutoIdentifyRequested
+		}
+		if result.Action == "skip" || strings.TrimSpace(result.Text) == "" {
+			return nil, nil
+		}
+		values := parseKeywordIdentityValues(strings.Split(result.Text, "\n"))
+		if len(values) == termCount {
+			return values, nil
+		}
+		if _, err := p.recoveryErrorAction(
+			p.tuiPath("Startup", "Keyword", "Gene locus", "Validation"),
+			p.t("Gene locus:"),
+			fmt.Sprintf("Need exactly %d Gene locus values, got %d. Please re-enter.", termCount, len(values)),
+			false,
+			backTarget,
+		); err != nil {
+			return nil, err
+		}
+	}
 }
 
 func (p *Prompter) BlastLabelNames(itemCount int, required bool, backTarget error) ([]string, error) {
@@ -3199,14 +3307,16 @@ func parseFamilyGeneCount(value string) int {
 
 func (p *Prompter) SequenceInput() (string, error) {
 	result, err := tui.RunMultiLinePage(tui.MultiLinePage{
-		Path:        p.blastTUIPath("BLAST input"),
-		Title:       p.t("BLAST input"),
-		Description: p.t("Paste one or more BLAST queries, one per line, or paste a FASTA entry / Phytozome gene or transcript report URL.") + "\n" + p.t("You can also type load \"file.fasta\" to read from the program directory."),
-		AllowEmpty:  true,
-		AllowBack:   true,
-		AllowHome:   p.allowHome(true),
-		ConfirmText: tui.ButtonRunBLAST,
-		Hints:       []string{p.t("Finish sequence input with an empty line.")},
+		Path:          p.blastTUIPath("BLAST input"),
+		Title:         p.t("BLAST input"),
+		Description:   p.t("Paste one or more BLAST queries, one per line, or paste a FASTA entry / Phytozome gene or transcript report URL.") + "\n" + p.t("You can also type load \"file.fasta\" to read from the program directory."),
+		AllowEmpty:    true,
+		AllowBack:     true,
+		AllowHome:     p.allowHome(true),
+		ConfirmText:   tui.ButtonRunBLAST,
+		AllowOpenFile: true,
+		OpenFileTitle: "Open BLAST input file",
+		Hints:         []string{p.t("Finish sequence input with an empty line.")},
 	})
 	if err != nil {
 		return "", err
@@ -3275,6 +3385,8 @@ func (p *Prompter) OpenSessionInput() (string, error) {
 		AllowBack:      true,
 		AllowHome:      p.allowHome(true),
 		ConfirmText:    tui.ButtonOpen,
+		AllowOpenFile:  true,
+		OpenFileTitle:  "Open session snapshot",
 	})
 	if err != nil {
 		return "", err
@@ -3295,6 +3407,8 @@ func (p *Prompter) CanvasAddItemInput() (string, string, error) {
 		AllowBack:      true,
 		AllowHome:      p.allowHome(true),
 		ConfirmText:    tui.ButtonApply,
+		AllowOpenFile:  true,
+		OpenFileTitle:  "Open FASTA or session snapshot",
 	})
 	if err != nil {
 		return "", "", err
@@ -3315,6 +3429,8 @@ func (p *Prompter) CanvasAddRowsInput() (string, error) {
 		AllowBack:      true,
 		AllowHome:      p.allowHome(true),
 		ConfirmText:    tui.ButtonApply,
+		AllowOpenFile:  true,
+		OpenFileTitle:  "Open FASTA file",
 	})
 	if err != nil {
 		return "", err
@@ -3366,6 +3482,8 @@ func (p *Prompter) CanvasSaveSettings(defaultBaseName string, backTarget error) 
 		WriteExcel:          false,
 		WriteRawExcel:       false,
 		ShowWriteText:       true,
+		ShowConvertedFasta:  true,
+		ShowAllRowsFasta:    true,
 		ShowWriteExcel:      false,
 		ShowWriteRawExcel:   false,
 		ShowFastaHeaderMode: true,
@@ -3382,15 +3500,19 @@ func (p *Prompter) CanvasSaveSettings(defaultBaseName string, backTarget error) 
 		return CanvasSaveSettings{}, navErr
 	}
 	settings := CanvasSaveSettings{
-		BaseName:        sanitizeFileName(result.FileName),
-		WriteSession:    result.WriteSession,
-		WriteText:       result.WriteText,
-		FastaHeaderMode: model.NormalizeFastaHeaderMode(model.FastaHeaderMode(result.FastaHeaderMode), result.UsePhgoHeader),
-		UsePhgoHeader:   result.UsePhgoHeader,
+		BaseName:            sanitizeFileName(result.FileName),
+		WriteSession:        result.WriteSession,
+		WriteText:           result.WriteText,
+		WriteConvertedFasta: result.WriteConvertedFasta,
+		WriteAllRows:        result.WriteAllRows,
+		FastaHeaderMode:     model.NormalizeFastaHeaderMode(model.FastaHeaderMode(result.FastaHeaderMode), result.UsePhgoHeader),
+		UsePhgoHeader:       result.UsePhgoHeader,
 	}
 	p.lastExportSettings.BaseName = settings.BaseName
 	p.lastExportSettings.WriteSession = settings.WriteSession
 	p.lastExportSettings.WriteText = settings.WriteText
+	p.lastExportSettings.WriteConvertedFasta = settings.WriteConvertedFasta
+	p.lastExportSettings.WriteAllRows = settings.WriteAllRows
 	p.lastExportSettings.WriteExcel = false
 	p.lastExportSettings.WriteRawExcel = false
 	p.lastExportSettings.FastaHeaderMode = settings.FastaHeaderMode
@@ -3469,7 +3591,32 @@ func (p *Prompter) selectKeywordRows(groups []model.KeywordSearchGroup, initial 
 			groupLabels = append(groupLabels, label)
 		}
 	}
-	columns, tableRows := buildKeywordSelectionTable(flatRows)
+	prepared, err := prepareResultTableValue(tui.TaskPage{
+		Path:        p.tuiPath("Startup", "Species", "Keyword input", "Keyword results", "Loading"),
+		Title:       "Loading keyword results",
+		Description: "Preparing the keyword result table.",
+		Initial:     "Loading keyword results...",
+	}, p.consumeKeywordResultTableCue(), func(update func(string)) (struct {
+		columns   []tui.TableColumn
+		tableRows []tui.TableRow
+	}, error) {
+		taskUpdate := promptTaskUpdate(update)
+		taskUpdate("Preparing keyword result rows...")
+		columns, tableRows := buildKeywordSelectionTable(flatRows)
+		taskUpdate("Keyword result table is ready.")
+		return struct {
+			columns   []tui.TableColumn
+			tableRows []tui.TableRow
+		}{
+			columns:   columns,
+			tableRows: tableRows,
+		}, nil
+	})
+	if err != nil {
+		return KeywordRowSelection{}, err
+	}
+	columns := prepared.columns
+	tableRows := prepared.tableRows
 	stateKey := tableStateKey("keyword", columns, tableRows)
 	if cached, ok := p.keywordSelections[stateKey]; ok && len(cached) == totalRows {
 		selected = append([]bool(nil), cached...)
@@ -3542,10 +3689,13 @@ func (p *Prompter) selectKeywordRows(groups []model.KeywordSearchGroup, initial 
 				return tableRows[rowIndex], nil
 			},
 			LoadDetail: func(rowIndex int, pageIndex int, itemIndex int) (tui.DetailItem, bool, error) {
-				if !detailPageIsFASTA(pageIndex, itemIndex, len(keywordRowDetailPages(model.KeywordResultRow{}))) || rowIndex < 0 || rowIndex >= len(flatRows) {
+				if rowIndex < 0 || rowIndex >= len(flatRows) {
 					return tui.DetailItem{}, false, nil
 				}
 				row := flatRows[rowIndex]
+				if !detailPageIsFASTA(pageIndex, itemIndex, len(keywordRowDetailPages(row))) {
+					return tui.DetailItem{}, false, nil
+				}
 				cacheKey := keywordDetailFASTACacheKey(row)
 				if cached := strings.TrimSpace(p.detailFASTACache[cacheKey]); cached != "" {
 					return detailFASTALoadedItem(cached), true, nil
@@ -3659,24 +3809,49 @@ func (p *Prompter) SelectBlastRunsWithInitial(runs []BlastRunView, backTarget er
 }
 
 func (p *Prompter) selectBlastRunsWithState(runs []BlastRunView, backTarget error, options BlastRunSelectionOptions, initial [][]bool, initialFilterFlags [][]bool) (BlastRowSelection, error) {
-	items := make([]tui.BlastRunItem, 0, len(runs))
-	tableKeyParts := make([]string, 0, len(runs))
-	for i, run := range runs {
-		columns, tableRows := buildBlastSelectionTable(run.Rows)
-		selected := make([]bool, len(run.Rows))
-		for r := range selected {
-			selected[r] = true
+	prepared, err := prepareResultTableValue(tui.TaskPage{
+		Path:        p.blastTUIPath("BLAST input", "BLAST results", "Loading"),
+		Title:       "Loading BLAST results",
+		Description: "Preparing the BLAST result tables.",
+		Initial:     "Loading BLAST results...",
+	}, p.consumeBlastResultTableCue(), func(update func(string)) (struct {
+		items         []tui.BlastRunItem
+		tableKeyParts []string
+	}, error) {
+		taskUpdate := promptTaskUpdate(update)
+		items := make([]tui.BlastRunItem, 0, len(runs))
+		tableKeyParts := make([]string, 0, len(runs))
+		for i, run := range runs {
+			taskUpdate(fmt.Sprintf("Preparing BLAST result table %d/%d...", i+1, len(runs)))
+			columns, tableRows := buildBlastSelectionTable(run.Rows)
+			selected := make([]bool, len(run.Rows))
+			for r := range selected {
+				selected[r] = true
+			}
+			tableKeyParts = append(tableKeyParts, tableStateKey(fmt.Sprintf("blast-run-%d", i), columns, tableRows))
+			items = append(items, tui.BlastRunItem{
+				Label:       blastRunGeneLabel(i, run.Item),
+				AltLabel:    blastRunLabelName(i, run.Item),
+				Description: fmt.Sprintf("%d/%d lines", len(run.Rows), len(run.Rows)),
+				Columns:     columns,
+				Rows:        tableRows,
+				Selected:    selected,
+			})
 		}
-		tableKeyParts = append(tableKeyParts, tableStateKey(fmt.Sprintf("blast-run-%d", i), columns, tableRows))
-		items = append(items, tui.BlastRunItem{
-			Label:       blastRunGeneLabel(i, run.Item),
-			AltLabel:    blastRunLabelName(i, run.Item),
-			Description: fmt.Sprintf("%d/%d lines", len(run.Rows), len(run.Rows)),
-			Columns:     columns,
-			Rows:        tableRows,
-			Selected:    selected,
-		})
+		taskUpdate("BLAST result tables are ready.")
+		return struct {
+			items         []tui.BlastRunItem
+			tableKeyParts []string
+		}{
+			items:         items,
+			tableKeyParts: tableKeyParts,
+		}, nil
+	})
+	if err != nil {
+		return BlastRowSelection{}, err
 	}
+	items := prepared.items
+	tableKeyParts := prepared.tableKeyParts
 	stateKey := "blast-runs:" + digestStrings(tableKeyParts)
 	if cached, ok := p.blastRunSelected[stateKey]; ok && len(cached) == len(items) {
 		for i := range items {
@@ -4055,7 +4230,13 @@ func keywordExtraDetailPage(row model.KeywordResultRow) tui.DetailPage {
 	}
 	keys := make([]string, 0, len(row.ExtraColumns))
 	for key := range row.ExtraColumns {
+		if keywordExtraDetailHidden(key) {
+			continue
+		}
 		keys = append(keys, key)
+	}
+	if len(keys) == 0 {
+		return tui.DetailPage{}
 	}
 	sort.Strings(keys)
 	items := make([]tui.DetailItem, 0, len(keys))
@@ -4066,6 +4247,127 @@ func keywordExtraDetailPage(row model.KeywordResultRow) tui.DetailPage {
 		})
 	}
 	return tui.DetailPage{Title: "Extra", Items: items}
+}
+
+func keywordExtraDetailHidden(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "ncbi_fasta", "ncbi_fasta_header", "ncbi_protein_sequence",
+		"protein_sequence", "sequence", "peptide_sequence", "fasta_sequence", "attr_translation":
+		return true
+	default:
+		return false
+	}
+}
+
+func keywordInlineDetailFASTA(row model.KeywordResultRow) string {
+	if row.ExtraColumns == nil {
+		return ""
+	}
+	header := strings.TrimSpace(row.ExtraColumns["ncbi_fasta_header"])
+	if raw := strings.TrimSpace(row.ExtraColumns["ncbi_fasta"]); raw != "" {
+		rawHeader, sequence := splitDetailFASTA(raw)
+		if rawHeader != "" {
+			header = rawHeader
+		}
+		if sequence != "" {
+			return formatInlineDetailFASTA(header, sequence)
+		}
+	}
+	for _, key := range []string{"ncbi_protein_sequence", "protein_sequence", "sequence", "peptide_sequence", "fasta_sequence", "attr_translation"} {
+		value := strings.TrimSpace(row.ExtraColumns[key])
+		if value == "" {
+			continue
+		}
+		if strings.HasPrefix(value, ">") {
+			rawHeader, sequence := splitDetailFASTA(value)
+			if rawHeader != "" && sequence != "" {
+				return formatInlineDetailFASTA(rawHeader, sequence)
+			}
+		}
+		return formatInlineDetailFASTA(firstNonEmptyText(header, keywordDetailFASTAHeader(row)), value)
+	}
+	return ""
+}
+
+func keywordDetailFASTAHeader(row model.KeywordResultRow) string {
+	parts := make([]string, 0, 2)
+	if label := strings.TrimSpace(row.SequenceHeaderLabel); label != "" {
+		parts = append(parts, label)
+	}
+	if transcript := strings.TrimSpace(row.TranscriptID); transcript != "" {
+		parts = append(parts, transcript)
+	}
+	if len(parts) == 0 {
+		parts = append(parts, strings.TrimSpace(firstNonEmptyText(row.SequenceID, row.ProteinID, row.GeneIdentifier)))
+	}
+	header := strings.TrimSpace(strings.Join(parts, "|"))
+	if header == "" {
+		header = "sequence"
+	}
+	if label := strings.TrimSpace(keywordLabelName(row)); label != "" {
+		header += " (" + label + ")"
+	}
+	return ">" + header
+}
+
+func splitDetailFASTA(value string) (string, string) {
+	value = strings.TrimSpace(strings.ReplaceAll(value, "\r", ""))
+	if value == "" {
+		return "", ""
+	}
+	lines := strings.Split(value, "\n")
+	header := ""
+	sequenceParts := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if header == "" && strings.HasPrefix(line, ">") {
+			header = line
+			continue
+		}
+		if strings.HasPrefix(line, ">") {
+			continue
+		}
+		sequenceParts = append(sequenceParts, line)
+	}
+	return header, cleanDetailSequence(strings.Join(sequenceParts, ""))
+}
+
+func formatInlineDetailFASTA(header string, sequence string) string {
+	header = strings.TrimSpace(header)
+	if header == "" {
+		header = ">sequence"
+	}
+	if !strings.HasPrefix(header, ">") {
+		header = ">" + header
+	}
+	sequence = cleanDetailSequence(sequence)
+	if sequence == "" {
+		return header
+	}
+	return header + "\n" + sequence
+}
+
+func cleanDetailSequence(sequence string) string {
+	sequence = strings.TrimSpace(sequence)
+	if sequence == "" {
+		return ""
+	}
+	lines := strings.Split(strings.ReplaceAll(sequence, "\r", ""), "\n")
+	parts := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, ">") {
+			continue
+		}
+		parts = append(parts, line)
+	}
+	cleaned := strings.ToUpper(strings.Join(parts, ""))
+	cleaned = strings.ReplaceAll(cleaned, " ", "")
+	cleaned = strings.ReplaceAll(cleaned, "\t", "")
+	return cleaned
 }
 
 func blastRowPrimaryDetailIDs(row model.BlastResultRow) []string {
@@ -4114,7 +4416,32 @@ func (p *Prompter) selectBlastRowsWithInitial(rows []model.BlastResultRow, allow
 	for i := range selected {
 		selected[i] = true
 	}
-	columns, tableRows := buildBlastSelectionTable(rows)
+	prepared, err := prepareResultTableValue(tui.TaskPage{
+		Path:        p.blastTUIPath("BLAST input", "BLAST results", "Loading"),
+		Title:       "Loading BLAST results",
+		Description: "Preparing the BLAST result table.",
+		Initial:     "Loading BLAST results...",
+	}, p.consumeBlastResultTableCue(), func(update func(string)) (struct {
+		columns   []tui.TableColumn
+		tableRows []tui.TableRow
+	}, error) {
+		taskUpdate := promptTaskUpdate(update)
+		taskUpdate("Preparing BLAST result rows...")
+		columns, tableRows := buildBlastSelectionTable(rows)
+		taskUpdate("BLAST result table is ready.")
+		return struct {
+			columns   []tui.TableColumn
+			tableRows []tui.TableRow
+		}{
+			columns:   columns,
+			tableRows: tableRows,
+		}, nil
+	})
+	if err != nil {
+		return BlastRowSelection{}, err
+	}
+	columns := prepared.columns
+	tableRows := prepared.tableRows
 	stateKey := tableStateKey("blast", columns, tableRows)
 	if cached, ok := p.blastSelections[stateKey]; ok && len(cached) == len(rows) {
 		selected = append([]bool(nil), cached...)
@@ -4522,6 +4849,8 @@ func canvasRowOriginalHead(row model.CanvasRow, fallback string) string {
 func canvasRowColumnValue(row model.CanvasRow, columnID string, fallback string) string {
 	columnID = strings.TrimSpace(columnID)
 	switch columnID {
+	case phylo.PHgoDisplayNameSource:
+		return canvasPHgoLabel(row, fallback)
 	case "source_type":
 		switch row.Kind {
 		case model.CanvasKindFasta:
@@ -4594,7 +4923,7 @@ func canvasRowColumnValue(row model.CanvasRow, columnID string, fallback string)
 			}
 		case model.CanvasKindKeyword:
 			if row.KeywordRow != nil {
-				return strings.TrimSpace(row.KeywordRow.GeneIdentifier)
+				return canvasKeywordGeneID(*row.KeywordRow)
 			}
 		case model.CanvasKindBlast:
 			if row.BlastRow != nil {
@@ -4709,12 +5038,13 @@ func keywordColumnValue(row model.KeywordResultRow, columnID string) string {
 		"label_name":            keywordLabelName(row),
 		"labelname_type":        row.LabelNameType,
 		"phgo_alias":            keywordPhgoAliases(row),
+		"gene_locus":            row.GeneLocus,
 		"protein_id":            row.ProteinID,
 		"transcript":            row.TranscriptID,
 		"transcript_id":         row.TranscriptID,
 		"gene_identifier":       row.GeneIdentifier,
-		"geneid":                row.GeneIdentifier,
-		"gene_id":               row.GeneIdentifier,
+		"geneid":                canvasKeywordGeneID(row),
+		"gene_id":               canvasKeywordGeneID(row),
 		"genome":                row.Genome,
 		"species":               row.Genome,
 		"location":              row.Location,
@@ -4845,6 +5175,18 @@ func applyCanvasDisplayNameSource(item *model.CanvasItem, sourceColumnID string)
 		}
 		item.Rows[i] = canvasRowWithTreeDisplayName(item.Rows[i], value)
 	}
+}
+
+func canvasPHgoLabel(row model.CanvasRow, fallback string) string {
+	return phylo.FormatPHgoLabel(
+		canvasRowColumnValue(row, "species", fallback),
+		canvasRowColumnValue(row, "gene_id", fallback),
+		canvasRowColumnValue(row, "label_name", fallback),
+	)
+}
+
+func canvasKeywordGeneID(row model.KeywordResultRow) string {
+	return strings.TrimSpace(firstNonEmptyText(row.GeneLocus, row.GeneIdentifier))
 }
 
 func promptAliasTextWithPinned(pin string, value string) string {
@@ -5037,7 +5379,7 @@ func canvasSelectionRowView(row model.CanvasRow, fallback string) canvasSelectio
 				Head:        strings.TrimSpace(firstNonEmptyText(row.KeywordRow.SequenceHeaderLabel, row.KeywordRow.ProteinID, row.KeywordRow.TranscriptID, row.KeywordRow.GeneIdentifier)),
 				Species:     strings.TrimSpace(row.KeywordRow.Genome),
 				LabelName:   strings.TrimSpace(row.KeywordRow.LabelName),
-				GeneID:      strings.TrimSpace(row.KeywordRow.GeneIdentifier),
+				GeneID:      canvasKeywordGeneID(*row.KeywordRow),
 				DisplayName: canvasRowDisplayName(row, fallback),
 				Detail:      blastRowDetail(blastRow),
 				DetailPages: blastRowDetailPages(blastRow),
@@ -5347,6 +5689,9 @@ func (p *Prompter) SelectCanvas(initial []model.CanvasItem, currentItem int, nex
 					if row.KeywordRow == nil {
 						return tui.DetailItem{}, false, nil
 					}
+					if fasta := canvasKeywordStoredDetailFASTA(row); fasta != "" {
+						return detailFASTALoadedItem(fasta), true, nil
+					}
 					cacheKey := keywordDetailFASTACacheKey(*row.KeywordRow)
 					if cached := strings.TrimSpace(p.detailFASTACache[cacheKey]); cached != "" {
 						return detailFASTALoadedItem(cached), true, nil
@@ -5369,6 +5714,9 @@ func (p *Prompter) SelectCanvas(initial []model.CanvasItem, currentItem int, nex
 				case model.CanvasKindBlast:
 					if row.BlastRow == nil {
 						return tui.DetailItem{}, false, nil
+					}
+					if fasta := canvasBlastStoredDetailFASTA(row); fasta != "" {
+						return detailFASTALoadedItem(fasta), true, nil
 					}
 					cacheKey := blastDetailFASTACacheKey(*row.BlastRow)
 					if cached := strings.TrimSpace(p.detailFASTACache[cacheKey]); cached != "" {
@@ -5422,6 +5770,28 @@ func (p *Prompter) SelectCanvas(initial []model.CanvasItem, currentItem int, nex
 	}
 }
 
+func canvasKeywordStoredDetailFASTA(row model.CanvasRow) string {
+	if row.KeywordRow == nil {
+		return ""
+	}
+	if row.SequenceData != nil && strings.TrimSpace(row.SequenceData.Sequence) != "" {
+		header := firstNonEmptyText(strings.TrimSpace(row.SequenceData.OriginalHeader), keywordDetailFASTAHeader(*row.KeywordRow))
+		return formatInlineDetailFASTA(header, row.SequenceData.Sequence)
+	}
+	return keywordInlineDetailFASTA(*row.KeywordRow)
+}
+
+func canvasBlastStoredDetailFASTA(row model.CanvasRow) string {
+	if row.BlastRow == nil || row.SequenceData == nil || strings.TrimSpace(row.SequenceData.Sequence) == "" {
+		return ""
+	}
+	header := strings.TrimSpace(row.SequenceData.OriginalHeader)
+	if header == "" {
+		header = ">" + strings.TrimSpace(firstNonEmptyText(row.BlastRow.Protein, row.BlastRow.SequenceID, row.BlastRow.TranscriptID, row.BlastRow.SubjectID, "sequence"))
+	}
+	return formatInlineDetailFASTA(header, row.SequenceData.Sequence)
+}
+
 func buildCanvasTreePanel(items []tui.BlastRunItem, canvasItems []model.CanvasItem, settings phylo.TreeSettings, state tui.CanvasTreePanelState) tui.CanvasTreePanel {
 	displayNames := make([]tui.Choice, 0, 16)
 	if len(items) > 0 || len(canvasItems) > 0 {
@@ -5432,6 +5802,7 @@ func buildCanvasTreePanel(items []tui.BlastRunItem, canvasItems []model.CanvasIt
 			}
 			displayNames = append(displayNames, tui.Choice{Value: id, Label: firstNonEmptyText(strings.TrimSpace(column.Header), id)})
 		}
+		displayNames = append(displayNames, tui.Choice{Value: phylo.PHgoDisplayNameSource, Label: "PHgo label format"})
 	}
 	if len(displayNames) == 0 {
 		displayNames = append(displayNames, tui.Choice{Value: phylo.DefaultDisplayNameSource, Label: "label_name"})
@@ -6280,6 +6651,14 @@ func keywordDisplayColumns(rows []model.KeywordResultRow) []tableColumnValue[mod
 				return keywordPhgoAliases(row)
 			},
 		},
+		"gene_locus": {
+			ID:       "gene_locus",
+			Header:   ColumnCompactHeader("gene_locus", options),
+			Sortable: true,
+			Value: func(row model.KeywordResultRow) string {
+				return strings.TrimSpace(row.GeneLocus)
+			},
+		},
 		"gene_identifier": {
 			ID:       "gene_identifier",
 			Header:   ColumnCompactHeader("gene_identifier", options),
@@ -6325,6 +6704,9 @@ func keywordDisplayColumns(rows []model.KeywordResultRow) []tableColumnValue[mod
 	defs := make([]tableColumnValue[model.KeywordResultRow], 0, len(ids))
 	for _, id := range ids {
 		if id == "label_name" && !keywordRowsHaveLabelName(rows) {
+			continue
+		}
+		if id == "gene_locus" && !keywordRowsHaveGeneLocus(rows) {
 			continue
 		}
 		if id == "gene_identifier" && !keywordRowsHaveGeneIdentifier(rows) {
@@ -6380,6 +6762,15 @@ func keywordRowsHaveProteinID(rows []model.KeywordResultRow) bool {
 func keywordRowsHaveGeneIdentifier(rows []model.KeywordResultRow) bool {
 	for _, row := range rows {
 		if strings.TrimSpace(row.GeneIdentifier) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func keywordRowsHaveGeneLocus(rows []model.KeywordResultRow) bool {
+	for _, row := range rows {
+		if strings.TrimSpace(row.GeneLocus) != "" {
 			return true
 		}
 	}
@@ -6507,6 +6898,8 @@ func (p *Prompter) ExportSettingsWithOptions(label string, allowFolder bool, all
 		WriteReport:           result.WriteReport,
 		WriteSession:          result.WriteSession,
 		WriteText:             result.WriteText,
+		WriteConvertedFasta:   result.WriteConvertedFasta,
+		WriteAllRows:          result.WriteAllRows,
 		WriteExcel:            result.WriteExcel,
 		WriteRawExcel:         result.WriteRawExcel,
 		FastaHeaderMode:       model.NormalizeFastaHeaderMode(model.FastaHeaderMode(result.FastaHeaderMode), result.UsePhgoHeader),
@@ -6759,6 +7152,35 @@ func (p *Prompter) BlastSubmitErrorAction(description string) (string, error) {
 	)
 }
 
+func (p *Prompter) NCBIReplacementAction(oldAccession string, newAccession string) (string, error) {
+	oldAccession = strings.TrimSpace(oldAccession)
+	newAccession = strings.TrimSpace(newAccession)
+	result, err := tui.RunChoiceModalPage(tui.ChoiceModalPage{
+		Path:  p.tuiPath("Startup", "Species", "Keyword input", "NCBI protein update"),
+		Title: "NCBI protein update",
+		Message: fmt.Sprintf(
+			"NCBI says protein %s has been updated and replaced by %s.\n\nChoose which accession to use for this search. The default is the old accession.",
+			oldAccession,
+			newAccession,
+		),
+		Choices: []tui.Choice{
+			{Value: "old", Label: "Use old accession", Description: oldAccession},
+			{Value: "new", Label: "Use new accession", Description: newAccession},
+			{Value: "all_old", Label: "Always use old in this run", Description: "Apply old-accession choice to later NCBI updates in this run."},
+			{Value: "all_new", Label: "Always use new in this run", Description: "Apply new-accession choice to later NCBI updates in this run."},
+		},
+		ConfirmText: tui.ButtonOK,
+		AllowClose:  true,
+	})
+	if err != nil {
+		return "", err
+	}
+	if result.Value == "" || result.Value == "close" {
+		return "", ErrDialogClosed
+	}
+	return result.Value, nil
+}
+
 func (p *Prompter) recoveryErrorAction(path []string, title string, message string, allowSkip bool, backTarget error) (string, error) {
 	result, err := tui.RunRecoveryModalPage(tui.RecoveryModalPage{
 		Path:      path,
@@ -6892,6 +7314,7 @@ func keywordRowDetail(row model.KeywordResultRow) string {
 		"label_name":            keywordLabelName(row),
 		"labelname_type":        strings.TrimSpace(row.LabelNameType),
 		"phgo_alias":            keywordPhgoAliases(row),
+		"gene_locus":            row.GeneLocus,
 		"protein_id":            row.ProteinID,
 		"transcript":            row.TranscriptID,
 		"gene_identifier":       row.GeneIdentifier,
@@ -6919,12 +7342,17 @@ func keywordRowDetail(row model.KeywordResultRow) string {
 	if len(row.ExtraColumns) > 0 {
 		keys := make([]string, 0, len(row.ExtraColumns))
 		for key := range row.ExtraColumns {
+			if keywordExtraDetailHidden(key) {
+				continue
+			}
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
-		lines = append(lines, "", "extra_columns:")
-		for _, key := range keys {
-			lines = append(lines, ColumnDetailLabel(key, ColumnDisplayOptions{})+": "+displayPreviewValue(row.ExtraColumns[key]))
+		if len(keys) > 0 {
+			lines = append(lines, "", "extra_columns:")
+			for _, key := range keys {
+				lines = append(lines, ColumnDetailLabel(key, ColumnDisplayOptions{})+": "+displayPreviewValue(row.ExtraColumns[key]))
+			}
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -6937,6 +7365,7 @@ func keywordRowDetailPages(row model.KeywordResultRow) []tui.DetailPage {
 		"label_name":            keywordLabelName(row),
 		"labelname_type":        strings.TrimSpace(row.LabelNameType),
 		"phgo_alias":            keywordPhgoAliases(row),
+		"gene_locus":            row.GeneLocus,
 		"protein_id":            row.ProteinID,
 		"transcript":            row.TranscriptID,
 		"gene_identifier":       row.GeneIdentifier,
@@ -6965,13 +7394,17 @@ func keywordRowDetailPages(row model.KeywordResultRow) []tui.DetailPage {
 	display := func(id string, value string) string {
 		return displayPreviewValue(value)
 	}
-	sourceIDs := []string{"search_term", "search_type", "label_name", "labelname_type", "phgo_alias", "protein_id", "transcript", "gene_identifier", "genome", "location", "description", "comments", "auto_define", "gene_report_url"}
+	sourceIDs := []string{"search_term", "search_type", "gene_locus", "label_name", "labelname_type", "phgo_alias", "protein_id", "transcript", "gene_identifier", "genome", "location", "description", "comments", "auto_define", "gene_report_url"}
 	annotationIDs := []string{"alias", "symbols", "synonyms", "uniprot", "sequence_header_label", "sequence_id"}
 	pages := make([]tui.DetailPage, 0, 4)
 	pages = appendDetailPageIfNotEmpty(pages, detailPageFromIDs("Source", sourceIDs, values, label, display, include))
 	pages = appendDetailPageIfNotEmpty(pages, detailPageFromIDs("Annotation", annotationIDs, values, label, display, include))
 	pages = appendDetailPageIfNotEmpty(pages, keywordExtraDetailPage(row))
-	pages = append(pages, tui.DetailPage{Title: "FASTA", Items: []tui.DetailItem{detailFASTALoadItem()}})
+	if fasta := keywordInlineDetailFASTA(row); fasta != "" {
+		pages = append(pages, tui.DetailPage{Title: "FASTA", Items: []tui.DetailItem{detailFASTALoadedItem(fasta)}})
+	} else {
+		pages = append(pages, tui.DetailPage{Title: "FASTA", Items: []tui.DetailItem{detailFASTALoadItem()}})
+	}
 	return pages
 }
 

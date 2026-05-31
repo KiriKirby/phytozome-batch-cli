@@ -121,10 +121,8 @@ This keeps Windows debugging closer to the real release environment, including t
 The program keeps all runtime artifacts next to the executable so nothing is scattered around your system.
 
 - `output/`
-  - exported `.xlsx`
-  - exported `.fasta`
-  - detailed run reports
-  - saved `.pgo` session snapshots when enabled in export settings
+  - created next to the executable as the default export location
+  - exports can instead be written to another folder selected in the operating system folder picker
 - `.cache/`
   - Phytozome persistent caches
   - lemna release caches
@@ -139,7 +137,7 @@ The program keeps all runtime artifacts next to the executable so nothing is sca
   - required for Canvas system-tree on Windows; if the folder is missing, the bundle was extracted incompletely or modified
   - Linux and macOS releases currently do not include this folder because system-tree is not yet supported there
 
-If you choose an extra folder name during batch BLAST export, that folder is created inside `output/`.
+If you choose an extra folder name during batch BLAST export, that folder is created inside the export directory selected in the system folder picker. The picker opens at the app-local `output/` directory by default and creates it if needed.
 
 ## Session Snapshots
 
@@ -588,7 +586,7 @@ Steps:
 5. choose `blastp`
 6. review rows
 7. select the hits you want
-8. export files from `output/`
+8. export files to the folder you choose in the system picker
 
 ## Example B: Search Many Flowering Regulator Genes Together
 

@@ -380,6 +380,45 @@ func TestSnapshotCanvasSequenceCacheCollectsKeywordAndBlastRows(t *testing.T) {
 	}
 }
 
+func TestCanvasTreeTableValuesUseGeneLocusAndPHgoLabelForNCBIKeywordRows(t *testing.T) {
+	row := model.CanvasRow{
+		Kind: model.CanvasKindKeyword,
+		KeywordRow: &model.KeywordResultRow{
+			SourceDatabase: "ncbi",
+			Genome:         "Oryza sativa Japonica Group",
+			GeneLocus:      "Os08g14760",
+			GeneIdentifier: "GeneID:4335555",
+			LabelName:      "Os4CL1",
+			SequenceID:     "XP_015650724.1",
+		},
+	}
+	values := canvasTreeTableValues(row, "1")
+	if values["geneid"] != "Os08g14760" {
+		t.Fatalf("tree table geneid = %q, want Gene locus", values["geneid"])
+	}
+	if values["blast_labelname"] != "" || values["blast_geneid"] != "" {
+		t.Fatalf("keyword rows should not synthesize BLAST source fields: %#v", values)
+	}
+	if values[phylo.PHgoDisplayNameSource] != "Os-Os08g14760 (Os4CL1)" {
+		t.Fatalf("PHgo table value = %q", values[phylo.PHgoDisplayNameSource])
+	}
+	records, meta, err := phylo.BuildInput([]phylo.RowSource{{
+		ItemTitle:    "1",
+		RowIndex:     0,
+		CanvasRow:    row,
+		Sequence:     "MPEPTIDE",
+		SequenceKind: phylo.SequenceProtein,
+		OriginalHead: "XP_015650724.1",
+		TableValues:  values,
+	}}, phylo.PHgoDisplayNameSource, "session", time.Now())
+	if err != nil {
+		t.Fatalf("BuildInput returned error: %v", err)
+	}
+	if meta.DisplayNameSource != phylo.PHgoDisplayNameSource || records[0].DisplayName != "Os-Os08g14760 (Os4CL1)" {
+		t.Fatalf("PHgo display source did not carry into tree input: records=%#v meta=%#v", records, meta)
+	}
+}
+
 func TestWriteCanvasSessionSnapshotIncludesSequenceCache(t *testing.T) {
 	w := NewBlastWizard(nil)
 	w.suppressTaskModals = true

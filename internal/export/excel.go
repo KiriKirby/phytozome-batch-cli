@@ -788,6 +788,8 @@ func keywordExportValue(id string, row model.KeywordResultRow, rowNumber int) an
 		return strings.TrimSpace(row.LabelNameType)
 	case "phgo_alias":
 		return keywordPhgoAliases(row)
+	case "gene_locus":
+		return row.GeneLocus
 	case "protein_id":
 		return row.ProteinID
 	case "transcript":

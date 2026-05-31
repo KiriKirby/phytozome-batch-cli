@@ -655,6 +655,8 @@ func keywordReportCellValue(header string, row model.KeywordResultRow, index int
 		return row.LabelNameType
 	case "phgo_alias":
 		return row.PhgoAliases
+	case "gene_locus":
+		return row.GeneLocus
 	case "protein_id":
 		return row.ProteinID
 	case "transcript":

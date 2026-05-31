@@ -253,6 +253,57 @@ func TestApplyCanvasDisplayNameSourceSkipsLockedRows(t *testing.T) {
 	}
 }
 
+func TestApplyCanvasDisplayNameSourceUsesPHgoLabelFormat(t *testing.T) {
+	item := model.CanvasItem{
+		Title: "fallback",
+		Rows: []model.CanvasRow{{
+			Kind: model.CanvasKindKeyword,
+			KeywordRow: &model.KeywordResultRow{
+				SourceDatabase: "ncbi",
+				Genome:         "Oryza sativa Japonica Group",
+				GeneLocus:      "Os08g14760",
+				GeneIdentifier: "GeneID:4335555",
+				LabelName:      "Os4CL1",
+			},
+		}},
+	}
+	applyCanvasDisplayNameSource(&item, phylo.PHgoDisplayNameSource)
+	if got := item.Rows[0].DisplayName; got != "Os-Os08g14760 (Os4CL1)" {
+		t.Fatalf("PHgo display name = %q", got)
+	}
+}
+
+func TestCanvasKeywordFixedGeneIDPrefersGeneLocus(t *testing.T) {
+	item := model.CanvasItem{
+		Title: "1",
+		Kind:  model.CanvasKindKeyword,
+		Rows: []model.CanvasRow{{
+			Kind: model.CanvasKindKeyword,
+			KeywordRow: &model.KeywordResultRow{
+				SourceDatabase:      "ncbi",
+				SequenceID:          "XP_015650724.1",
+				ProteinID:           "XP_015650724.1",
+				GeneLocus:           "Os08g14760",
+				GeneIdentifier:      "GeneID:4335555",
+				LabelName:           "Os4CL1",
+				Genome:              "Oryza sativa Japonica Group",
+				ExtraColumns:        map[string]string{"ncbi_gene_id": "4335555"},
+				SequenceHeaderLabel: "XP_015650724.1",
+			},
+		}},
+	}
+	_, rows := buildCanvasSelectionTable(item)
+	if len(rows) != 1 {
+		t.Fatalf("canvas rows = %#v", rows)
+	}
+	if got := rows[0].Cells[4]; got != "Os08g14760" {
+		t.Fatalf("canvas fixed geneid = %q, want Gene locus", got)
+	}
+	if rows[0].Cells[5] != "" || rows[0].Cells[6] != "" {
+		t.Fatalf("keyword-origin canvas should not synthesize BLAST source fields: %#v", rows[0].Cells)
+	}
+}
+
 func TestBuildCanvasTreePanelFiltersCodonMethodsByConversionTarget(t *testing.T) {
 	proteinItem := model.CanvasItem{
 		Title:    "protein",
@@ -339,6 +390,33 @@ func TestBuildCanvasTreePanelFiltersCodonMethodsByConversionTarget(t *testing.T)
 	}
 	if got := len(dnaPanel.AlignmentMethods); got != 4 {
 		t.Fatalf("DNA mode alignment method count = %d, want 4: %#v", got, dnaPanel.AlignmentMethods)
+	}
+}
+
+func TestBuildCanvasTreePanelIncludesPHgoDisplayNameSource(t *testing.T) {
+	item := model.CanvasItem{
+		Title:    "protein",
+		Kind:     model.CanvasKindKeyword,
+		Selected: []bool{true},
+		Rows: []model.CanvasRow{{
+			Kind:       model.CanvasKindKeyword,
+			KeywordRow: &model.KeywordResultRow{SequenceID: "XP_015650724.1", LabelName: "Os4CL1"},
+		}},
+	}
+	columns, rows := buildCanvasSelectionTable(item)
+	panel := buildCanvasTreePanel([]tui.BlastRunItem{{
+		Columns:  columns,
+		Rows:     rows,
+		Selected: []bool{true},
+	}}, []model.CanvasItem{item}, phylo.DefaultTreeSettings(), tui.CanvasTreePanelState{})
+	found := false
+	for _, choice := range panel.DisplayNameSources {
+		if choice.Value == phylo.PHgoDisplayNameSource && choice.Label == "PHgo label format" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("PHgo display source missing: %#v", panel.DisplayNameSources)
 	}
 }
 
@@ -442,10 +520,11 @@ func TestCanvasSaveSettingsStructKeepsFastaExportFields(t *testing.T) {
 		BaseName:        "canvas1",
 		WriteSession:    true,
 		WriteText:       true,
+		WriteAllRows:    true,
 		FastaHeaderMode: model.FastaHeaderModePhgo,
 		UsePhgoHeader:   true,
 	}
-	if got.BaseName != "canvas1" || !got.WriteSession || !got.WriteText || got.FastaHeaderMode != model.FastaHeaderModePhgo || !got.UsePhgoHeader {
+	if got.BaseName != "canvas1" || !got.WriteSession || !got.WriteText || !got.WriteAllRows || got.FastaHeaderMode != model.FastaHeaderModePhgo || !got.UsePhgoHeader {
 		t.Fatalf("canvas save settings fields not preserved: %#v", got)
 	}
 }
@@ -464,6 +543,23 @@ func TestCanvasDefaultFixedColumnsUseDisplaynameHeader(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("display_name column missing from canvas defaults")
+	}
+}
+
+func TestCanvasKeywordStoredDetailFASTAPrefersNCBIInlineFASTA(t *testing.T) {
+	row := model.CanvasRow{
+		Kind: model.CanvasKindKeyword,
+		KeywordRow: &model.KeywordResultRow{
+			LabelName:  "PAL1",
+			SequenceID: "XP_001",
+			ExtraColumns: map[string]string{
+				"ncbi_fasta": ">XP_001 NCBI protein\nMPEPTIDE",
+			},
+		},
+	}
+	got := canvasKeywordStoredDetailFASTA(row)
+	if got != ">XP_001 NCBI protein\nMPEPTIDE" {
+		t.Fatalf("stored NCBI FASTA detail = %q", got)
 	}
 }
 
@@ -789,6 +885,41 @@ func TestKeywordRowDetailPagesExposeExtraColumnsAsSeparateTab(t *testing.T) {
 	}
 	if len(pages[2].Items) != 2 {
 		t.Fatalf("extra page items = %d, want 2", len(pages[2].Items))
+	}
+}
+
+func TestKeywordRowDetailPagesPutNCBIInlineFASTAOnlyOnFASTATab(t *testing.T) {
+	row := model.KeywordResultRow{
+		SourceDatabase:      "ncbi",
+		SearchTerm:          "XP_015650724.1",
+		LabelName:           "Os4CL1",
+		ProteinID:           "XP_015650724.1",
+		SequenceID:          "XP_015650724.1",
+		SequenceHeaderLabel: "Oryza sativa Japonica Group",
+		ExtraColumns: map[string]string{
+			"ncbi_accession":        "XP_015650724.1",
+			"ncbi_fasta_header":     ">XP_015650724.1 probable 4-coumarate--CoA ligase 1",
+			"ncbi_protein_sequence": "MNCBISEQ",
+			"ncbi_fasta":            ">XP_015650724.1 probable 4-coumarate--CoA ligase 1\nMNCBISEQ\n",
+		},
+	}
+	pages := keywordRowDetailPages(row)
+	if len(pages) != 4 {
+		t.Fatalf("detail pages = %d, want 4", len(pages))
+	}
+	if pages[2].Title != "Extra" || pages[3].Title != "FASTA" {
+		t.Fatalf("unexpected page titles: %#v", pages)
+	}
+	for _, item := range pages[2].Items {
+		if strings.Contains(strings.ToLower(item.Label), "fasta") || strings.Contains(strings.ToLower(item.Label), "sequence") {
+			t.Fatalf("FASTA/sequence payload leaked into Extra tab: %#v", item)
+		}
+	}
+	if pages[3].Items[0].AutoLoad {
+		t.Fatal("inline NCBI FASTA should be shown immediately, not loaded asynchronously")
+	}
+	if got := pages[3].Items[0].Value; !strings.Contains(got, ">XP_015650724.1 probable 4-coumarate--CoA ligase 1") || !strings.Contains(got, "MNCBISEQ") {
+		t.Fatalf("FASTA tab missing inline NCBI sequence: %q", got)
 	}
 }
 

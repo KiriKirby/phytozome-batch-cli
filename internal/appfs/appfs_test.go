@@ -66,3 +66,23 @@ func TestRemoveCacheSubtreeRejectsRootDeletion(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestSelectFolderDisabledUsesDefaultDir(t *testing.T) {
+	defaultDir := filepath.Join(t.TempDir(), "output")
+	t.Setenv("PHYTOZOME_GO_DISABLE_FOLDER_PICKER", "1")
+
+	got, err := SelectFolder("Export", defaultDir)
+	if err != nil {
+		t.Fatalf("SelectFolder returned error: %v", err)
+	}
+	want, err := filepath.Abs(defaultDir)
+	if err != nil {
+		t.Fatalf("Abs default dir: %v", err)
+	}
+	if got != want {
+		t.Fatalf("SelectFolder = %q, want %q", got, want)
+	}
+	if info, err := os.Stat(got); err != nil || !info.IsDir() {
+		t.Fatalf("selected default dir was not created: info=%#v err=%v", info, err)
+	}
+}

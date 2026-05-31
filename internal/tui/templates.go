@@ -24,6 +24,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/KiriKirby/phytozome-go/internal/appfs"
 	"github.com/KiriKirby/phytozome-go/internal/model"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -119,26 +120,29 @@ type TextInputResult struct {
 }
 
 type MultiLinePage struct {
-	Breadcrumb        string
-	Path              []string
-	Title             string
-	Description       string
-	Initial           string
-	AllowEmpty        bool
-	SkipWhenEmpty     bool
-	RawInput          bool
-	ConfirmOnEnter    bool
-	AllowBack         bool
-	AllowHome         bool
-	ConfirmText       string
-	EmptyText         string
-	EmptyAction       string
-	SecondaryText     string
-	SecondaryShortcut string
-	SecondaryAction   string
-	SkipText          string
-	SkipShortcut      string
-	Hints             []string
+	Breadcrumb         string
+	Path               []string
+	Title              string
+	Description        string
+	Initial            string
+	AllowEmpty         bool
+	SkipWhenEmpty      bool
+	RawInput           bool
+	ConfirmOnEnter     bool
+	AllowBack          bool
+	AllowHome          bool
+	ConfirmText        string
+	EmptyText          string
+	EmptyAction        string
+	SecondaryText      string
+	SecondaryShortcut  string
+	SecondaryAction    string
+	SkipText           string
+	SkipShortcut       string
+	AllowOpenFile      bool
+	OpenFileTitle      string
+	OpenFileDefaultDir string
+	Hints              []string
 }
 
 type MultiLineResult struct {
@@ -1566,7 +1570,7 @@ func (c *canvasTreePanelPrimitive) controlForParam(param CanvasTreeParameter, pa
 }
 
 func treeFocusShortcutActive(event *tcell.EventKey, expanded bool) bool {
-	return expanded && shortcutMatchesEvent("Ctrl+Y", event)
+	return expanded && shortcutMatchesEvent(ShortcutTreeFocus, event)
 }
 
 func treePreviewShortcutActive(event *tcell.EventKey, expanded bool) bool {
@@ -2103,9 +2107,11 @@ type ExportSettingsPage struct {
 	WriteExcel             bool
 	WriteRawExcel          bool
 	ShowWriteText          bool
+	ShowConvertedFasta     bool
 	ShowWriteExcel         bool
 	ShowWriteRawExcel      bool
 	ShowFastaHeaderMode    bool
+	ShowAllRowsFasta       bool
 	FastaHeaderMode        string
 	UsePhgoHeader          bool
 	ShowFamilyQueryPrepend bool
@@ -2121,8 +2127,10 @@ type ExportSettingsResult struct {
 	WriteReport           bool
 	WriteSession          bool
 	WriteText             bool
+	WriteConvertedFasta   bool
 	WriteExcel            bool
 	WriteRawExcel         bool
+	WriteAllRows          bool
 	FastaHeaderMode       string
 	UsePhgoHeader         bool
 	PrependOnlyFirstQuery bool
@@ -2734,6 +2742,38 @@ func RunMultiLinePage(page MultiLinePage) (MultiLineResult, error) {
 			}
 		})
 	}
+	openFile := func() {
+		title := firstNonEmptyText(page.OpenFileTitle, "Open file")
+		defaultDir := strings.TrimSpace(page.OpenFileDefaultDir)
+		if defaultDir == "" {
+			if dir, err := appfs.ApplicationDir(); err == nil {
+				defaultDir = dir
+			}
+		}
+		pasteStatus.view.SetTextColor(tview.Styles.SecondaryTextColor)
+		pasteStatus.view.SetText("Opening file picker...")
+		var selected string
+		var openErr error
+		if !app.Suspend(func() {
+			selected, openErr = appfs.SelectFile(title, defaultDir)
+		}) {
+			selected, openErr = appfs.SelectFile(title, defaultDir)
+		}
+		if errors.Is(openErr, appfs.ErrFileSelectionCancelled) {
+			pasteStatus.view.SetText("")
+			app.SetFocus(area)
+			return
+		}
+		if openErr != nil {
+			pasteStatus.view.SetTextColor(colorMuted)
+			pasteStatus.view.SetText("Open failed: " + openErr.Error())
+			app.SetFocus(area)
+			return
+		}
+		area.SetText(selected, true)
+		pasteStatus.view.SetText("")
+		app.SetFocus(area)
+	}
 	body := newButtonFlex()
 	if strings.TrimSpace(page.Description) != "" {
 		body.AddItem(textBlock(page.Description), 4, 0, false)
@@ -2769,6 +2809,14 @@ func RunMultiLinePage(page MultiLinePage) (MultiLineResult, error) {
 		})
 	}
 	buttons.buttons = append(buttons.buttons, buttonSpec{
+		Label:    ButtonOpenFile,
+		Shortcut: ShortcutOpenFile,
+		Action:   openFile,
+		Visible:  page.AllowOpenFile,
+		Primary:  true,
+		LeftPrimary: true,
+	})
+	buttons.buttons = append(buttons.buttons, buttonSpec{
 		Label:    conciseActionLabel(primaryLabel, ButtonApply),
 		Shortcut: primaryShortcut,
 		Action:   confirm,
@@ -2786,6 +2834,9 @@ func RunMultiLinePage(page MultiLinePage) (MultiLineResult, error) {
 	if strings.TrimSpace(page.SecondaryText) != "" {
 		hints = append(hints, fmt.Sprintf("%s uses %s.", firstNonEmptyText(page.SecondaryShortcut, "Ctrl+K"), strings.ToLower(strings.TrimSpace(page.SecondaryText))))
 	}
+	if page.AllowOpenFile {
+		hints = append(hints, fmt.Sprintf("%s opens a system file picker.", ShortcutOpenFile))
+	}
 	mainHint := "Ctrl+Enter uses the main action button. Enter inserts a new line. Paste (Ctrl+V) reads plain text from the clipboard."
 	if page.ConfirmOnEnter {
 		mainHint = "Enter uses the main action button. Paste (Ctrl+V) reads plain text from the clipboard."
@@ -2799,6 +2850,8 @@ func RunMultiLinePage(page MultiLinePage) (MultiLineResult, error) {
 		result.Nav = nav
 		app.Stop()
 	}, keyBinding{Key: tcell.KeyCtrlV, Action: paste}, keyBinding{Match: func(event *tcell.EventKey) bool {
+		return page.AllowOpenFile && shortcutMatchesEvent(ShortcutOpenFile, event)
+	}, Action: openFile}, keyBinding{Match: func(event *tcell.EventKey) bool {
 		return strings.TrimSpace(page.SkipText) != "" && shortcutMatchesEvent(firstNonEmptyText(page.SkipShortcut, "Ctrl+K"), event)
 	}, Action: skip}, keyBinding{Match: func(event *tcell.EventKey) bool {
 		return strings.TrimSpace(page.SecondaryText) != "" && shortcutMatchesEvent(firstNonEmptyText(page.SecondaryShortcut, "Ctrl+K"), event)
@@ -6190,6 +6243,14 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 					continue
 				}
 			}
+			if strings.EqualFold(strings.TrimSpace(button.Shortcut), ShortcutCopy) && strings.EqualFold(button.Label, ButtonCopy) {
+				button.Visible = true
+				continue
+			}
+			if strings.EqualFold(strings.TrimSpace(button.Shortcut), ShortcutFilter) {
+				button.Visible = page.AllowFilter
+				continue
+			}
 			if button.LeftPrimary && controlMode == 1 {
 				button.Visible = false
 				continue
@@ -6267,7 +6328,7 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 		updateAliasButtonVisibility()
 		rebuildActionRow()
 	})
-	shortcutHint := fmt.Sprintf("Ctrl+Y switches focus between Canvas and tree tools when the tree panel is open. %s opens the tree preview.", ShortcutPreview)
+	shortcutHint := fmt.Sprintf("%s switches focus between Canvas and tree tools when the tree panel is open. %s opens the tree preview.", ShortcutTreeFocus, ShortcutPreview)
 	addHints(body, append(page.Hints, shortcutHint, modeHint()))
 	pageRoot = pageFrame(pageBreadcrumb(page.Breadcrumb, page.Path), body)
 	refresh()
@@ -6791,27 +6852,26 @@ func RunSmallTextInputModal(page SmallTextInputModalPage) (SmallTextInputModalRe
 }
 
 func RunRecoveryModalPage(page RecoveryModalPage) (ActionModalResult, error) {
+	return RunActionModalPage(recoveryModalActionPage(page))
+}
+
+func recoveryModalActionPage(page RecoveryModalPage) ActionModalPage {
 	actions := []Action{
 		{Value: "retry", Label: ButtonRetry, Shortcut: ShortcutRetry},
 	}
-	confirmText := ButtonClose
-	confirmValue := "close"
 	if page.AllowSkip {
-		actions = append([]Action{{Value: "close", Label: ButtonClose, Shortcut: "Esc"}}, actions...)
-		confirmText = ButtonSkip
-		confirmValue = "skip"
-	} else {
-		actions = append([]Action{{Value: "close", Label: ButtonClose, Shortcut: "Esc"}}, actions...)
+		actions = append(actions, Action{Value: "skip", Label: ButtonSkip, Shortcut: "S"})
 	}
-	return RunActionModalPage(ActionModalPage{
+	actions = append([]Action{{Value: "close", Label: ButtonClose, Shortcut: "Esc"}}, actions...)
+	return ActionModalPage{
 		Breadcrumb:   page.Breadcrumb,
 		Path:         page.Path,
 		Title:        page.Title,
 		Message:      page.Message,
 		Actions:      actions,
-		ConfirmText:  confirmText,
-		ConfirmValue: confirmValue,
-	})
+		ConfirmText:  ButtonRetry,
+		ConfirmValue: "retry",
+	}
 }
 
 func detailItemLine(item DetailItem) string {
@@ -6941,6 +7001,8 @@ func normalizeTUIFastaHeaderMode(mode string, legacyUsePhgo bool) string {
 		return "original"
 	case "minimal":
 		return "minimal"
+	case "display_name", "displayname", "display-name":
+		return "display_name"
 	}
 	if legacyUsePhgo {
 		return "phgo"
@@ -7015,16 +7077,24 @@ func RunExportSettingsModal(page ExportSettingsPage) (ExportSettingsResult, erro
 	attachFocusBorder(sessionBox.Box)
 
 	writeText := page.WriteText
+	writeConvertedFasta := false
+	writeAllRows := false
 	writeExcel := page.WriteExcel
 	writeRawExcel := page.WriteRawExcel
 	fastaHeaderMode := normalizeTUIFastaHeaderMode(page.FastaHeaderMode, page.UsePhgoHeader)
 	prependOnlyFirstQuery := page.PrependOnlyFirstQuery
 	outputTextBox := newCheckboxModule("Write FASTA file", func() bool { return writeText }, func() { writeText = !writeText })
+	outputConvertedBox := newCheckboxModule("Write converted FASTA file", func() bool { return writeConvertedFasta }, func() { writeConvertedFasta = !writeConvertedFasta })
 	outputExcelBox := newCheckboxModule("Write Excel file", func() bool { return writeExcel }, func() { writeExcel = !writeExcel })
 	outputRawBox := newCheckboxModule("Write raw Excel and raw FASTA files", func() bool { return writeRawExcel }, func() { writeRawExcel = !writeRawExcel })
 	prependFirstBox := newCheckboxModule("FASTA query records: prepend first query only", func() bool { return prependOnlyFirstQuery }, func() { prependOnlyFirstQuery = !prependOnlyFirstQuery })
+	outputAllRowsBox := newCheckboxModule("Write all rows, including unchecked rows", func() bool { return writeAllRows }, func() { writeAllRows = !writeAllRows })
 	fastaHeaderValues := []string{"phgo", "original", "minimal"}
-	fastaHeaderOptions := []string{"Use phgo FASTA headers", "Use original FASTA headers", "Use minimal ID-only headers"}
+	fastaHeaderOptions := []string{"Use PHgo FASTA headers", "Use original FASTA headers", "Use minimal ID-only headers"}
+	if page.ShowAllRowsFasta {
+		fastaHeaderValues = append(fastaHeaderValues, "display_name")
+		fastaHeaderOptions = append(fastaHeaderOptions, "Use display-name-only headers")
+	}
 	fastaHeaderDropDown := tview.NewDropDown().
 		SetLabel("head type ").
 		SetFieldWidth(32).
@@ -7037,12 +7107,14 @@ func RunExportSettingsModal(page ExportSettingsPage) (ExportSettingsResult, erro
 	fastaHeaderDropDown.SetFieldBackgroundColor(colorPanel)
 	fastaHeaderDropDown.SetFieldTextColor(tview.Styles.PrimaryTextColor)
 	fastaHeaderDropDown.SetLabelColor(tview.Styles.SecondaryTextColor)
-	for _, box := range []*checkboxModule{outputTextBox, outputExcelBox, outputRawBox, prependFirstBox} {
+	for _, box := range []*checkboxModule{outputTextBox, outputConvertedBox, outputAllRowsBox, outputExcelBox, outputRawBox, prependFirstBox} {
 		box.SetBorder(false)
 	}
 
 	showFileModule := !page.AllowFolder || !page.AllowEmptyFile
 	showWriteText := page.ShowWriteText || (!page.ShowWriteExcel && !page.ShowWriteRawExcel && !page.ShowFastaHeaderMode)
+	showConvertedFasta := page.ShowConvertedFasta
+	showAllRowsFasta := page.ShowAllRowsFasta
 	showWriteExcel := page.ShowWriteExcel
 	showWriteRawExcel := page.ShowWriteRawExcel
 	showFastaHeaderMode := page.ShowFastaHeaderMode
@@ -7064,6 +7136,12 @@ func RunExportSettingsModal(page ExportSettingsPage) (ExportSettingsResult, erro
 	}
 	if showWriteText {
 		fields = append(fields, exportModule{primitive: outputTextBox, group: 2})
+	}
+	if showConvertedFasta {
+		fields = append(fields, exportModule{primitive: outputConvertedBox, group: 2})
+	}
+	if showAllRowsFasta {
+		fields = append(fields, exportModule{primitive: outputAllRowsBox, group: 2})
 	}
 	if showWriteExcel {
 		fields = append(fields, exportModule{primitive: outputExcelBox, group: 2})
@@ -7103,6 +7181,8 @@ func RunExportSettingsModal(page ExportSettingsPage) (ExportSettingsResult, erro
 		result.WriteReport = writeReport
 		result.WriteSession = writeSession
 		result.WriteText = writeText
+		result.WriteConvertedFasta = writeConvertedFasta
+		result.WriteAllRows = writeAllRows
 		result.WriteExcel = writeExcel
 		result.WriteRawExcel = writeRawExcel
 		result.FastaHeaderMode = normalizeTUIFastaHeaderMode(fastaHeaderMode, true)
@@ -7210,13 +7290,21 @@ func RunExportSettingsModal(page ExportSettingsPage) (ExportSettingsResult, erro
 	if showWriteText && showWriteExcel && showWriteRawExcel {
 		outputHelp = "FASTA exports selected peptide sequences. Excel exports selected rows.\nRaw exports every table row to _raw.xlsx, and also writes _raw.fasta when FASTA export is enabled."
 	} else if showWriteText && !showWriteExcel && !showWriteRawExcel {
-		outputHelp = "FASTA exports all selected canvas sequences in the current canvas order."
+		outputHelp = "FASTA exports all selected canvas sequences in the current canvas order. Converted FASTA uses the current tree settings."
 	}
 	outputHelpHeight := minInt(3, maxInt(2, textViewLineCount(outputHelp)))
 	outputGroup.AddItem(textBlock(outputHelp), outputHelpHeight, 0, false)
 	outputGroupHeight := outputHelpHeight
 	if showWriteText {
 		outputGroup.AddItem(outputTextBox, 1, 0, false)
+		outputGroupHeight++
+	}
+	if showConvertedFasta {
+		outputGroup.AddItem(outputConvertedBox, 1, 0, false)
+		outputGroupHeight++
+	}
+	if showAllRowsFasta {
+		outputGroup.AddItem(outputAllRowsBox, 1, 0, false)
 		outputGroupHeight++
 	}
 	if showWriteExcel {
@@ -12666,11 +12754,9 @@ func (b *buttonRowPrimitive) InputHandler() func(event *tcell.EventKey, setFocus
 		if event.Key() != tcell.KeyEnter && !(event.Key() == tcell.KeyRune && event.Rune() == ' ') {
 			return
 		}
-		for _, button := range b.buttons {
-			if button.Visible && button.Primary && button.Action != nil {
-				button.Action()
-				return
-			}
+		if button := b.primaryButton(); button != nil && button.Visible && button.Action != nil {
+			button.Action()
+			return
 		}
 		for _, button := range b.buttons {
 			if button.Visible && button.Action != nil {
@@ -12683,16 +12769,19 @@ func (b *buttonRowPrimitive) InputHandler() func(event *tcell.EventKey, setFocus
 
 func (b *buttonRowPrimitive) setPrimaryLabel(label string) {
 	label = conciseActionLabel(label, label)
-	for i := range b.buttons {
-		if b.buttons[i].Primary {
-			b.buttons[i].Label = label
-		}
+	if button := b.primaryButton(); button != nil {
+		button.Label = label
 	}
 }
 
 func (b *buttonRowPrimitive) primaryButton() *buttonSpec {
 	if b == nil {
 		return nil
+	}
+	for i := range b.buttons {
+		if b.buttons[i].Primary && !b.buttons[i].LeftPrimary {
+			return &b.buttons[i]
+		}
 	}
 	for i := range b.buttons {
 		if b.buttons[i].Primary {
@@ -12941,9 +13030,6 @@ func (b *buttonRowPrimitive) MouseHandler() func(action tview.MouseAction, event
 				continue
 			}
 			if action == tview.MouseLeftDown {
-				if setFocus != nil {
-					setFocus(b)
-				}
 				return true, nil
 			}
 			if pos.button.Action != nil {
@@ -12965,18 +13051,21 @@ type buttonPosition struct {
 
 func (b *buttonRowPrimitive) visibleButtonGroups() ([]buttonSpec, []buttonSpec) {
 	navButtons := []buttonSpec{}
+	leftPrimaryButtons := []buttonSpec{}
 	primaryButtons := []buttonSpec{}
 	for _, button := range b.buttons {
 		if !button.Visible {
 			continue
 		}
-		if button.Primary && !button.LeftPrimary {
+		if button.Primary && button.LeftPrimary {
+			leftPrimaryButtons = append(leftPrimaryButtons, button)
+		} else if button.Primary {
 			primaryButtons = append(primaryButtons, button)
 		} else {
 			navButtons = append(navButtons, button)
 		}
 	}
-	return navButtons, primaryButtons
+	return navButtons, insertPrimaryButtonsFront(primaryButtons, leftPrimaryButtons)
 }
 
 func insertPrimaryButtonsFront(buttons []buttonSpec, extras []buttonSpec) []buttonSpec {
@@ -13477,6 +13566,8 @@ func shortcutMatchesEvent(shortcut string, event *tcell.EventKey) bool {
 			return event.Key() == tcell.KeyCtrlC
 		case "d":
 			return event.Key() == tcell.KeyCtrlD
+		case "e":
+			return event.Key() == tcell.KeyCtrlE
 		case "g":
 			return event.Key() == tcell.KeyCtrlG
 		case "h":

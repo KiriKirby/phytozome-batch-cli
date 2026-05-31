@@ -62,7 +62,16 @@ func BuildInput(records []RowSource, sourceColumn string, sessionID string, now 
 	}
 	for i, src := range records {
 		taxonID := fmt.Sprintf("PHGOT%06d", i+1)
-		name := strings.TrimSpace(src.CanvasRow.DisplayName)
+		name := ""
+		if src.CanvasRow.DisplayNameLocked {
+			name = strings.TrimSpace(src.CanvasRow.DisplayName)
+		}
+		if name == "" && sourceColumn == PHgoDisplayNameSource {
+			name = strings.TrimSpace(src.TableValues[sourceColumn])
+		}
+		if name == "" {
+			name = strings.TrimSpace(src.CanvasRow.DisplayName)
+		}
 		if name == "" {
 			name = strings.TrimSpace(src.TableValues[sourceColumn])
 		}

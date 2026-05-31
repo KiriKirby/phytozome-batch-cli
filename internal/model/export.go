@@ -12,9 +12,10 @@ import "time"
 type FastaHeaderMode string
 
 const (
-	FastaHeaderModePhgo     FastaHeaderMode = "phgo"
-	FastaHeaderModeOriginal FastaHeaderMode = "original"
-	FastaHeaderModeMinimal  FastaHeaderMode = "minimal"
+	FastaHeaderModePhgo        FastaHeaderMode = "phgo"
+	FastaHeaderModeOriginal    FastaHeaderMode = "original"
+	FastaHeaderModeMinimal     FastaHeaderMode = "minimal"
+	FastaHeaderModeDisplayName FastaHeaderMode = "display_name"
 )
 
 func (m FastaHeaderMode) String() string {
@@ -23,7 +24,7 @@ func (m FastaHeaderMode) String() string {
 
 func NormalizeFastaHeaderMode(mode FastaHeaderMode, legacyUsePhgo bool) FastaHeaderMode {
 	switch mode {
-	case FastaHeaderModePhgo, FastaHeaderModeOriginal, FastaHeaderModeMinimal:
+	case FastaHeaderModePhgo, FastaHeaderModeOriginal, FastaHeaderModeMinimal, FastaHeaderModeDisplayName:
 		return mode
 	}
 	if legacyUsePhgo {
@@ -77,6 +78,7 @@ type KeywordResultRow struct {
 	PhgoAliases         string
 	ProteinID           string
 	TranscriptID        string
+	GeneLocus           string
 	GeneIdentifier      string
 	Genome              string
 	Location            string
@@ -135,6 +137,10 @@ type QuerySequenceSource struct {
 	PhgoRowNumber        int
 	PhgoHasRowNumber     bool
 	PhgoBlastQuerySource bool
+	PhgoCanvasRawRow     int
+	PhgoCanvasHasRawRow  bool
+	PhgoCanvasTitle      string
+	PhgoCanvasDisplay    string
 }
 
 type CanvasKind string

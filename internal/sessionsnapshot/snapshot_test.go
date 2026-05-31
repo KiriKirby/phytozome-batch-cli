@@ -43,6 +43,22 @@ func TestWriteReadKeywordSnapshotRoundTrip(t *testing.T) {
 			}},
 			Selected: []bool{true},
 		},
+		KeywordSource: &KeywordSourceStateV3{
+			Database:     "ncbi",
+			SourceKind:   "keyword",
+			Engine:       "ncbi-eutilities-keyword",
+			ResultDomain: "sequence-record",
+			SearchTypes:  []string{"NCBI protein accession"},
+			Terms:        []string{"XP_015650724.1"},
+			NCBI: &NCBIKeywordSourceV3{
+				EntrezDatabase:    "protein",
+				RecordType:        "protein",
+				EUtilitiesBaseURL: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils",
+				EngineSchema:      "ncbiprotein-v3",
+				Accessions:        []string{"XP_015650724.1"},
+				UIDs:              []string{"123"},
+			},
+		},
 		KeywordReview: &KeywordReviewStateV1{
 			SelectionState: tui.RowSelectionState{Valid: true, SelectedRow: 3, SelectedColumn: 2},
 		},
@@ -79,6 +95,9 @@ func TestWriteReadKeywordSnapshotRoundTrip(t *testing.T) {
 	if out.Keyword == nil || len(out.Keyword.Groups) != 1 || out.Keyword.Groups[0].Rows[0].LabelName != "PAL1" {
 		t.Fatalf("keyword module did not round-trip: %#v", out.Keyword)
 	}
+	if out.KeywordSource == nil || out.KeywordSource.NCBI == nil || out.KeywordSource.NCBI.RecordType != "protein" {
+		t.Fatalf("keyword source module did not round-trip: %#v", out.KeywordSource)
+	}
 	if out.KeywordReview == nil || !out.KeywordReview.SelectionState.Valid || out.KeywordReview.SelectionState.SelectedRow != 3 {
 		t.Fatalf("keyword review state did not round-trip: %#v", out.KeywordReview)
 	}
@@ -96,6 +115,7 @@ func TestWriteReadKeywordSnapshotRoundTrip(t *testing.T) {
 	defer reader.Close()
 	seenManifest := false
 	seenModule := false
+	seenSourceModule := false
 	for _, file := range reader.File {
 		if file.Name == "manifest.xml" {
 			seenManifest = true
@@ -103,9 +123,12 @@ func TestWriteReadKeywordSnapshotRoundTrip(t *testing.T) {
 		if file.Name == "modules/keyword-result-v2.xml" {
 			seenModule = true
 		}
+		if file.Name == "modules/keyword-source-state-v3.xml" {
+			seenSourceModule = true
+		}
 	}
-	if !seenManifest || !seenModule {
-		t.Fatalf("missing XML archive entries: manifest=%t keyword=%t", seenManifest, seenModule)
+	if !seenManifest || !seenModule || !seenSourceModule {
+		t.Fatalf("missing XML archive entries: manifest=%t keyword=%t keywordSource=%t", seenManifest, seenModule, seenSourceModule)
 	}
 }
 

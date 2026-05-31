@@ -8,6 +8,7 @@ import (
 
 	"github.com/KiriKirby/phytozome-go/internal/lemna"
 	"github.com/KiriKirby/phytozome-go/internal/model"
+	"github.com/KiriKirby/phytozome-go/internal/ncbi"
 	phygoboost "github.com/KiriKirby/phytozome-go/internal/phygoboost"
 	"github.com/KiriKirby/phytozome-go/internal/phytozome"
 	"github.com/KiriKirby/phytozome-go/internal/source"
@@ -25,6 +26,8 @@ func sourceDatabaseName(src source.DataSource) string {
 		return "lemna"
 	case "tair":
 		return "tair"
+	case "ncbi":
+		return "ncbi"
 	default:
 		return ""
 	}
@@ -38,6 +41,8 @@ func sourceDomain(database string) string {
 		return "www.lemna.org"
 	case "tair":
 		return "www.arabidopsis.org"
+	case "ncbi":
+		return "eutils.ncbi.nlm.nih.gov"
 	default:
 		return ""
 	}
@@ -203,6 +208,8 @@ func fetchUniProtAccessionsForDatabaseManaged(ctx context.Context, database stri
 			src = phytozomeHelperSourceManaged()
 		} else if strings.EqualFold(strings.TrimSpace(database), "tair") {
 			src = tair.NewClient(phygoboost.HTTPClient())
+		} else if strings.EqualFold(strings.TrimSpace(database), "ncbi") {
+			src = ncbi.NewClient(phygoboost.HTTPClient())
 		}
 	default:
 		return nil, false, nil

@@ -912,17 +912,8 @@ func FilterSpeciesCandidates(candidates []model.SpeciesCandidate, keyword string
 }
 
 func (c *Client) SubmitBlast(ctx context.Context, req model.BlastRequest) (model.BlastJob, error) {
-	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(req.Program)), "local:") {
-		return phygoboost.RunTaskSpecValue(ctx, phygoboost.TaskSpec{
-			Level:       phygoboost.ExecManaged,
-			Description: "submit lemna blast",
-		}, func(runCtx context.Context) (model.BlastJob, error) {
-			return c.submitBlast(runCtx, req)
-		})
-	}
 	return phygoboost.RunTaskSpecValue(ctx, phygoboost.TaskSpec{
 		Level:       phygoboost.ExecManaged,
-		Domain:      "www.lemna.org",
 		Description: "submit lemna blast",
 	}, func(runCtx context.Context) (model.BlastJob, error) {
 		return c.submitBlast(runCtx, req)
@@ -930,67 +921,29 @@ func (c *Client) SubmitBlast(ctx context.Context, req model.BlastRequest) (model
 }
 
 func (c *Client) submitBlast(ctx context.Context, req model.BlastRequest) (model.BlastJob, error) {
-	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(req.Program)), "local:") {
-		prog := strings.TrimSpace(req.Program[len("local:"):])
-		req.Program = prog
-		return c.RunLocalBlast(ctx, req)
-	}
-
 	program := normalizeBlastProgramName(req.Program)
 	cap, capErr := c.DetectBlastCapabilities(ctx, req.Species)
 	if capErr != nil {
 		return model.BlastJob{}, capErr
 	}
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(req.Program)), "local:") {
+		req.Program = program
+		return c.RunLocalBlast(ctx, req)
+	}
 
 	switch program {
 	case "blastn", "tblastn":
-		serverAvailable := cap.ServerBlastNAvailable
-		if program == "tblastn" {
-			serverAvailable = cap.ServerTBlastNAvailable
-		}
-		if serverAvailable {
-			job, serr := c.submitBlastToServer(ctx, req)
-			if serr == nil {
-				return job, nil
-			}
-			if cap.HasNucleotideFasta {
-				job, lerr := c.RunLocalBlast(ctx, req)
-				if lerr == nil {
-					job.Message = fmt.Sprintf("%s (server submit failed: %v; ran local BLAST instead)", job.Message, serr)
-					return job, nil
-				}
-				return model.BlastJob{}, fmt.Errorf("server submit failed: %v; local nucleotide BLAST fallback failed: %v", serr, lerr)
-			}
-			return model.BlastJob{}, fmt.Errorf("server submit failed: %v; no local nucleotide FASTA fallback is available for %s", serr, req.Species.DisplayLabel())
-		}
 		if cap.HasNucleotideFasta {
+			req.Program = program
 			return c.RunLocalBlast(ctx, req)
 		}
-		return model.BlastJob{}, fmt.Errorf("%s requires a nucleotide BLAST database, but no server DB id or local nucleotide FASTA was detected for %s", program, req.Species.DisplayLabel())
+		return model.BlastJob{}, fmt.Errorf("%s requires a local nucleotide FASTA, but none was detected for %s", program, req.Species.DisplayLabel())
 	case "blastx", "blastp":
-		serverAvailable := cap.ServerBlastXAvailable
-		if program == "blastp" {
-			serverAvailable = cap.ServerBlastPAvailable
-		}
-		if serverAvailable {
-			job, serr := c.submitBlastToServer(ctx, req)
-			if serr == nil {
-				return job, nil
-			}
-			if cap.HasProteinFasta {
-				job, lerr := c.RunLocalBlast(ctx, req)
-				if lerr == nil {
-					job.Message = fmt.Sprintf("%s (server submit failed: %v; ran local BLAST instead)", job.Message, serr)
-					return job, nil
-				}
-				return model.BlastJob{}, fmt.Errorf("server submit failed: %v; local protein BLAST fallback failed: %v", serr, lerr)
-			}
-			return model.BlastJob{}, fmt.Errorf("server submit failed: %v; no local protein FASTA fallback is available for %s", serr, req.Species.DisplayLabel())
-		}
 		if cap.HasProteinFasta {
+			req.Program = program
 			return c.RunLocalBlast(ctx, req)
 		}
-		return model.BlastJob{}, fmt.Errorf("%s requires a protein BLAST database, but no server protein DB id or local protein FASTA was detected for %s", program, req.Species.DisplayLabel())
+		return model.BlastJob{}, fmt.Errorf("%s requires a local protein FASTA, but none was detected for %s", program, req.Species.DisplayLabel())
 	default:
 		return model.BlastJob{}, fmt.Errorf("unsupported lemna.org BLAST program %q", req.Program)
 	}

@@ -71,6 +71,7 @@ Current primary databases and startup entrypoints:
 
 - `phytozome`
 - `lemna`
+- `ncbi`
 - `tair`
 - `Explore -> Open session`
 - `TAIR database family index`
@@ -97,6 +98,7 @@ Applies to:
 
 - phytozome keyword
 - lemna keyword
+- ncbi keyword
 - tair keyword
 - tair family search result review
 
@@ -114,6 +116,7 @@ Must preserve:
 - report/run timing metadata already captured by the workflow
 - sequence cache and any fetched sequence payloads already resolved for keyword rows
 - any release-backed metadata already materialized into rows
+- NCBI source-engine metadata already known for keyword rows, including Entrez database, record type, engine schema, accessions, UIDs, FASTA headers, clean protein sequences, gene locus values, and alias candidate source fields
 - any raw downloaded metadata or cache payloads already needed for exact continuity
 
 Must not rebuild on open:

@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -27,6 +28,7 @@ import (
 	"github.com/KiriKirby/phytozome-go/internal/labelname"
 	"github.com/KiriKirby/phytozome-go/internal/lemna"
 	"github.com/KiriKirby/phytozome-go/internal/model"
+	"github.com/KiriKirby/phytozome-go/internal/phylo"
 	"github.com/KiriKirby/phytozome-go/internal/prompt"
 	"github.com/KiriKirby/phytozome-go/internal/report"
 	"github.com/KiriKirby/phytozome-go/internal/sessionsnapshot"
@@ -1010,6 +1012,35 @@ func TestParsePhgoFastaHeaderKeepsBackslashDelimitedGroups(t *testing.T) {
 	}
 	if !parsed.HasRowPart || parsed.RowNumber != 7 {
 		t.Fatalf("table group parsed incorrectly: %#v", parsed)
+	}
+}
+
+func TestParsePhgoFastaHeaderReadsCanvasDisplayMetadata(t *testing.T) {
+	parsed, ok := parsePhgoFastaHeader("phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\-2/My canvas\\Display PAL")
+	if !ok {
+		t.Fatal("expected canvas phgo header to parse")
+	}
+	if !parsed.IsCanvasHeader || !parsed.CanvasHasRawRow || parsed.CanvasRawRowNumber != -2 {
+		t.Fatalf("canvas row metadata parsed incorrectly: %#v", parsed)
+	}
+	if parsed.CanvasItemTitle != "My canvas" || parsed.CanvasDisplayName != "Display PAL" {
+		t.Fatalf("canvas title/display parsed incorrectly: %#v", parsed)
+	}
+	if parsed.BlastSourceLabelName != "PAL1" || parsed.BlastSourceGeneID != "AT2G37040" {
+		t.Fatalf("source group parsed incorrectly: %#v", parsed)
+	}
+}
+
+func TestParsePhgoFastaHeaderTreatsTildeAsEmptyPlaceholder(t *testing.T) {
+	parsed, ok := parsePhgoFastaHeader("phgo://~/~/AT1G01010\\~/~\\-1/~\\~")
+	if !ok {
+		t.Fatal("expected placeholder phgo header to parse")
+	}
+	if parsed.Species != "" || parsed.LabelName != "" || parsed.BlastSourceLabelName != "" || parsed.BlastSourceGeneID != "" || parsed.CanvasItemTitle != "" || parsed.CanvasDisplayName != "" {
+		t.Fatalf("tilde placeholders should parse as empty fields: %#v", parsed)
+	}
+	if parsed.GeneID != "AT1G01010" || !parsed.CanvasHasRawRow || parsed.CanvasRawRowNumber != -1 {
+		t.Fatalf("non-placeholder fields parsed incorrectly: %#v", parsed)
 	}
 }
 
@@ -2248,6 +2279,31 @@ func TestSearchKeywordResultsWithProgressReturnsRecoverableError(t *testing.T) {
 	}
 	if len(results) != 1 || results[0].err == nil {
 		t.Fatalf("expected partial results to preserve failure: %#v", results)
+	}
+}
+
+func TestSearchKeywordResultsWithProgressReturnsRecoverableErrorForEmptyRows(t *testing.T) {
+	w := &BlastWizard{source: keywordMapSource{
+		rowsByKeyword: map[string][]model.KeywordResultRow{"missing": nil},
+	}}
+
+	results, err := w.searchKeywordResultsWithProgress(context.Background(), model.SpeciesCandidate{}, []string{"missing"}, make([]keywordSearchResult, 1), 0, false, nil)
+	if err == nil {
+		t.Fatal("expected recoverable no-results error")
+	}
+	var recoverErr *keywordSearchRecoveryError
+	if !errors.As(err, &recoverErr) {
+		t.Fatalf("expected keywordSearchRecoveryError, got %T", err)
+	}
+	if recoverErr.Index != 0 || recoverErr.Keyword != "missing" {
+		t.Fatalf("unexpected recoverable error payload: %#v", recoverErr)
+	}
+	var noRows keywordNoRowsError
+	if !errors.As(err, &noRows) {
+		t.Fatalf("expected keywordNoRowsError, got %T: %v", err, err)
+	}
+	if len(results) != 1 || results[0].err == nil {
+		t.Fatalf("expected partial results to preserve no-results failure: %#v", results)
 	}
 }
 
@@ -3525,6 +3581,230 @@ func TestLoadKeywordDetailFASTAReturnsFetchedSequenceForTAIRLikeRows(t *testing.
 	}
 	if !strings.Contains(fasta, "MTAIRSEQ") {
 		t.Fatalf("detail FASTA sequence mismatch: %q", fasta)
+	}
+}
+
+func TestLoadKeywordDetailFASTAUsesInlineNCBISequence(t *testing.T) {
+	fetchCount := map[string]int{}
+	w := &BlastWizard{
+		source: fakeSource{
+			name:       "ncbi",
+			fetchCount: fetchCount,
+			sequenceErrors: map[string]error{
+				"XP_015650724.1": fmt.Errorf("network should not be used"),
+			},
+		},
+		proteinSequenceCache: make(map[string]model.ProteinSequenceData),
+		proteinSequenceMiss:  make(map[string]error),
+	}
+	row := model.KeywordResultRow{
+		SourceDatabase: "ncbi",
+		SequenceID:     "XP_015650724.1",
+		ProteinID:      "XP_015650724.1",
+		LabelName:      "Os4CL1",
+		ExtraColumns: map[string]string{
+			"ncbi_fasta_header":     ">XP_015650724.1 probable 4-coumarate--CoA ligase 1",
+			"ncbi_protein_sequence": "MNCBISEQ",
+		},
+	}
+	fasta, err := w.loadKeywordDetailFASTA(row)
+	if err != nil {
+		t.Fatalf("loadKeywordDetailFASTA returned error: %v", err)
+	}
+	if !strings.Contains(fasta, ">XP_015650724.1 probable 4-coumarate--CoA ligase 1") || !strings.Contains(fasta, "MNCBISEQ") {
+		t.Fatalf("detail FASTA did not use inline NCBI payload: %q", fasta)
+	}
+	if fetchCount["XP_015650724.1"] != 0 {
+		t.Fatalf("inline NCBI FASTA should not fetch from network, fetch count = %d", fetchCount["XP_015650724.1"])
+	}
+}
+
+func TestPrefetchKeywordSequencesSeedsInlineNCBISequence(t *testing.T) {
+	fetchCount := map[string]int{}
+	w := &BlastWizard{
+		source: fakeSource{
+			name:       "ncbi",
+			fetchCount: fetchCount,
+			sequenceErrors: map[string]error{
+				"XP_015650724.1": fmt.Errorf("network should not be used"),
+			},
+		},
+		proteinSequenceCache: make(map[string]model.ProteinSequenceData),
+		proteinSequenceMiss:  make(map[string]error),
+	}
+	selected := model.SpeciesCandidate{JBrowseName: "ncbi_protein", GenomeLabel: "NCBI Protein"}
+	rows := []model.KeywordResultRow{{
+		SourceDatabase: "ncbi",
+		SequenceID:     "XP_015650724.1",
+		ExtraColumns: map[string]string{
+			"ncbi_fasta": ">XP_015650724.1 probable protein\nMNCBISEQ\n",
+		},
+	}}
+	results := w.prefetchKeywordSequences(context.Background(), selected, rows, nil)
+	got := results["XP_015650724.1"].data.Sequence
+	if got != "MNCBISEQ" {
+		t.Fatalf("prefetched inline sequence = %q, want MNCBISEQ", got)
+	}
+	if fetchCount["XP_015650724.1"] != 0 {
+		t.Fatalf("inline prefetch should not fetch from network, fetch count = %d", fetchCount["XP_015650724.1"])
+	}
+	if cached, ok := w.cachedProteinSequence(w.proteinSequenceCacheKey(0, "XP_015650724.1")); !ok || cached.Sequence != "MNCBISEQ" {
+		t.Fatalf("inline NCBI sequence was not seeded into cache: %#v ok=%v", cached, ok)
+	}
+}
+
+func TestNCBIKeywordSnapshotSourceStateAndSequenceCache(t *testing.T) {
+	w := &BlastWizard{
+		source:               fakeSource{name: "ncbi"},
+		proteinSequenceCache: make(map[string]model.ProteinSequenceData),
+		proteinSequenceMiss:  make(map[string]error),
+	}
+	selected := model.SpeciesCandidate{JBrowseName: "ncbi_protein", GenomeLabel: "NCBI Protein"}
+	groups := []model.KeywordSearchGroup{{
+		SearchTerm: "XP_015650724.1",
+		SearchType: "NCBI protein accession",
+		Rows: []model.KeywordResultRow{{
+			SourceDatabase: "ncbi",
+			SearchTerm:     "XP_015650724.1",
+			SearchType:     "NCBI protein accession",
+			SequenceID:     "XP_015650724.1",
+			ExtraColumns: map[string]string{
+				"ncbi_uid":              "1022887543",
+				"ncbi_accession":        "XP_015650724.1",
+				"ncbi_fasta_header":     ">XP_015650724.1 probable 4-coumarate--CoA ligase 1",
+				"ncbi_protein_sequence": "MNCBISEQ",
+				"ncbi_fasta":            ">XP_015650724.1 probable 4-coumarate--CoA ligase 1\nMNCBISEQ\n",
+			},
+		}},
+	}}
+	state := snapshotKeywordSourceState(w.source, groups)
+	if state == nil || state.NCBI == nil {
+		t.Fatalf("missing NCBI keyword source state: %#v", state)
+	}
+	if state.NCBI.RecordType != "protein" || state.NCBI.EntrezDatabase != "protein" {
+		t.Fatalf("unexpected NCBI snapshot source metadata: %#v", state.NCBI)
+	}
+	if !slices.Contains(state.NCBI.Accessions, "XP_015650724.1") || !slices.Contains(state.NCBI.UIDs, "1022887543") {
+		t.Fatalf("NCBI accessions/uids not preserved: %#v", state.NCBI)
+	}
+	cache, err := w.snapshotKeywordSequenceCache(context.Background(), selected, flattenKeywordSearchGroups(groups))
+	if err != nil {
+		t.Fatalf("snapshotKeywordSequenceCache returned error: %v", err)
+	}
+	if cache == nil || len(cache.Entries) != 1 {
+		t.Fatalf("unexpected sequence cache: %#v", cache)
+	}
+	if cache.Entries[0].Sequence != "MNCBISEQ" || strings.Contains(cache.Entries[0].Sequence, ">") {
+		t.Fatalf("NCBI sequence cache should store clean sequence only: %#v", cache.Entries[0])
+	}
+}
+
+func TestApplyNCBIProteinReplacementChoiceUsesNewRows(t *testing.T) {
+	selected := model.SpeciesCandidate{JBrowseName: "ncbi_protein", GenomeLabel: "NCBI Protein"}
+	src := keywordMapSource{
+		name: "ncbi",
+		rowsByKeyword: map[string][]model.KeywordResultRow{
+			"NP_001409439": {{
+				SourceDatabase: "ncbi",
+				SearchTerm:     "NP_001409439",
+				ProteinID:      "NP_001409439.1",
+				SequenceID:     "NP_001409439.1",
+				ExtraColumns: map[string]string{
+					"ncbi_accession": "NP_001409439.1",
+				},
+			}},
+		},
+	}
+	w := &BlastWizard{source: src, ncbiReplacementChoice: "new"}
+	groups := []model.KeywordSearchGroup{{
+		SearchTerm: "XP_015650724.1",
+		Rows: []model.KeywordResultRow{{
+			SourceDatabase: "ncbi",
+			ProteinID:      "XP_015650724.1",
+			SequenceID:     "XP_015650724.1",
+			ExtraColumns: map[string]string{
+				"ncbi_accession":   "XP_015650724.1",
+				"ncbi_replaced_by": "NP_001409439",
+			},
+		}},
+	}}
+
+	out, err := w.applyNCBIProteinReplacementChoices(context.Background(), selected, groups)
+	if err != nil {
+		t.Fatalf("applyNCBIProteinReplacementChoices returned error: %v", err)
+	}
+	if got := out[0].Rows[0].ProteinID; got != "NP_001409439.1" {
+		t.Fatalf("replacement ProteinID = %q, want NP_001409439.1", got)
+	}
+	if got := out[0].Rows[0].ExtraColumns["ncbi_replacement_decision"]; got != "new" {
+		t.Fatalf("replacement decision = %q, want new", got)
+	}
+	if got := out[0].Rows[0].SearchType; !strings.Contains(got, "accepted NCBI update") {
+		t.Fatalf("replacement SearchType = %q, want accepted update marker", got)
+	}
+	if got := out[0].Rows[0].ExtraColumns["ncbi_requested_accession"]; got != "XP_015650724.1" {
+		t.Fatalf("requested accession = %q, want XP_015650724.1", got)
+	}
+	if got := out[0].Rows[0].SearchTerm; got != "XP_015650724.1" {
+		t.Fatalf("replacement SearchTerm = %q, want original keyword XP_015650724.1", got)
+	}
+}
+
+func TestApplyNCBIProteinReplacementChoiceMarksKeptOldSearchType(t *testing.T) {
+	w := &BlastWizard{source: keywordMapSource{name: "ncbi"}, ncbiReplacementChoice: "old"}
+	groups := []model.KeywordSearchGroup{{
+		SearchTerm: "XP_015650724.1",
+		Rows: []model.KeywordResultRow{{
+			SourceDatabase: "ncbi",
+			SearchType:     "NCBI protein accession",
+			ProteinID:      "XP_015650724.1",
+			SequenceID:     "XP_015650724.1",
+			ExtraColumns: map[string]string{
+				"ncbi_accession":   "XP_015650724.1",
+				"ncbi_replaced_by": "NP_001409439",
+			},
+		}},
+	}}
+
+	out, err := w.applyNCBIProteinReplacementChoices(context.Background(), model.SpeciesCandidate{}, groups)
+	if err != nil {
+		t.Fatalf("applyNCBIProteinReplacementChoices returned error: %v", err)
+	}
+	if got := out[0].Rows[0].SearchType; !strings.Contains(got, "kept old; NCBI update available") {
+		t.Fatalf("kept-old SearchType = %q, want update marker", got)
+	}
+	if out[0].SearchType != out[0].Rows[0].SearchType {
+		t.Fatalf("group SearchType should follow row update marker: group=%q row=%q", out[0].SearchType, out[0].Rows[0].SearchType)
+	}
+}
+
+func TestFetchProteinSequenceCachedDoesNotMemoizeTransientErrors(t *testing.T) {
+	sequenceErrors := map[string]error{"XP_1": fmt.Errorf("fetch NCBI efetch.fcgi: status 429 body rate limit")}
+	fetchCount := map[string]int{}
+	source := fakeSource{
+		name:           "ncbi",
+		sequences:      map[string]string{"XP_1": "MPEPTIDE"},
+		sequenceErrors: sequenceErrors,
+		fetchCount:     fetchCount,
+	}
+	w := &BlastWizard{
+		source:               source,
+		proteinSequenceCache: make(map[string]model.ProteinSequenceData),
+		proteinSequenceMiss:  make(map[string]error),
+	}
+	if _, err := w.fetchProteinSequenceCached(context.Background(), 0, "XP_1"); err == nil {
+		t.Fatal("expected first transient fetch to fail")
+	}
+	delete(sequenceErrors, "XP_1")
+	data, err := w.fetchProteinSequenceCached(context.Background(), 0, "XP_1")
+	if err != nil {
+		t.Fatalf("retry should refetch after transient error, got %v", err)
+	}
+	if data.Sequence != "MPEPTIDE" {
+		t.Fatalf("retried sequence = %q, want MPEPTIDE", data.Sequence)
+	}
+	if fetchCount["XP_1"] != 2 {
+		t.Fatalf("fetch count = %d, want 2 real attempts", fetchCount["XP_1"])
 	}
 }
 
@@ -4825,7 +5105,7 @@ func TestParseBlastLoadCommandAcceptsFastaExtensions(t *testing.T) {
 	}
 }
 
-func TestAvailableBlastProgramsIncludeServerAndLocalCapabilities(t *testing.T) {
+func TestAvailableBlastProgramsRequireLocalCapabilities(t *testing.T) {
 	serverOnly := lemna.BlastCapability{
 		HasServerNucleotideDB:  true,
 		BlastNDBID:             12,
@@ -4837,14 +5117,8 @@ func TestAvailableBlastProgramsIncludeServerAndLocalCapabilities(t *testing.T) {
 		ServerBlastPAvailable:  true,
 	}
 	got := availableBlastProgramsFromCapability(serverOnly)
-	want := []string{"blastn", "blastx", "tblastn", "blastp"}
-	if len(got) != len(want) {
-		t.Fatalf("unexpected server-only program count: got %#v want %#v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("unexpected server-only program at %d: got %q want %q", i, got[i], want[i])
-		}
+	if len(got) != 0 {
+		t.Fatalf("server-only capability should not expose local programs: got %#v", got)
 	}
 
 	localOnly := lemna.BlastCapability{
@@ -4852,6 +5126,7 @@ func TestAvailableBlastProgramsIncludeServerAndLocalCapabilities(t *testing.T) {
 		HasProteinFasta:    true,
 	}
 	got = availableBlastProgramsFromCapability(localOnly)
+	want := []string{"blastn", "blastx", "tblastn", "blastp"}
 	if len(got) != len(want) {
 		t.Fatalf("unexpected program count: got %#v want %#v", got, want)
 	}
@@ -4869,7 +5144,7 @@ func TestAvailableBlastProgramsIncludeServerAndLocalCapabilities(t *testing.T) {
 		HasProteinFasta:        true,
 	}
 	got = availableBlastProgramsFromCapability(mixed)
-	want = []string{"blastn", "blastx", "tblastn", "blastp"}
+	want = []string{"blastx", "blastp"}
 	if len(got) != len(want) {
 		t.Fatalf("unexpected mixed program count: got %#v want %#v", got, want)
 	}
@@ -4880,53 +5155,38 @@ func TestAvailableBlastProgramsIncludeServerAndLocalCapabilities(t *testing.T) {
 	}
 }
 
-func TestChooseLemnaBlastExecutionUsesProgramSpecificServerFlags(t *testing.T) {
+func TestChooseLemnaBlastExecutionRequiresLocalData(t *testing.T) {
 	w := &BlastWizard{}
 	selected := model.SpeciesCandidate{GenomeLabel: "Spirodela polyrhiza 9509"}
 	tests := []struct {
-		name       string
-		program    string
-		serverCap  lemna.BlastCapability
-		localCap   lemna.BlastCapability
-		wantBoth   string
-		wantServer string
-		wantLocal  string
+		name      string
+		program   string
+		serverCap lemna.BlastCapability
+		localCap  lemna.BlastCapability
 	}{
 		{
-			name:       "blastn",
-			program:    "blastn",
-			serverCap:  lemna.BlastCapability{ServerBlastNAvailable: true},
-			localCap:   lemna.BlastCapability{HasNucleotideFasta: true},
-			wantBoth:   "server",
-			wantServer: "server",
-			wantLocal:  "local",
+			name:      "blastn",
+			program:   "blastn",
+			serverCap: lemna.BlastCapability{ServerBlastNAvailable: true},
+			localCap:  lemna.BlastCapability{HasNucleotideFasta: true},
 		},
 		{
-			name:       "blastx",
-			program:    "blastx",
-			serverCap:  lemna.BlastCapability{ServerBlastXAvailable: true},
-			localCap:   lemna.BlastCapability{HasProteinFasta: true},
-			wantBoth:   "server",
-			wantServer: "server",
-			wantLocal:  "local",
+			name:      "blastx",
+			program:   "blastx",
+			serverCap: lemna.BlastCapability{ServerBlastXAvailable: true},
+			localCap:  lemna.BlastCapability{HasProteinFasta: true},
 		},
 		{
-			name:       "tblastn",
-			program:    "tblastn",
-			serverCap:  lemna.BlastCapability{ServerTBlastNAvailable: true},
-			localCap:   lemna.BlastCapability{HasNucleotideFasta: true},
-			wantBoth:   "server",
-			wantServer: "server",
-			wantLocal:  "local",
+			name:      "tblastn",
+			program:   "tblastn",
+			serverCap: lemna.BlastCapability{ServerTBlastNAvailable: true},
+			localCap:  lemna.BlastCapability{HasNucleotideFasta: true},
 		},
 		{
-			name:       "blastp",
-			program:    "blastp",
-			serverCap:  lemna.BlastCapability{ServerBlastPAvailable: true},
-			localCap:   lemna.BlastCapability{HasProteinFasta: true},
-			wantBoth:   "server",
-			wantServer: "server",
-			wantLocal:  "local",
+			name:      "blastp",
+			program:   "blastp",
+			serverCap: lemna.BlastCapability{ServerBlastPAvailable: true},
+			localCap:  lemna.BlastCapability{HasProteinFasta: true},
 		},
 	}
 	merge := func(left, right lemna.BlastCapability) lemna.BlastCapability {
@@ -4940,14 +5200,14 @@ func TestChooseLemnaBlastExecutionUsesProgramSpecificServerFlags(t *testing.T) {
 		}
 	}
 	for _, tt := range tests {
-		if got, err := w.chooseLemnaBlastExecution(merge(tt.serverCap, tt.localCap), selected, tt.program); err != nil || got != tt.wantBoth {
-			t.Fatalf("%s both = %q/%v, want %q/nil", tt.name, got, err, tt.wantBoth)
+		if got, err := w.chooseLemnaBlastExecution(merge(tt.serverCap, tt.localCap), selected, tt.program); err != nil || got != "local" {
+			t.Fatalf("%s both = %q/%v, want local/nil", tt.name, got, err)
 		}
-		if got, err := w.chooseLemnaBlastExecution(tt.serverCap, selected, tt.program); err != nil || got != tt.wantServer {
-			t.Fatalf("%s server-only = %q/%v, want %q/nil", tt.name, got, err, tt.wantServer)
+		if got, err := w.chooseLemnaBlastExecution(tt.serverCap, selected, tt.program); err == nil || got != "" {
+			t.Fatalf("%s server-only = %q/%v, want empty/error", tt.name, got, err)
 		}
-		if got, err := w.chooseLemnaBlastExecution(tt.localCap, selected, tt.program); err != nil || got != tt.wantLocal {
-			t.Fatalf("%s local-only = %q/%v, want %q/nil", tt.name, got, err, tt.wantLocal)
+		if got, err := w.chooseLemnaBlastExecution(tt.localCap, selected, tt.program); err != nil || got != "local" {
+			t.Fatalf("%s local-only = %q/%v, want local/nil", tt.name, got, err)
 		}
 		if got, err := w.chooseLemnaBlastExecution(lemna.BlastCapability{}, selected, tt.program); err == nil || got != "" {
 			t.Fatalf("%s unavailable = %q/%v, want empty/error", tt.name, got, err)
@@ -5496,6 +5756,104 @@ func TestCanvasRowsFromFastaInputKeepsPhgoHeadAndSequence(t *testing.T) {
 	}
 	if source.OrganismShort != "Sp7498" || source.LabelName != "C4H" || source.GeneID != "Sp7498_C4H_001" || source.BlastSourceLabelName != "PAL1" || source.BlastSourceGeneID != "AT2G37040" || source.PhgoRowNumber != 7 {
 		t.Fatalf("phgo FASTA metadata not extracted: %#v", source)
+	}
+}
+
+func TestCanvasRowsFromFastaInputLocksCanvasPhgoDisplayName(t *testing.T) {
+	w := NewBlastWizard(io.Discard)
+	rows, err := w.canvasRowsFromFastaInput(">phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\-2/My canvas\\Display PAL\nMPEPTIDE\n", false)
+	if err != nil {
+		t.Fatalf("canvasRowsFromFastaInput returned error: %v", err)
+	}
+	if len(rows) != 1 || rows[0].FASTA == nil {
+		t.Fatalf("canvas rows = %#v", rows)
+	}
+	if rows[0].DisplayName != "Display PAL" || !rows[0].DisplayNameLocked {
+		t.Fatalf("canvas phgo display name was not locked: %#v", rows[0])
+	}
+	if rows[0].FASTA.PhgoCanvasRawRow != -2 || !rows[0].FASTA.PhgoCanvasHasRawRow || rows[0].FASTA.PhgoCanvasTitle != "My canvas" {
+		t.Fatalf("canvas phgo metadata not extracted: %#v", rows[0].FASTA)
+	}
+}
+
+func TestApplyCanvasDisplayNameSourceUsesCurrentColumnForUnlockedRows(t *testing.T) {
+	item := model.CanvasItem{
+		Title: "Canvas 7",
+		Rows: []model.CanvasRow{
+			{
+				Kind: model.CanvasKindFasta,
+				FASTA: &model.QuerySequenceSource{
+					Annotation:           ">seq1",
+					Sequence:             "MPEPTIDE",
+					LabelName:            "PAL1",
+					GeneID:               "AT2G37040",
+					BlastSourceLabelName: "SRC1",
+				},
+			},
+			{
+				Kind:              model.CanvasKindFasta,
+				DisplayName:       "Locked display",
+				DisplayNameLocked: true,
+				FASTA: &model.QuerySequenceSource{
+					Annotation: ">seq2",
+					Sequence:   "MPEPTIDE",
+					LabelName:  "PAL2",
+					GeneID:     "AT3G53260",
+				},
+			},
+		},
+	}
+
+	applyCanvasDisplayNameSource(&item, "gene_id")
+	if got := item.Rows[0].DisplayName; got != "AT2G37040" {
+		t.Fatalf("unlocked display name = %q, want gene_id value", got)
+	}
+	if got := item.Rows[1].DisplayName; got != "Locked display" {
+		t.Fatalf("locked display name = %q, want preserved lock", got)
+	}
+
+	applyCanvasDisplayNameSource(&item, phylo.PHgoDisplayNameSource)
+	if got := item.Rows[0].DisplayName; got != "~-AT2G37040 (PAL1)" {
+		t.Fatalf("PHgo display name = %q", got)
+	}
+	if got := item.Rows[1].DisplayName; got != "Locked display" {
+		t.Fatalf("locked display name after PHgo apply = %q, want preserved lock", got)
+	}
+}
+
+func TestApplyCanvasDisplayNameSourceToItemsUpdatesEveryImportedCanvas(t *testing.T) {
+	items := []model.CanvasItem{
+		{
+			Title: "A",
+			Rows: []model.CanvasRow{{
+				Kind: model.CanvasKindFasta,
+				FASTA: &model.QuerySequenceSource{
+					Annotation: ">alpha",
+					Sequence:   "MPEPTIDE",
+					LabelName:  "PALA",
+				},
+			}},
+		},
+		{
+			Title: "B",
+			Rows: []model.CanvasRow{{
+				Kind: model.CanvasKindFasta,
+				FASTA: &model.QuerySequenceSource{
+					Annotation: ">beta",
+					Sequence:   "MPEPTIDE",
+					LabelName:  "PALB",
+				},
+			}},
+		},
+	}
+
+	applyCanvasDisplayNameSourceToItems(items, "label_name")
+
+	if got := items[0].Rows[0].DisplayName; got != "PALA" {
+		t.Fatalf("first canvas display name = %q, want PALA", got)
+	}
+	if got := items[1].Rows[0].DisplayName; got != "PALB" {
+		t.Fatalf("second canvas display name = %q, want PALB", got)
 	}
 }
 
@@ -6091,7 +6449,7 @@ func TestSelectedCanvasRowsInVisibleOrderUsesCanvasSortState(t *testing.T) {
 	}}, tui.BlastRunSelectionState{
 		Valid: true,
 		Sort:  tui.TableSort{Column: 1, Direction: tui.SortAscending},
-	})
+	}, false)
 	if len(rows) != 2 {
 		t.Fatalf("selected visible rows = %d, want 2", len(rows))
 	}
@@ -6100,7 +6458,7 @@ func TestSelectedCanvasRowsInVisibleOrderUsesCanvasSortState(t *testing.T) {
 	}
 }
 
-func TestApplyCanvasHeaderModePhgoFallsBackToOriginalHeaderWhenUnavailable(t *testing.T) {
+func TestApplyCanvasHeaderModePhgoAlwaysBuildsCanvasHeader(t *testing.T) {
 	selected := []canvasSelectedRow{{
 		ItemTitle: "1",
 		Row: model.CanvasRow{
@@ -6118,20 +6476,26 @@ func TestApplyCanvasHeaderModePhgoFallsBackToOriginalHeaderWhenUnavailable(t *te
 		Sequence:       "MPEPTIDE",
 	}}
 	got := applyCanvasHeaderMode(records, selected, model.FastaHeaderModePhgo)
-	if len(got) != 1 || got[0].Header != ">plain original header" {
-		t.Fatalf("phgo fallback header = %#v, want original header", got)
+	want := ">phgo://~/~/plain\\~/~\\4/1\\plain"
+	if len(got) != 1 || got[0].Header != want {
+		t.Fatalf("phgo canvas header = %#v, want %q", got, want)
 	}
 }
 
-func TestApplyCanvasHeaderModePhgoUsesStoredPhgoHeaderWhenPresent(t *testing.T) {
+func TestApplyCanvasHeaderModePhgoConvertsStoredPhgoHeaderToCanvasHeader(t *testing.T) {
 	selected := []canvasSelectedRow{{
 		ItemTitle: "1",
 		Row: model.CanvasRow{
 			RowNumber: 7,
 			Kind:      model.CanvasKindFasta,
 			FASTA: &model.QuerySequenceSource{
-				Annotation: "phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\7",
-				Sequence:   "MPEPTIDE",
+				Annotation:           "phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\7",
+				Sequence:             "MPEPTIDE",
+				OrganismShort:        "Sp7498",
+				LabelName:            "C4H",
+				GeneID:               "Sp7498_C4H_001",
+				BlastSourceLabelName: "PAL1",
+				BlastSourceGeneID:    "AT2G37040",
 			},
 		},
 	}}
@@ -6141,8 +6505,58 @@ func TestApplyCanvasHeaderModePhgoUsesStoredPhgoHeaderWhenPresent(t *testing.T) 
 		Sequence:       "MPEPTIDE",
 	}}
 	got := applyCanvasHeaderMode(records, selected, model.FastaHeaderModePhgo)
-	if len(got) != 1 || got[0].Header != ">phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\7" {
+	if len(got) != 1 || got[0].Header != ">phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\7/1\\C4H" {
 		t.Fatalf("phgo canvas header = %#v", got)
+	}
+}
+
+func TestApplyCanvasHeaderModeDisplayNameUsesDisplayColumn(t *testing.T) {
+	selected := []canvasSelectedRow{{
+		ItemTitle: "1",
+		Row: model.CanvasRow{
+			RowNumber:   5,
+			Kind:        model.CanvasKindFasta,
+			DisplayName: "Tree PAL",
+			FASTA: &model.QuerySequenceSource{
+				Annotation: "row1",
+				Sequence:   "MPEPTIDE",
+			},
+		},
+	}}
+	records := []model.ProteinSequenceRecord{{
+		Header:         ">temporary",
+		OriginalHeader: ">original",
+		Sequence:       "MPEPTIDE",
+	}}
+	got := applyCanvasHeaderMode(records, selected, model.FastaHeaderModeDisplayName)
+	if len(got) != 1 || got[0].Header != ">Tree PAL" {
+		t.Fatalf("display-name canvas header = %#v", got)
+	}
+}
+
+func TestApplyCanvasHeaderModePhgoUsesTildeForEmptyBlastSourceFields(t *testing.T) {
+	selected := []canvasSelectedRow{{
+		ItemTitle: "tree",
+		Row: model.CanvasRow{
+			RowNumber: 1,
+			Kind:      model.CanvasKindBlast,
+			BlastRow: &model.BlastResultRow{
+				Species:    "Sp7498",
+				LabelName:  "C4H",
+				Protein:    "Sp7498_C4H_001",
+				SequenceID: "PAC:123456",
+			},
+		},
+	}}
+	records := []model.ProteinSequenceRecord{{
+		Header:         ">temporary",
+		OriginalHeader: ">orig",
+		Sequence:       "MPEPTIDE",
+	}}
+	got := applyCanvasHeaderMode(records, selected, model.FastaHeaderModePhgo)
+	want := ">phgo://Sp7498/C4H/Sp7498_C4H_001\\~/~\\1/tree\\C4H"
+	if len(got) != 1 || got[0].Header != want {
+		t.Fatalf("empty-source canvas phgo header = %#v, want %q", got, want)
 	}
 }
 
@@ -6166,6 +6580,17 @@ func TestApplyCanvasHeaderModeMinimalUsesAvailableIDs(t *testing.T) {
 	got := applyCanvasHeaderMode(records, selected, model.FastaHeaderModeMinimal)
 	if len(got) != 1 || got[0].Header != ">AT2G37040.1" {
 		t.Fatalf("minimal canvas header = %#v", got)
+	}
+}
+
+func TestCanvasConvertedSequencesFromAlignedFASTARemovesGaps(t *testing.T) {
+	got, err := canvasConvertedSequencesFromAlignedFASTA(">PHGOT000001\nM-PEP\nTIDE\n>PHGOT000002\nATG-C\n")
+	if err != nil {
+		t.Fatalf("canvasConvertedSequencesFromAlignedFASTA returned error: %v", err)
+	}
+	want := []string{"MPEPTIDE", "ATGC"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("converted sequences = %#v, want %#v", got, want)
 	}
 }
 
@@ -6197,8 +6622,13 @@ func TestExportCanvasSelectionsWritesMixedCanvasRowsAsOnePhgoFasta(t *testing.T)
 						RowNumber: 2,
 						Kind:      model.CanvasKindFasta,
 						FASTA: &model.QuerySequenceSource{
-							Annotation: "phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\2",
-							Sequence:   "MPEPTIDE",
+							Annotation:           "phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\2",
+							Sequence:             "MPEPTIDE",
+							OrganismShort:        "Sp7498",
+							LabelName:            "C4H",
+							GeneID:               "Sp7498_C4H_001",
+							BlastSourceLabelName: "PAL1",
+							BlastSourceGeneID:    "AT2G37040",
 						},
 					},
 					{
@@ -6257,13 +6687,13 @@ func TestExportCanvasSelectionsWritesMixedCanvasRowsAsOnePhgoFasta(t *testing.T)
 	}
 	got := strings.ReplaceAll(strings.TrimSpace(string(data)), "\r\n", "\n")
 	want := strings.Join([]string{
-		">phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\2",
+		">phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\2/2\\C4H",
 		"MPEPTIDE",
 		"",
-		">phgo://Athaliana_TAIR10/CESA4/AT2G37040.1\\3",
+		">phgo://Athaliana_TAIR10/CESA4/AT2G37040.1\\~/~\\3/2\\CESA4",
 		"MKWAA",
 		"",
-		">phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\7",
+		">phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\7/3\\C4H",
 		"GGGTT",
 	}, "\n")
 	if got != want {
@@ -6344,6 +6774,61 @@ func TestExportCanvasSelectionsOriginalHeaderFallsBackPerRow(t *testing.T) {
 	}, "\n")
 	if got != want {
 		t.Fatalf("original-header canvas FASTA = %q\nwant %q", got, want)
+	}
+}
+
+func TestExportCanvasSelectionsAllRowsIncludesUncheckedRows(t *testing.T) {
+	outputDir := t.TempDir()
+	w := NewBlastWizard(io.Discard)
+	state := canvasLaunchState{
+		Items: []model.CanvasItem{{
+			Title:    "1",
+			Selected: []bool{true, false},
+			Rows: []model.CanvasRow{
+				{
+					RowNumber: 1,
+					Kind:      model.CanvasKindFasta,
+					FASTA: &model.QuerySequenceSource{
+						Annotation: "row1",
+						Sequence:   "AAAA",
+					},
+				},
+				{
+					RowNumber:   2,
+					Kind:        model.CanvasKindFasta,
+					DisplayName: "Unchecked",
+					FASTA: &model.QuerySequenceSource{
+						Annotation: "row2",
+						Sequence:   "BBBB",
+					},
+				},
+			},
+		}},
+	}
+	err := w.exportCanvasSelections(context.Background(), state, exportSettings{
+		BaseName:        "canvas_all_rows",
+		OutputDir:       outputDir,
+		WriteText:       true,
+		WriteAllRows:    true,
+		FastaHeaderMode: model.FastaHeaderModeDisplayName,
+	})
+	if err != nil {
+		t.Fatalf("exportCanvasSelections returned error: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(outputDir, "canvas_all_rows.fasta"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	got := strings.ReplaceAll(strings.TrimSpace(string(data)), "\r\n", "\n")
+	want := strings.Join([]string{
+		">row1",
+		"AAAA",
+		"",
+		">Unchecked",
+		"BBBB",
+	}, "\n")
+	if got != want {
+		t.Fatalf("all-row canvas FASTA = %q\nwant %q", got, want)
 	}
 }
 

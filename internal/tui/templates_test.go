@@ -92,6 +92,22 @@ func TestCanvasExportSettingsPageCanHideExcelAndRawOptions(t *testing.T) {
 	}
 }
 
+func TestButtonRowMouseDownDoesNotStealModuleFocus(t *testing.T) {
+	row := buttonRow(buttonSpec{Label: ButtonBack, Shortcut: ShortcutBack, Visible: true})
+	row.SetRect(0, 0, 80, 1)
+	handler := row.MouseHandler()
+	focused := false
+	consumed, _ := handler(tview.MouseLeftDown, tcell.NewEventMouse(1, 0, tcell.Button1, tcell.ModNone), func(tview.Primitive) {
+		focused = true
+	})
+	if !consumed {
+		t.Fatal("button row should consume mouse down on a visible button")
+	}
+	if focused {
+		t.Fatal("button row mouse down should not change the active module focus")
+	}
+}
+
 func TestPageInputTextRawSkipsBinaryFileRead(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.pgo")
@@ -210,6 +226,66 @@ func TestButtonRowWrapsOnlyWhenLeftAndPrimaryGroupsOverlap(t *testing.T) {
 
 	if got := row.requiredHeight(48); got <= 1 {
 		t.Fatalf("narrow button row should wrap, got height %d", got)
+	}
+}
+
+func TestButtonRowPrimaryLabelSkipsLeftPrimaryButtons(t *testing.T) {
+	row := buttonRow(
+		buttonSpec{Label: ButtonOpenFile, Shortcut: ShortcutOpenFile, Visible: true, Primary: true, LeftPrimary: true},
+		buttonSpec{Label: ButtonApply, Shortcut: "Ctrl+Enter", Visible: true, Primary: true},
+	)
+
+	row.setPrimaryLabel(ButtonSkip)
+
+	if got := row.buttons[0].Label; got != ButtonOpenFile {
+		t.Fatalf("left primary label = %q, want %q", got, ButtonOpenFile)
+	}
+	if got := row.buttons[1].Label; got != ButtonSkip {
+		t.Fatalf("main primary label = %q, want %q", got, ButtonSkip)
+	}
+}
+
+func TestButtonRowPrimaryButtonPrefersNonLeftPrimary(t *testing.T) {
+	row := buttonRow(
+		buttonSpec{Label: ButtonOpenFile, Shortcut: ShortcutOpenFile, Visible: true, Primary: true, LeftPrimary: true},
+		buttonSpec{Label: ButtonApply, Shortcut: "Ctrl+Enter", Visible: true, Primary: true},
+	)
+
+	button := row.primaryButton()
+	if button == nil {
+		t.Fatal("primaryButton returned nil")
+	}
+	if button.Label != ButtonApply {
+		t.Fatalf("primaryButton label = %q, want %q", button.Label, ButtonApply)
+	}
+}
+
+func TestButtonRowLeftPrimaryStaysLeftOfMainPrimary(t *testing.T) {
+	row := buttonRow(
+		buttonSpec{Label: ButtonBack, Shortcut: ShortcutBack, Visible: true},
+		buttonSpec{Label: ButtonOpenFile, Shortcut: ShortcutOpenFile, Visible: true, Primary: true, LeftPrimary: true},
+		buttonSpec{Label: ButtonApply, Shortcut: "Ctrl+Enter", Visible: true, Primary: true},
+	)
+
+	positions := row.buttonPositions(100)
+	var openPos, applyPos *buttonPosition
+	for i := range positions {
+		pos := positions[i]
+		switch pos.button.Label {
+		case ButtonOpenFile:
+			openPos = &positions[i]
+		case ButtonApply:
+			applyPos = &positions[i]
+		}
+	}
+	if openPos == nil || applyPos == nil {
+		t.Fatalf("missing expected button positions: open=%v apply=%v", openPos, applyPos)
+	}
+	if openPos.row != applyPos.row {
+		t.Fatalf("expected right-side buttons on same row, got open row %d apply row %d", openPos.row, applyPos.row)
+	}
+	if openPos.left >= applyPos.left {
+		t.Fatalf("open button should stay left of apply: open left %d apply left %d", openPos.left, applyPos.left)
 	}
 }
 
@@ -356,12 +432,16 @@ func TestBlastRunSelectionControlModeForTableClickTreatsBlankAreaAsTableMode(t *
 }
 
 func TestTreeFocusShortcutOnlyOverridesCopyWhenTreePanelExpanded(t *testing.T) {
-	event := tcell.NewEventKey(tcell.KeyCtrlY, 0, tcell.ModCtrl)
+	event := tcell.NewEventKey(tcell.KeyCtrlE, 0, tcell.ModCtrl)
 	if !treeFocusShortcutActive(event, true) {
-		t.Fatal("Ctrl+Y should switch focus when the tree panel is expanded")
+		t.Fatal("Ctrl+E should switch focus when the tree panel is expanded")
 	}
 	if treeFocusShortcutActive(event, false) {
-		t.Fatal("Ctrl+Y should remain available for copy when the tree panel is collapsed")
+		t.Fatal("Ctrl+E should not switch focus when the tree panel is collapsed")
+	}
+	copyEvent := tcell.NewEventKey(tcell.KeyCtrlY, 0, tcell.ModCtrl)
+	if treeFocusShortcutActive(copyEvent, true) {
+		t.Fatal("Ctrl+Y should remain reserved for copy even when the tree panel is expanded")
 	}
 }
 
@@ -1145,6 +1225,17 @@ func TestRecoveryModalPageConfigurationIncludesBackAndSkip(t *testing.T) {
 	}
 	if !page.AllowSkip || !page.AllowBack {
 		t.Fatalf("recovery modal flags should remain set: %#v", page)
+	}
+	actionPage := recoveryModalActionPage(page)
+	if actionPage.ConfirmValue != "retry" || actionPage.ConfirmText != ButtonRetry {
+		t.Fatalf("recovery modal primary action = %q/%q, want retry", actionPage.ConfirmText, actionPage.ConfirmValue)
+	}
+	values := map[string]bool{}
+	for _, action := range actionPage.Actions {
+		values[action.Value] = true
+	}
+	if !values["retry"] || !values["skip"] || !values["close"] {
+		t.Fatalf("recovery modal actions missing retry/skip/close: %#v", actionPage.Actions)
 	}
 }
 

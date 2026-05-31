@@ -24,21 +24,24 @@ type columnMetadata struct {
 }
 
 var keywordDisplayColumnIDsByDatabase = map[string][]string{
-	"phytozome": {"search_term", "search_type", "label_name", "labelname_type", "phgo_alias", "gene_identifier", "protein_id", "transcript", "description", "genome"},
-	"lemna":     {"search_term", "label_name", "labelname_type", "phgo_alias", "gene_identifier", "protein_id", "transcript", "description", "genome"},
-	"tair":      {"search_term", "search_type", "label_name", "labelname_type", "phgo_alias", "gene_identifier", "protein_id", "transcript", "description", "genome"},
+	"phytozome": {"search_term", "search_type", "gene_locus", "label_name", "labelname_type", "phgo_alias", "gene_identifier", "protein_id", "transcript", "description", "genome"},
+	"lemna":     {"search_term", "gene_locus", "label_name", "labelname_type", "phgo_alias", "gene_identifier", "protein_id", "transcript", "description", "genome"},
+	"tair":      {"search_term", "search_type", "gene_locus", "label_name", "labelname_type", "phgo_alias", "gene_identifier", "protein_id", "transcript", "description", "genome"},
+	"ncbi":      {"search_term", "search_type", "gene_locus", "label_name", "labelname_type", "phgo_alias", "protein_id", "gene_identifier", "description", "genome"},
 }
 
 var keywordDetailColumnIDsByDatabase = map[string][]string{
-	"phytozome": {"search_term", "search_type", "label_name", "labelname_type", "phgo_alias", "symbols", "synonyms", "protein_id", "transcript", "gene_identifier", "genome", "location", "uniprot", "description", "comments", "auto_define", "gene_report_url", "sequence_header_label", "sequence_id"},
-	"lemna":     {"search_term", "label_name", "labelname_type", "phgo_alias", "alias", "transcript", "description", "genome", "protein_id", "gene_identifier", "location", "uniprot", "comments", "auto_define", "gene_report_url", "sequence_header_label", "sequence_id"},
-	"tair":      {"search_term", "search_type", "label_name", "labelname_type", "phgo_alias", "alias", "symbols", "protein_id", "transcript", "gene_identifier", "genome", "location", "uniprot", "description", "comments", "auto_define", "gene_report_url", "sequence_header_label", "sequence_id"},
+	"phytozome": {"search_term", "search_type", "gene_locus", "label_name", "labelname_type", "phgo_alias", "symbols", "synonyms", "protein_id", "transcript", "gene_identifier", "genome", "location", "uniprot", "description", "comments", "auto_define", "gene_report_url", "sequence_header_label", "sequence_id"},
+	"lemna":     {"search_term", "gene_locus", "label_name", "labelname_type", "phgo_alias", "alias", "transcript", "description", "genome", "protein_id", "gene_identifier", "location", "uniprot", "comments", "auto_define", "gene_report_url", "sequence_header_label", "sequence_id"},
+	"tair":      {"search_term", "search_type", "gene_locus", "label_name", "labelname_type", "phgo_alias", "alias", "symbols", "protein_id", "transcript", "gene_identifier", "genome", "location", "uniprot", "description", "comments", "auto_define", "gene_report_url", "sequence_header_label", "sequence_id"},
+	"ncbi":      {"search_term", "search_type", "gene_locus", "label_name", "labelname_type", "phgo_alias", "alias", "symbols", "synonyms", "protein_id", "gene_identifier", "genome", "location", "description", "comments", "auto_define", "gene_report_url", "sequence_header_label", "sequence_id"},
 }
 
 var keywordExportColumnIDsByDatabase = map[string][]string{
-	"phytozome": {"row", "search_term", "search_type", "label_name", "labelname_type", "phgo_alias", "symbols", "synonyms", "protein_id", "transcript", "gene_identifier", "genome", "location", "uniprot", "description", "comments", "auto_define", "gene_report_url"},
-	"lemna":     {"row", "search_term", "label_name", "labelname_type", "phgo_alias", "alias", "protein_id", "transcript", "gene_identifier", "genome", "location", "uniprot", "description", "comments", "auto_define", "gene_report_url"},
-	"tair":      {"row", "search_term", "search_type", "label_name", "labelname_type", "phgo_alias", "alias", "symbols", "protein_id", "transcript", "gene_identifier", "genome", "location", "uniprot", "description", "comments", "auto_define", "gene_report_url"},
+	"phytozome": {"row", "search_term", "search_type", "gene_locus", "label_name", "labelname_type", "phgo_alias", "symbols", "synonyms", "protein_id", "transcript", "gene_identifier", "genome", "location", "uniprot", "description", "comments", "auto_define", "gene_report_url"},
+	"lemna":     {"row", "search_term", "gene_locus", "label_name", "labelname_type", "phgo_alias", "alias", "protein_id", "transcript", "gene_identifier", "genome", "location", "uniprot", "description", "comments", "auto_define", "gene_report_url"},
+	"tair":      {"row", "search_term", "search_type", "gene_locus", "label_name", "labelname_type", "phgo_alias", "alias", "symbols", "protein_id", "transcript", "gene_identifier", "genome", "location", "uniprot", "description", "comments", "auto_define", "gene_report_url"},
+	"ncbi":      {"row", "search_term", "search_type", "gene_locus", "label_name", "labelname_type", "phgo_alias", "alias", "symbols", "synonyms", "protein_id", "gene_identifier", "genome", "location", "description", "comments", "auto_define", "gene_report_url"},
 }
 
 var keywordReportExtraColumnIDsByDatabase = map[string][]string{
@@ -113,6 +116,28 @@ var keywordReportExtraColumnIDsByDatabase = map[string][]string{
 		"attr_Derives_from",
 		"attr_UniProtKB",
 	},
+	"ncbi": {
+		"ncbi_uid",
+		"ncbi_accession",
+		"ncbi_taxid",
+		"ncbi_source_db",
+		"ncbi_status",
+		"ncbi_created",
+		"ncbi_updated",
+		"ncbi_length",
+		"ncbi_gene_id",
+		"ncbi_gene_name",
+		"ncbi_locus_tag",
+		"ncbi_product",
+		"ncbi_coded_by",
+		"ncbi_gene_description",
+		"ncbi_other_aliases",
+		"ncbi_other_designations",
+		"ncbi_gene_locus_aliases",
+		"ncbi_fasta_header",
+		"ncbi_protein_sequence",
+		"ncbi_fasta",
+	},
 }
 
 var blastDisplayBaseColumnIDsByDatabaseProgram = map[string]map[string][]string{
@@ -186,6 +211,7 @@ var columnMetadataByID = map[string]columnMetadata{
 	"label_name":                       {CompactHeader: "label_name", DetailLabel: "label_name", ExportHeader: "label_name"},
 	"labelname_type":                   {CompactHeader: "labelname_type", DetailLabel: "labelname_type", ExportHeader: "labelname_type"},
 	"phgo_alias":                       {CompactHeader: "phgo_alias", DetailLabel: "phgo_alias", ExportHeader: "phgo_alias"},
+	"gene_locus":                       {CompactHeader: "Gene locus", DetailLabel: "Gene locus", ExportHeader: "Gene locus"},
 	"transcript":                       {CompactHeader: "transcript", DetailLabel: "transcript", ExportHeader: "transcript"},
 	"discripition":                     {CompactHeader: "discripition", DetailLabel: "description", ExportHeader: "description"},
 	"gnome":                            {CompactHeader: "gnome", DetailLabel: "genome", ExportHeader: "genome"},
@@ -830,6 +856,12 @@ func dynamicColumnHelpText(id string) string {
 			"新 keyword 搜索引擎为这一行选择的搜索程序。如果原本选择的程序没有命中，而宽搜索产生了结果，这里会明确记录这个回退。",
 			"新しい keyword 検索エンジンがこの行に選んだ検索プログラムです。最初のプログラムで命中せず wide search が結果を返した場合、その fallback も明示します。",
 		)
+	case id == "gene_locus":
+		return columnHelp(
+			"Gene-locus label associated with this protein row. NCBI protein search derives it from NCBI Gene aliases/designations when available and may use a secondary database match when NCBI lacks a usable locus-style alias.",
+			"与该蛋白结果行关联的 Gene locus。NCBI protein 搜索会优先从 NCBI Gene 的别名或 designation 中提取；如果 NCBI 没有可用的 locus 风格别名，可以由副数据库匹配补全。",
+			"このタンパク質行に対応する Gene locus です。NCBI protein search では NCBI Gene の alias/designation から優先して取得し、NCBI に有用な locus 型 alias がない場合は副データベース照合で補完できます。",
+		)
 	case strings.HasPrefix(id, "attr_"):
 		name := humanizeColumnSuffix(strings.TrimPrefix(id, "attr_"))
 		return columnHelp(
@@ -857,6 +889,13 @@ func dynamicColumnHelpText(id string) string {
 			"lemna release-context field \""+name+"\" captured from the selected release state. It records already-known release metadata used while constructing the keyword rows.",
 			"从所选 release 状态中捕获的 lemna 发布上下文字段 \""+name+"\"。它记录的是构建关键词结果行时已经已知的发布版元数据。",
 			"選択された release 状態から取得した lemna release context フィールド \""+name+"\" です。キーワード行を構築する際に、すでに分かっていた release metadata を記録します。",
+		)
+	case strings.HasPrefix(id, "ncbi_"):
+		name := humanizeColumnSuffix(strings.TrimPrefix(id, "ncbi_"))
+		return columnHelp(
+			"NCBI E-utilities field \""+name+"\" captured while building the protein keyword row. It comes from Protein ESearch/ESummary/EFetch or linked Gene ESummary data.",
+			"构建 protein keyword 行时捕获的 NCBI E-utilities 字段 \""+name+"\"。它来自 Protein ESearch/ESummary/EFetch 或关联的 Gene ESummary 数据。",
+			"protein keyword 行の構築時に取得した NCBI E-utilities フィールド \""+name+"\" です。Protein ESearch/ESummary/EFetch または linked Gene ESummary に由来します。",
 		)
 	default:
 		return ""

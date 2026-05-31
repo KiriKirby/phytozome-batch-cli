@@ -8,6 +8,7 @@
 package appfs
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +17,11 @@ import (
 )
 
 var atomicWriteLocks sync.Map
+
+var (
+	ErrFolderSelectionCancelled = errors.New("folder selection cancelled")
+	ErrFileSelectionCancelled   = errors.New("file selection cancelled")
+)
 
 func ApplicationDir() (string, error) {
 	executablePath, err := os.Executable()
@@ -43,6 +49,61 @@ func OutputDir() (string, error) {
 		return "", fmt.Errorf("ensure output directory: %w", err)
 	}
 	return dir, nil
+}
+
+func SelectFolder(title string, defaultDir string) (string, error) {
+	defaultDir = strings.TrimSpace(defaultDir)
+	if defaultDir == "" {
+		var err error
+		defaultDir, err = OutputDir()
+		if err != nil {
+			return "", err
+		}
+	}
+	if err := os.MkdirAll(defaultDir, 0o755); err != nil {
+		return "", fmt.Errorf("ensure default output directory: %w", err)
+	}
+	if strings.TrimSpace(os.Getenv("PHYTOZOME_GO_DISABLE_FOLDER_PICKER")) != "" {
+		return filepath.Abs(defaultDir)
+	}
+	selected, err := selectFolderSystem(title, defaultDir)
+	if err != nil {
+		if errors.Is(err, ErrFolderSelectionCancelled) {
+			return "", err
+		}
+		return filepath.Abs(defaultDir)
+	}
+	selected = strings.TrimSpace(selected)
+	if selected == "" {
+		return filepath.Abs(defaultDir)
+	}
+	if err := os.MkdirAll(selected, 0o755); err != nil {
+		return "", fmt.Errorf("ensure selected output directory: %w", err)
+	}
+	return filepath.Abs(selected)
+}
+
+func SelectFile(title string, defaultDir string) (string, error) {
+	defaultDir = strings.TrimSpace(defaultDir)
+	if defaultDir == "" {
+		var err error
+		defaultDir, err = ApplicationDir()
+		if err != nil {
+			return "", err
+		}
+	}
+	selected, err := selectFileSystem(title, defaultDir)
+	if err != nil {
+		if errors.Is(err, ErrFileSelectionCancelled) {
+			return "", err
+		}
+		return "", err
+	}
+	selected = strings.TrimSpace(selected)
+	if selected == "" {
+		return "", ErrFileSelectionCancelled
+	}
+	return filepath.Abs(selected)
 }
 
 func CacheDir(parts ...string) (string, error) {

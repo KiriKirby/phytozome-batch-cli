@@ -23,6 +23,7 @@ import (
 	"github.com/KiriKirby/phytozome-go/internal/phylo"
 	"github.com/KiriKirby/phytozome-go/internal/prompt"
 	"github.com/KiriKirby/phytozome-go/internal/sessionsnapshot"
+	"github.com/KiriKirby/phytozome-go/internal/source"
 	"github.com/KiriKirby/phytozome-go/internal/tui"
 )
 
@@ -158,6 +159,7 @@ func (w *BlastWizard) writeKeywordSessionSnapshot(selected model.SpeciesCandidat
 				Selected:        append([]bool(nil), selectedMask...),
 				ReportContext:   report,
 			},
+			KeywordSource: snapshotKeywordSourceState(w.source, groups),
 			KeywordReview: &sessionsnapshot.KeywordReviewStateV1{
 				SelectionState: w.prompt.SnapshotKeywordReviewState(groups),
 			},
@@ -345,6 +347,7 @@ func (w *BlastWizard) hydrateKeywordSnapshot(snapshot sessionsnapshot.Snapshot) 
 	}
 	selected := module.SelectedSpecies
 	groups := cloneKeywordSearchGroups(module.Groups)
+	hydrateKeywordSnapshotSourceState(groups, snapshot.KeywordSource)
 	w.hydrateSnapshotSequenceCache(snapshot.SequenceCache)
 	w.hydrateRuntimeCache(snapshot.RuntimeCache)
 	keywordReviewState := sessionsnapshot.KeywordReviewStateV1{}
@@ -553,10 +556,10 @@ func (w *BlastWizard) hydrateCanvasRowSequenceData(items []model.CanvasItem) []m
 				if row.KeywordRow == nil {
 					continue
 				}
-				if sequence := strings.TrimSpace(extractInlineKeywordSequence(*row.KeywordRow)); sequence != "" {
+				if inline := inlineKeywordProteinSequenceData(*row.KeywordRow); strings.TrimSpace(inline.Sequence) != "" {
 					row.SequenceData = &model.ProteinSequenceData{
-						Sequence:       sequence,
-						OriginalHeader: keywordProteinSequenceHeader(*row.KeywordRow),
+						Sequence:       inline.Sequence,
+						OriginalHeader: firstNonEmpty(strings.TrimSpace(inline.OriginalHeader), keywordProteinSequenceHeader(*row.KeywordRow)),
 					}
 					row.SequenceReady = &canvasSequenceReadyTrue
 					continue
@@ -790,6 +793,8 @@ func snapshotExportSettings(promptSettings prompt.ExportSettings, settings expor
 			WriteReport:           promptSettings.WriteReport,
 			WriteSession:          promptSettings.WriteSession,
 			WriteText:             promptSettings.WriteText,
+			WriteConvertedFasta:   promptSettings.WriteConvertedFasta,
+			WriteAllRows:          promptSettings.WriteAllRows,
 			WriteExcel:            promptSettings.WriteExcel,
 			WriteRawExcel:         promptSettings.WriteRawExcel,
 			FastaHeaderMode:       promptSettings.FastaHeaderMode,
@@ -974,6 +979,8 @@ func (w *BlastWizard) hydrateCommonSnapshotState(snapshot sessionsnapshot.Snapsh
 			WriteReport:           snapshot.ExportSettings.Prompt.WriteReport,
 			WriteSession:          snapshot.ExportSettings.Prompt.WriteSession,
 			WriteText:             snapshot.ExportSettings.Prompt.WriteText,
+			WriteConvertedFasta:   snapshot.ExportSettings.Prompt.WriteConvertedFasta,
+			WriteAllRows:          snapshot.ExportSettings.Prompt.WriteAllRows,
 			WriteExcel:            snapshot.ExportSettings.Prompt.WriteExcel,
 			WriteRawExcel:         snapshot.ExportSettings.Prompt.WriteRawExcel,
 			FastaHeaderMode:       snapshot.ExportSettings.Prompt.FastaHeaderMode,
@@ -1526,37 +1533,70 @@ func (w *BlastWizard) snapshotBlastRowsSequenceCache(ctx context.Context, rows [
 func (w *BlastWizard) snapshotCanvasSequenceCache(ctx context.Context, items []model.CanvasItem) (*sessionsnapshot.SequenceCacheV1, error) {
 	keywordRows := make([]model.KeywordResultRow, 0)
 	blastRows := make([]model.BlastResultRow, 0)
+	merged := make([]sessionsnapshot.SequenceCacheEntryV1, 0)
+	seen := make(map[string]struct{})
+	appendEntry := func(entry sessionsnapshot.SequenceCacheEntryV1) {
+		key := snapshotSequenceEntryDedupKey(entry)
+		if key == ":" {
+			return
+		}
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		merged = append(merged, entry)
+	}
 	for _, item := range items {
 		for _, row := range item.Rows {
 			switch row.Kind {
 			case model.CanvasKindKeyword:
 				if row.KeywordRow != nil {
+					sequence := strings.TrimSpace(canvasRowStoredSequence(row))
+					sequenceID := strings.TrimSpace(row.KeywordRow.SequenceID)
+					if sequence != "" && sequenceID != "" {
+						header := keywordProteinSequenceHeader(*row.KeywordRow)
+						if row.SequenceData != nil && strings.TrimSpace(row.SequenceData.OriginalHeader) != "" {
+							header = strings.TrimSpace(row.SequenceData.OriginalHeader)
+						}
+						appendEntry(sessionsnapshot.SequenceCacheEntryV1{
+							TargetID:       keywordSequenceFetchTargetID(w.source, w.lastKeywordSpecies),
+							SequenceID:     sequenceID,
+							Sequence:       sequence,
+							OriginalHeader: header,
+						})
+						continue
+					}
 					keywordRows = append(keywordRows, *row.KeywordRow)
 				}
 			case model.CanvasKindBlast:
 				if row.BlastRow != nil {
+					sequence := strings.TrimSpace(canvasRowStoredSequence(row))
+					sequenceID := strings.TrimSpace(firstNonEmpty(row.BlastRow.SequenceID, row.BlastRow.TranscriptID, row.BlastRow.Protein))
+					if sequence != "" && sequenceID != "" {
+						header := blastProteinSequenceHeader(*row.BlastRow)
+						if row.SequenceData != nil && strings.TrimSpace(row.SequenceData.OriginalHeader) != "" {
+							header = strings.TrimSpace(row.SequenceData.OriginalHeader)
+						}
+						appendEntry(sessionsnapshot.SequenceCacheEntryV1{
+							TargetID:       row.BlastRow.TargetID,
+							SequenceID:     sequenceID,
+							Sequence:       sequence,
+							OriginalHeader: header,
+						})
+						continue
+					}
 					blastRows = append(blastRows, *row.BlastRow)
 				}
 			}
 		}
 	}
 
-	merged := make([]sessionsnapshot.SequenceCacheEntryV1, 0, len(keywordRows)+len(blastRows))
-	seen := make(map[string]struct{}, len(keywordRows)+len(blastRows))
 	appendEntries := func(cache *sessionsnapshot.SequenceCacheV1) {
 		if cache == nil {
 			return
 		}
 		for _, entry := range cache.Entries {
-			key := snapshotSequenceEntryDedupKey(entry)
-			if key == ":" {
-				continue
-			}
-			if _, exists := seen[key]; exists {
-				continue
-			}
-			seen[key] = struct{}{}
-			merged = append(merged, entry)
+			appendEntry(entry)
 		}
 	}
 
@@ -1649,7 +1689,8 @@ func (w *BlastWizard) hydrateSnapshotSequenceCache(cache *sessionsnapshot.Sequen
 
 func inlineKeywordSnapshotSequenceEntry(targetID int, row model.KeywordResultRow) *sessionsnapshot.SequenceCacheEntryV1 {
 	sequenceID := strings.TrimSpace(row.SequenceID)
-	sequence := strings.TrimSpace(extractInlineKeywordSequence(row))
+	inline := inlineKeywordProteinSequenceData(row)
+	sequence := strings.TrimSpace(inline.Sequence)
 	if sequenceID == "" || sequence == "" {
 		return nil
 	}
@@ -1657,12 +1698,118 @@ func inlineKeywordSnapshotSequenceEntry(targetID int, row model.KeywordResultRow
 		TargetID:       targetID,
 		SequenceID:     sequenceID,
 		Sequence:       sequence,
-		OriginalHeader: keywordProteinSequenceHeader(row),
+		OriginalHeader: firstNonEmpty(strings.TrimSpace(inline.OriginalHeader), keywordProteinSequenceHeader(row)),
 	}
+}
+
+func snapshotKeywordSourceState(src source.DataSource, groups []model.KeywordSearchGroup) *sessionsnapshot.KeywordSourceStateV3 {
+	database := sourceDatabaseName(src)
+	if database == "" {
+		for _, row := range flattenKeywordSearchGroups(groups) {
+			if database = normalizeSnapshotDatabase(row.SourceDatabase); database != "" {
+				break
+			}
+		}
+	}
+	state := &sessionsnapshot.KeywordSourceStateV3{
+		Database:     database,
+		SourceKind:   "keyword",
+		Engine:       database + "-keyword",
+		ResultDomain: "annotation",
+		Terms:        keywordSnapshotTerms(groups),
+		SearchTypes:  keywordSnapshotSearchTypes(groups),
+	}
+	if strings.EqualFold(database, "ncbi") {
+		state.Engine = "ncbi-eutilities-keyword"
+		state.ResultDomain = "sequence-record"
+		state.NCBI = &sessionsnapshot.NCBIKeywordSourceV3{
+			EntrezDatabase:    firstNonEmpty(keywordSnapshotFirstExtraValue(groups, "ncbi_entrez_database"), "protein"),
+			RecordType:        firstNonEmpty(keywordSnapshotFirstExtraValue(groups, "ncbi_record_type"), "protein"),
+			EUtilitiesBaseURL: firstNonEmpty(keywordSnapshotFirstExtraValue(groups, "ncbi_eutilities_base_url"), "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"),
+			EngineSchema:      firstNonEmpty(keywordSnapshotFirstExtraValue(groups, "ncbi_engine_schema"), "ncbiprotein-v3"),
+			Accessions:        keywordSnapshotExtraValues(groups, "ncbi_accession"),
+			UIDs:              keywordSnapshotExtraValues(groups, "ncbi_uid"),
+		}
+	}
+	return state
+}
+
+func hydrateKeywordSnapshotSourceState(groups []model.KeywordSearchGroup, state *sessionsnapshot.KeywordSourceStateV3) {
+	if state == nil {
+		return
+	}
+	database := normalizeSnapshotDatabase(state.Database)
+	if database == "" {
+		return
+	}
+	for groupIndex := range groups {
+		for rowIndex := range groups[groupIndex].Rows {
+			if strings.TrimSpace(groups[groupIndex].Rows[rowIndex].SourceDatabase) == "" {
+				groups[groupIndex].Rows[rowIndex].SourceDatabase = database
+			}
+		}
+	}
+}
+
+func keywordSnapshotTerms(groups []model.KeywordSearchGroup) []string {
+	terms := make([]string, 0, len(groups))
+	for _, group := range groups {
+		term := strings.TrimSpace(group.SearchTerm)
+		if term != "" {
+			terms = append(terms, term)
+		}
+	}
+	return uniqueStrings(terms)
+}
+
+func keywordSnapshotSearchTypes(groups []model.KeywordSearchGroup) []string {
+	values := make([]string, 0, len(groups))
+	for _, group := range groups {
+		if value := strings.TrimSpace(group.SearchType); value != "" {
+			values = append(values, value)
+		}
+		for _, row := range group.Rows {
+			if value := strings.TrimSpace(row.SearchType); value != "" {
+				values = append(values, value)
+			}
+		}
+	}
+	return uniqueStrings(values)
+}
+
+func keywordSnapshotExtraValues(groups []model.KeywordSearchGroup, key string) []string {
+	values := make([]string, 0)
+	for _, group := range groups {
+		for _, row := range group.Rows {
+			if row.ExtraColumns == nil {
+				continue
+			}
+			if value := strings.TrimSpace(row.ExtraColumns[key]); value != "" {
+				values = append(values, value)
+			}
+		}
+	}
+	return uniqueStrings(values)
+}
+
+func keywordSnapshotFirstExtraValue(groups []model.KeywordSearchGroup, key string) string {
+	for _, group := range groups {
+		for _, row := range group.Rows {
+			if row.ExtraColumns == nil {
+				continue
+			}
+			if value := strings.TrimSpace(row.ExtraColumns[key]); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
 }
 
 func extractInlineKeywordSequence(row model.KeywordResultRow) string {
 	extraKeys := []string{
+		"ncbi_protein_sequence",
+		"ncbi_fasta",
 		"protein_sequence",
 		"sequence",
 		"peptide_sequence",

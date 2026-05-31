@@ -73,6 +73,7 @@ func SelectStartup(in io.Reader, out io.Writer, info StartupInfo) (StartupChoice
 			{Value: "phytozome:keyword", Label: "Phytozome keyword", Description: "keyword search in Phytozome species"},
 			{Value: "lemna:keyword", Label: "lemna keyword", Description: "keyword search in lemna.org releases"},
 			{Value: "tair:keyword", Label: "TAIR keyword", Description: "keyword search in TAIR Arabidopsis releases"},
+			{Value: "ncbi:keyword", Label: "NCBI protein keyword", Description: "protein accession search through NCBI E-utilities"},
 		},
 		"blast": {
 			{Value: "phytozome:blast", Label: "Phytozome blast", Description: "BLAST against a selected Phytozome species"},
