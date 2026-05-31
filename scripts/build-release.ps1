@@ -58,14 +58,27 @@ $megaPHGORuntimeRoot = Join-Path $repoRoot "assets\mega-phgo-runtime"
 $megaPHGOWindowsRuntime = Join-Path $megaPHGORuntimeRoot "windows-amd64\runtime"
 $megaPHGOLinuxRuntime = Join-Path $megaPHGORuntimeRoot "linux-amd64\runtime"
 $megaPHGOMacRuntime = Join-Path $megaPHGORuntimeRoot "macos-amd64\runtime"
+$megaPHGORuntimeManifest = Get-MegaPHGORuntimeReleaseManifest -RepoRoot $repoRoot
+
+function Get-OptionalMegaPHGORuntimeArchivePath {
+    param(
+        [string]$Platform
+    )
+
+    $assetName = $megaPHGORuntimeManifest.assets.$Platform
+    if ([string]::IsNullOrWhiteSpace($assetName)) {
+        return ""
+    }
+    return Join-Path $binDir ([string]$assetName)
+}
 
 if ([string]::IsNullOrWhiteSpace($BuildVersion)) {
     $BuildVersion = "v" + (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
 }
 
-$megaPHGOWindowsArchivePath = Join-Path $binDir (Get-MegaPHGORuntimeAssetName -Platform "windows-amd64" -RepoRoot $repoRoot)
-$megaPHGOLinuxArchivePath = Join-Path $binDir (Get-MegaPHGORuntimeAssetName -Platform "linux-amd64" -RepoRoot $repoRoot)
-$megaPHGOMacArchivePath = Join-Path $binDir (Get-MegaPHGORuntimeAssetName -Platform "macos-amd64" -RepoRoot $repoRoot)
+$megaPHGOWindowsArchivePath = Get-OptionalMegaPHGORuntimeArchivePath -Platform "windows-amd64"
+$megaPHGOLinuxArchivePath = Get-OptionalMegaPHGORuntimeArchivePath -Platform "linux-amd64"
+$megaPHGOMacArchivePath = Get-OptionalMegaPHGORuntimeArchivePath -Platform "macos-amd64"
 
 Push-Location $repoRoot
 try {
@@ -189,7 +202,8 @@ try {
         "bin\phytozome-go_macos_amd64_wezterm.tar.gz",
         "bin\phytozome-go_macos_arm64_wezterm.tar.gz"
     )
-    foreach ($runtimeAsset in @($megaPHGOWindowsArchivePath, $megaPHGOLinuxArchivePath, $megaPHGOMacArchivePath)) {
+    $runtimeAssets = @($megaPHGOWindowsArchivePath, $megaPHGOLinuxArchivePath, $megaPHGOMacArchivePath) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    foreach ($runtimeAsset in $runtimeAssets) {
         if (Test-Path -LiteralPath $runtimeAsset -PathType Leaf) {
             $assets += $runtimeAsset
         }
@@ -230,7 +244,7 @@ try {
         }
         if ([string]::IsNullOrWhiteSpace($ReleaseNotes)) {
             $runtimeReleaseAssets = @()
-            foreach ($runtimeAsset in @($megaPHGOWindowsArchivePath, $megaPHGOLinuxArchivePath, $megaPHGOMacArchivePath)) {
+            foreach ($runtimeAsset in $runtimeAssets) {
                 if (Test-Path -LiteralPath $runtimeAsset -PathType Leaf) {
                     $runtimeReleaseAssets += [System.IO.Path]::GetFileName($runtimeAsset)
                 }
@@ -264,7 +278,7 @@ Assets:
                 "bin\phytozome-go_macos_arm64_wezterm.tar.gz",
                 "bin\SHA256SUMS.txt"
             )
-            foreach ($runtimeAsset in @($megaPHGOWindowsArchivePath, $megaPHGOLinuxArchivePath, $megaPHGOMacArchivePath)) {
+            foreach ($runtimeAsset in $runtimeAssets) {
                 if (Test-Path -LiteralPath $runtimeAsset -PathType Leaf) {
                     $releaseAssets += $runtimeAsset
                 }

@@ -20,6 +20,19 @@ $runtimeRoot = Join-Path $repoRoot "assets\mega-phgo-runtime"
 $windowsRuntime = Join-Path $runtimeRoot "windows-amd64\runtime"
 $linuxRuntime = Join-Path $runtimeRoot "linux-amd64\runtime"
 $macRuntime = Join-Path $runtimeRoot "macos-amd64\runtime"
+$runtimeManifest = Get-MegaPHGORuntimeReleaseManifest -RepoRoot $repoRoot
+
+function Get-OptionalMegaPHGORuntimeAssetName {
+    param(
+        [string]$Platform
+    )
+
+    $assetName = $runtimeManifest.assets.$Platform
+    if ([string]::IsNullOrWhiteSpace($assetName)) {
+        return ""
+    }
+    return [string]$assetName
+}
 
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 
@@ -78,20 +91,36 @@ function Pack-Zip {
 
 if ($Platform -eq "all" -or $Platform -eq "windows-amd64") {
     Assert-Runtime -RuntimePath $windowsRuntime -Executable "mega-phgo-runtime.exe" -MuscleExecutable "muscleWin64.exe"
-    Pack-Zip $windowsRuntime (Join-Path $binDir (Get-MegaPHGORuntimeAssetName -Platform "windows-amd64" -RepoRoot $repoRoot))
+    $windowsAssetName = Get-OptionalMegaPHGORuntimeAssetName -Platform "windows-amd64"
+    if ([string]::IsNullOrWhiteSpace($windowsAssetName)) {
+        throw "mega-phgo-runtime release manifest does not publish a windows-amd64 asset."
+    }
+    Pack-Zip $windowsRuntime (Join-Path $binDir $windowsAssetName)
 }
 if ($Platform -eq "all" -or $Platform -eq "linux-amd64") {
-    if ($Platform -eq "linux-amd64" -or (Test-RuntimeReady -RuntimePath $linuxRuntime -Executable "mega-phgo-runtime" -MuscleExecutable "muscleUnix64.exe")) {
+    $linuxAssetName = Get-OptionalMegaPHGORuntimeAssetName -Platform "linux-amd64"
+    if ([string]::IsNullOrWhiteSpace($linuxAssetName)) {
+        if ($Platform -eq "linux-amd64") {
+            throw "mega-phgo-runtime release manifest does not publish a linux-amd64 asset."
+        }
+        Write-Host "Skipping linux-amd64 mega-phgo-runtime packaging because the release manifest does not publish that platform."
+    } elseif ($Platform -eq "linux-amd64" -or (Test-RuntimeReady -RuntimePath $linuxRuntime -Executable "mega-phgo-runtime" -MuscleExecutable "muscleUnix64.exe")) {
         Assert-Runtime -RuntimePath $linuxRuntime -Executable "mega-phgo-runtime" -MuscleExecutable "muscleUnix64.exe"
-        Pack-Zip $linuxRuntime (Join-Path $binDir (Get-MegaPHGORuntimeAssetName -Platform "linux-amd64" -RepoRoot $repoRoot))
+        Pack-Zip $linuxRuntime (Join-Path $binDir $linuxAssetName)
     } else {
         Write-Host "Skipping linux-amd64 mega-phgo-runtime packaging because no built runtime is present."
     }
 }
 if ($Platform -eq "all" -or $Platform -eq "macos-amd64") {
-    if ($Platform -eq "macos-amd64" -or (Test-RuntimeReady -RuntimePath $macRuntime -Executable "mega-phgo-runtime" -MuscleExecutable "muscledarwin64")) {
+    $macAssetName = Get-OptionalMegaPHGORuntimeAssetName -Platform "macos-amd64"
+    if ([string]::IsNullOrWhiteSpace($macAssetName)) {
+        if ($Platform -eq "macos-amd64") {
+            throw "mega-phgo-runtime release manifest does not publish a macos-amd64 asset."
+        }
+        Write-Host "Skipping macos-amd64 mega-phgo-runtime packaging because the release manifest does not publish that platform."
+    } elseif ($Platform -eq "macos-amd64" -or (Test-RuntimeReady -RuntimePath $macRuntime -Executable "mega-phgo-runtime" -MuscleExecutable "muscledarwin64")) {
         Assert-Runtime -RuntimePath $macRuntime -Executable "mega-phgo-runtime" -MuscleExecutable "muscledarwin64"
-        Pack-Zip $macRuntime (Join-Path $binDir (Get-MegaPHGORuntimeAssetName -Platform "macos-amd64" -RepoRoot $repoRoot))
+        Pack-Zip $macRuntime (Join-Path $binDir $macAssetName)
     } else {
         Write-Host "Skipping macos-amd64 mega-phgo-runtime packaging because no built runtime is present."
     }
