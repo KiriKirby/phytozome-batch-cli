@@ -57,14 +57,14 @@ func (e *MissingToolsError) Error() string {
 	}
 	if len(e.Tools) == 0 {
 		if dir == "" {
-			return "PHgo tree runtime is missing; this Windows release requires the bundled application-local mega-phgo-runtime folder"
+			return "PHgo tree runtime is missing; this Windows release requires the bundled application-local PHgo runtime files"
 		}
-		return fmt.Sprintf("PHgo tree runtime is missing; expected the bundled application-local mega-phgo-runtime folder at %s", dir)
+		return fmt.Sprintf("PHgo tree runtime is missing; expected the bundled application-local PHgo runtime files at %s", dir)
 	}
 	if dir == "" {
-		return fmt.Sprintf("%s not found; re-extract or reinstall the Windows bundle so the bundled mega-phgo-runtime folder is restored", strings.Join(e.Tools, ", "))
+		return fmt.Sprintf("%s not found; re-extract or reinstall the Windows bundle so the bundled PHgo runtime files are restored", strings.Join(e.Tools, ", "))
 	}
-	return fmt.Sprintf("%s not found in %s; re-extract or reinstall the Windows bundle so the bundled mega-phgo-runtime folder is restored", strings.Join(e.Tools, ", "), dir)
+	return fmt.Sprintf("%s not found in %s; re-extract or reinstall the Windows bundle so the bundled PHgo runtime files are restored", strings.Join(e.Tools, ", "), dir)
 }
 
 func IsMissingToolsError(err error) bool {
@@ -80,6 +80,9 @@ func ToolsDir() (string, error) {
 	base, err := applicationDir()
 	if err != nil {
 		return "", err
+	}
+	if runtime.GOOS == "windows" && runtime.GOARCH == "amd64" {
+		return base, nil
 	}
 	return filepath.Join(base, "mega-phgo-runtime"), nil
 }
@@ -149,6 +152,54 @@ func ManagedExecutable() (string, bool, error) {
 		}
 	}
 	return "", false, nil
+}
+
+func PrepareExecution(path string) (string, func(), error) {
+	cleanup := func() {}
+	if runtime.GOOS != "windows" {
+		return path, cleanup, nil
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", cleanup, fmt.Errorf("PHgo tree runtime executable path is empty")
+	}
+	absPath, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", cleanup, err
+	}
+	if !strings.HasSuffix(strings.ToLower(absPath), ".bin") {
+		return absPath, cleanup, nil
+	}
+	toolsDir, err := ToolsDir()
+	if err != nil {
+		return "", cleanup, err
+	}
+	runtimeSource := filepath.Join(toolsDir, executableName(RuntimeExecutable))
+	if !samePath(absPath, runtimeSource) {
+		return absPath, cleanup, nil
+	}
+	muscleSource := filepath.Join(toolsDir, muscleExecutableName())
+	if info, err := os.Stat(muscleSource); err != nil || info.IsDir() {
+		return "", cleanup, &MissingToolsError{Tools: []string{MuscleExecutable}, RuntimeDir: toolsDir}
+	}
+	tempDir, err := os.MkdirTemp("", "phytozome-go-megaphgo-runtime-")
+	if err != nil {
+		return "", cleanup, fmt.Errorf("create PHgo runtime temp directory: %w", err)
+	}
+	cleanup = func() {
+		_ = os.RemoveAll(tempDir)
+	}
+	tempRuntime := filepath.Join(tempDir, RuntimeExecutable+".exe")
+	tempMuscle := filepath.Join(tempDir, "muscleWin64.exe")
+	if err := copyExecutionFile(runtimeSource, tempRuntime); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	if err := copyExecutionFile(muscleSource, tempMuscle); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	return tempRuntime, cleanup, nil
 }
 
 func ProbeExecutable(path string) error {
@@ -652,10 +703,33 @@ func executableName(tool string) string {
 	if tool == MuscleExecutable {
 		return muscleExecutableName()
 	}
-	if runtime.GOOS == "windows" && !strings.HasSuffix(strings.ToLower(tool), ".exe") {
-		return tool + ".exe"
+	if runtime.GOOS == "windows" && !strings.HasSuffix(strings.ToLower(tool), ".bin") {
+		return tool + ".bin"
 	}
 	return tool
+}
+
+func copyExecutionFile(source string, target string) error {
+	input, err := os.Open(source)
+	if err != nil {
+		return fmt.Errorf("open bundled runtime file %s: %w", source, err)
+	}
+	defer input.Close()
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return fmt.Errorf("create runtime temp directory %s: %w", filepath.Dir(target), err)
+	}
+	output, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
+	if err != nil {
+		return fmt.Errorf("create runtime temp file %s: %w", target, err)
+	}
+	if _, err := io.Copy(output, input); err != nil {
+		_ = output.Close()
+		return fmt.Errorf("copy bundled runtime file %s: %w", source, err)
+	}
+	if err := output.Close(); err != nil {
+		return fmt.Errorf("close runtime temp file %s: %w", target, err)
+	}
+	return nil
 }
 
 func runtimeOwnedMuscleAvailable(toolsDir string) bool {
@@ -666,12 +740,19 @@ func runtimeOwnedMuscleAvailable(toolsDir string) bool {
 func muscleExecutableName() string {
 	switch runtime.GOOS {
 	case "windows":
-		return "muscleWin64.exe"
+		return "muscleWin64.bin"
 	case "darwin":
 		return "muscledarwin64"
 	default:
 		return "muscleUnix64.exe"
 	}
+}
+
+func samePath(a string, b string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
 }
 
 func domainForDownloadURL(rawURL string) string {

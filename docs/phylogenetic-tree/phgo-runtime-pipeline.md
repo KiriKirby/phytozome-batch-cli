@@ -41,7 +41,7 @@ mega-phgo-runtime <path-to-runtime-request.json>
 The executable must come from the application-local folder:
 
 ```text
-<application-dir>/mega-phgo-runtime/mega-phgo-runtime(.exe)
+<application-dir>/mega-phgo-runtime.bin
 ```
 
 PHgo does not search `PATH`, does not use `C:\Program Files\MEGA12`, does not use `C:\Program Files\MEGA12cc`, and does not reuse any other installed MEGA runtime. The folder itself is the installation contract. Windows `amd64` release bundles must already contain the exact `mega-phgo-runtime` folder at the application root. If that bundled folder is missing or invalid, the package is incomplete or corrupted and the user should reinstall the full bundle instead of downloading runtime pieces separately.
@@ -50,10 +50,10 @@ Managed PHgo runtime support currently exists only in the bundled Windows `amd64
 
 Runtime freshness is not tracked by a marker file inside `mega-phgo-runtime`. The bundled folder is accepted only after the PHgo probe and runtime-owned MUSCLE checks pass. Do not add a separate release marker or version sentinel.
 
-The runtime folder must also contain the runtime-owned MUSCLE binary used by `mega-phgo-runtime`:
+The bundled runtime files must also include the runtime-owned MUSCLE binary used by `mega-phgo-runtime`:
 
 ```text
-Windows: mega-phgo-runtime/muscleWin64.exe
+Windows: muscleWin64.bin
 Linux:   mega-phgo-runtime/muscleUnix64.exe
 macOS:   mega-phgo-runtime/muscledarwin64
 ```
@@ -64,7 +64,7 @@ Current packaging status:
 - Linux and macOS runtime packages are intentionally not bundled for current releases.
 - On Linux and macOS, runtime checks must directly report unsupported instead of searching for placeholders or attempting a package download.
 - Do not fill Linux/macOS runtime folders with MUSCLE-only files, MEGA-CC binaries, installed MEGA files, renamed placeholders, or partial archives.
-- Windows release packaging copies `assets/mega-phgo-runtime/windows-amd64/runtime/` into the bundle root as `mega-phgo-runtime/`.
+- Windows release packaging copies the contents of `assets/mega-phgo-runtime/windows-amd64/runtime/` directly into the bundle root.
 - If future Linux/macOS runtime support is intentionally re-enabled, those runtime release folders must contain real `mega-phgo-runtime` executables built on matching platforms or with a configured Lazarus/FPC cross toolchain, plus the runtime-owned MUSCLE binary, and they must pass the same probe checks before packaging.
 - For current local verification and release packaging, pass `-Platform windows-amd64`.
 

@@ -48,6 +48,7 @@ if (-not $wezRoot) {
     throw "Could not find extracted WezTerm directory in: $extractDir"
 }
 
+Remove-Item -LiteralPath $preparedDir -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $preparedDir | Out-Null
 Copy-WezTermRuntimeFiles -WezRoot $wezRoot.FullName -Destination $preparedDir
 Write-PhytozomeWezTermConfig -Path (Join-Path $preparedDir "wezterm.lua") -Version "dev"

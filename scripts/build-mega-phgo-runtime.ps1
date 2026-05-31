@@ -41,7 +41,7 @@ function Resolve-HostPlatform {
 function RuntimeOwnedMuscleName {
     param([string]$PlatformName)
     switch ($PlatformName) {
-        "windows-amd64" { return "muscleWin64.exe" }
+        "windows-amd64" { return "muscleWin64.bin" }
         "linux-amd64" { return "muscleUnix64.exe" }
         "macos-amd64" { return "muscledarwin64" }
         default { throw "Unsupported mega-phgo-runtime platform: $PlatformName" }
@@ -50,6 +50,25 @@ function RuntimeOwnedMuscleName {
 
 if ($Platform -ne (Resolve-HostPlatform)) {
     throw "Building mega-phgo-runtime for $Platform from this host is not configured. Build it on the matching platform or install/configure the Lazarus/FPC cross toolchain first."
+}
+
+function Invoke-RuntimeProbe {
+    param([string]$Executable)
+
+    $stdoutPath = Join-Path $env:TEMP ("phgo-runtime-probe-" + [guid]::NewGuid().ToString() + ".out")
+    $stderrPath = Join-Path $env:TEMP ("phgo-runtime-probe-" + [guid]::NewGuid().ToString() + ".err")
+    try {
+        $proc = Start-Process -FilePath $Executable -ArgumentList "--phgo-runtime-probe" -NoNewWindow -PassThru -Wait -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        $stdout = if (Test-Path -LiteralPath $stdoutPath -PathType Leaf) { Get-Content -LiteralPath $stdoutPath -Raw } else { "" }
+        $stderr = if (Test-Path -LiteralPath $stderrPath -PathType Leaf) { Get-Content -LiteralPath $stderrPath -Raw } else { "" }
+        return [pscustomobject]@{
+            ExitCode = $proc.ExitCode
+            Output = (($stdout + "`n" + $stderr).Trim())
+        }
+    } finally {
+        Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Resolve-LazBuild {
@@ -84,7 +103,8 @@ if (-not (Test-Path -LiteralPath $project -PathType Leaf)) {
 
 $lazbuild = Resolve-LazBuild $LazBuildPath
 $runtimeDir = Join-Path $repoRoot ("assets\mega-phgo-runtime\" + $Platform + "\runtime")
-$runtimeExe = if ($Platform -eq "windows-amd64") { "mega-phgo-runtime.exe" } else { "mega-phgo-runtime" }
+$builtRuntimeExe = if ($Platform -eq "windows-amd64") { "mega-phgo-runtime.exe" } else { "mega-phgo-runtime" }
+$runtimeExe = if ($Platform -eq "windows-amd64") { "mega-phgo-runtime.bin" } else { "mega-phgo-runtime" }
 $targetPath = Join-Path $runtimeDir $runtimeExe
 
 New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
@@ -100,9 +120,9 @@ try {
 }
 
 $projectDir = Split-Path -Parent $project
-$builtExe = Join-Path $projectDir $runtimeExe
+$builtExe = Join-Path $projectDir $builtRuntimeExe
 if (-not (Test-Path -LiteralPath $builtExe -PathType Leaf)) {
-    $builtExe = Get-ChildItem -LiteralPath (Join-Path $projectDir "lib") -Recurse -File -Filter $runtimeExe -ErrorAction SilentlyContinue |
+    $builtExe = Get-ChildItem -LiteralPath (Join-Path $projectDir "lib") -Recurse -File -Filter $builtRuntimeExe -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1 -ExpandProperty FullName
 }
@@ -116,8 +136,8 @@ $musclePath = Join-Path $runtimeDir (RuntimeOwnedMuscleName $Platform)
 if (-not (Test-Path -LiteralPath $musclePath -PathType Leaf)) {
     throw "Missing runtime-owned MUSCLE executable in $runtimeDir. Restore the platform MUSCLE binary before packaging: $musclePath"
 }
-$probeOutput = & $targetPath --phgo-runtime-probe 2>&1
-if ($LASTEXITCODE -ne 0 -or (($probeOutput -join "`n") -notmatch "mega-phgo-runtime")) {
+$probe = Invoke-RuntimeProbe $targetPath
+if ($probe.ExitCode -ne 0 -or $probe.Output -notmatch "mega-phgo-runtime") {
     throw "Built runtime did not pass PHgo probe: $targetPath"
 }
 

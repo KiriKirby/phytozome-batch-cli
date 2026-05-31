@@ -60,7 +60,12 @@ func (r MegaPHGORuntime) Run(ctx context.Context, plan RunPlan) (RunResult, erro
 	} else if err := validateLocalRuntimeExecutable(exe); err != nil {
 		return RunResult{Plan: plan, ArtifactDir: plan.BaseDir, ErrorText: err.Error()}, err
 	}
-	cmd := exec.CommandContext(ctx, exe, requestPath)
+	preparedExe, cleanup, err := megaphgo.PrepareExecution(exe)
+	if err != nil {
+		return RunResult{Plan: plan, ArtifactDir: plan.BaseDir, ErrorText: err.Error()}, err
+	}
+	defer cleanup()
+	cmd := exec.CommandContext(ctx, preparedExe, requestPath)
 	cmd.Dir = plan.BaseDir
 	stdoutPath, stderrPath, exitText, runErr := runMegaPHGORuntimeCommand(cmd, plan.BaseDir)
 	responsePath := filepath.Join(plan.BaseDir, RuntimeResponseFile)
@@ -138,7 +143,7 @@ func validateLocalRuntimeExecutable(exe string) error {
 
 func runtimeExecutableName() string {
 	if runtime.GOOS == "windows" {
-		return megaphgo.RuntimeExecutable + ".exe"
+		return megaphgo.RuntimeExecutable + ".bin"
 	}
 	return megaphgo.RuntimeExecutable
 }

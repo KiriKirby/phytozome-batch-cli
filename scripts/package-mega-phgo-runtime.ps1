@@ -36,6 +36,25 @@ function Get-OptionalMegaPHGORuntimeAssetName {
 
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 
+function Invoke-RuntimeProbe {
+    param([string]$Executable)
+
+    $stdoutPath = Join-Path $env:TEMP ("phgo-runtime-probe-" + [guid]::NewGuid().ToString() + ".out")
+    $stderrPath = Join-Path $env:TEMP ("phgo-runtime-probe-" + [guid]::NewGuid().ToString() + ".err")
+    try {
+        $proc = Start-Process -FilePath $Executable -ArgumentList "--phgo-runtime-probe" -NoNewWindow -PassThru -Wait -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        $stdout = if (Test-Path -LiteralPath $stdoutPath -PathType Leaf) { Get-Content -LiteralPath $stdoutPath -Raw } else { "" }
+        $stderr = if (Test-Path -LiteralPath $stderrPath -PathType Leaf) { Get-Content -LiteralPath $stderrPath -Raw } else { "" }
+        return [pscustomobject]@{
+            ExitCode = $proc.ExitCode
+            Output = (($stdout + "`n" + $stderr).Trim())
+        }
+    } finally {
+        Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Assert-Runtime {
     param(
         [string]$RuntimePath,
@@ -50,8 +69,8 @@ function Assert-Runtime {
     if (-not (Test-Path -LiteralPath $runtimeExe -PathType Leaf)) {
         throw "Missing mega-phgo-runtime executable: $runtimeExe"
     }
-    $probeOutput = & $runtimeExe --phgo-runtime-probe 2>&1
-    if ($LASTEXITCODE -ne 0 -or (($probeOutput -join "`n") -notmatch "mega-phgo-runtime")) {
+    $probe = Invoke-RuntimeProbe $runtimeExe
+    if ($probe.ExitCode -ne 0 -or $probe.Output -notmatch "mega-phgo-runtime") {
         throw "Invalid mega-phgo-runtime executable. The file must be the PHgo custom runtime and respond to --phgo-runtime-probe: $runtimeExe"
     }
     $muscleExe = Join-Path $RuntimePath $MuscleExecutable
@@ -90,7 +109,7 @@ function Pack-Zip {
 }
 
 if ($Platform -eq "all" -or $Platform -eq "windows-amd64") {
-    Assert-Runtime -RuntimePath $windowsRuntime -Executable "mega-phgo-runtime.exe" -MuscleExecutable "muscleWin64.exe"
+    Assert-Runtime -RuntimePath $windowsRuntime -Executable "mega-phgo-runtime.bin" -MuscleExecutable "muscleWin64.bin"
     $windowsAssetName = Get-OptionalMegaPHGORuntimeAssetName -Platform "windows-amd64"
     if ([string]::IsNullOrWhiteSpace($windowsAssetName)) {
         throw "mega-phgo-runtime release manifest does not publish a windows-amd64 asset."

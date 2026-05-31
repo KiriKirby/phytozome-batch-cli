@@ -83,11 +83,6 @@ func prepareWezTermRuntime(bundleDir string) (string, error) {
 	}
 	for _, entry := range entries {
 		if entry.IsDir() {
-			if strings.EqualFold(entry.Name(), "mesa") {
-				if err := copyDir(filepath.Join(bundleDir, entry.Name()), filepath.Join(runtimeDir, entry.Name())); err != nil {
-					return "", err
-				}
-			}
 			continue
 		}
 		name := entry.Name()
@@ -114,30 +109,6 @@ func prepareWezTermRuntime(bundleDir string) (string, error) {
 		return "", err
 	}
 	return runtimeDir, nil
-}
-
-func copyDir(sourceDir string, targetDir string) error {
-	entries, err := os.ReadDir(sourceDir)
-	if err != nil {
-		return fmt.Errorf("read runtime source directory:\n%s\n%w", sourceDir, err)
-	}
-	if err := os.MkdirAll(targetDir, 0o755); err != nil {
-		return fmt.Errorf("create runtime target directory:\n%s\n%w", targetDir, err)
-	}
-	for _, entry := range entries {
-		source := filepath.Join(sourceDir, entry.Name())
-		target := filepath.Join(targetDir, entry.Name())
-		if entry.IsDir() {
-			if err := copyDir(source, target); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := copyFileIfNeeded(source, target); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func copyFileIfNeeded(source string, target string) error {

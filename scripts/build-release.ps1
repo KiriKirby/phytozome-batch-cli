@@ -98,10 +98,17 @@ try {
     }
 
     $entries = @(tar -tf $zipPath)
-    foreach ($required in @("phytozome-go.exe", "phytozome-go.bin", "phytozome-go-cleancache.bin", "wezterm.bin", "wezterm-cli.bin", "wezterm.lua", "mega-phgo-runtime/mega-phgo-runtime.exe", "mega-phgo-runtime/muscleWin64.exe")) {
+    foreach ($required in @("phytozome-go.exe", "phytozome-go.bin", "phytozome-go-cleancache.bin", "wezterm.bin", "wezterm-cli.bin", "wezterm.lua", "opengl32.dll", "mega-phgo-runtime.bin", "muscleWin64.bin")) {
         if (-not ($entries -contains $required)) {
             throw "Windows zip is missing required file: $required"
         }
+    }
+    if ($entries -contains "mesa/opengl32.dll") {
+        throw "Windows zip must not package the legacy mesa directory."
+    }
+    $rootExeEntries = @($entries | Where-Object { $_ -match '^[^/\\]+\.exe$' })
+    if ($rootExeEntries.Count -ne 1 -or $rootExeEntries[0] -ne "phytozome-go.exe") {
+        throw "Windows zip must contain exactly one root .exe (phytozome-go.exe). Found: $($rootExeEntries -join ', ')"
     }
     foreach ($forbidden in @("docs/logo.png", "docs/logo2.png", "logo.png", "logo2.png", "phytozome-go-window-icon.png")) {
         if ($entries -contains $forbidden) {

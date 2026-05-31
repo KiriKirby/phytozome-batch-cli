@@ -14,7 +14,10 @@ function Copy-WezTermRuntimeFiles {
     foreach ($entry in $entries) {
         if ($entry.PSIsContainer) {
             if ($entry.Name -ieq "mesa") {
-                Copy-Item -LiteralPath $entry.FullName -Destination (Join-Path $Destination $entry.Name) -Recurse -Force
+                $opengl32 = Join-Path $entry.FullName "opengl32.dll"
+                if (Test-Path -LiteralPath $opengl32 -PathType Leaf) {
+                    Copy-Item -LiteralPath $opengl32 -Destination (Join-Path $Destination "opengl32.dll") -Force
+                }
             }
             continue
         }

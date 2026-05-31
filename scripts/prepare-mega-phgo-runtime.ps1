@@ -13,6 +13,25 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent $scriptDir
 $runtimeRoot = Join-Path $repoRoot "assets\mega-phgo-runtime"
 
+function Invoke-RuntimeProbe {
+    param([string]$Executable)
+
+    $stdoutPath = Join-Path $env:TEMP ("phgo-runtime-probe-" + [guid]::NewGuid().ToString() + ".out")
+    $stderrPath = Join-Path $env:TEMP ("phgo-runtime-probe-" + [guid]::NewGuid().ToString() + ".err")
+    try {
+        $proc = Start-Process -FilePath $Executable -ArgumentList "--phgo-runtime-probe" -NoNewWindow -PassThru -Wait -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        $stdout = if (Test-Path -LiteralPath $stdoutPath -PathType Leaf) { Get-Content -LiteralPath $stdoutPath -Raw } else { "" }
+        $stderr = if (Test-Path -LiteralPath $stderrPath -PathType Leaf) { Get-Content -LiteralPath $stderrPath -Raw } else { "" }
+        return [pscustomobject]@{
+            ExitCode = $proc.ExitCode
+            Output = (($stdout + "`n" + $stderr).Trim())
+        }
+    } finally {
+        Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Assert-Runtime {
     param(
         [string]$RuntimePath,
@@ -27,8 +46,8 @@ function Assert-Runtime {
     if (-not (Test-Path -LiteralPath $runtimeExe -PathType Leaf)) {
         throw "Missing pre-extracted mega-phgo-runtime executable: $runtimeExe"
     }
-    $probeOutput = & $runtimeExe --phgo-runtime-probe 2>&1
-    if ($LASTEXITCODE -ne 0 -or (($probeOutput -join "`n") -notmatch "mega-phgo-runtime")) {
+    $probe = Invoke-RuntimeProbe $runtimeExe
+    if ($probe.ExitCode -ne 0 -or $probe.Output -notmatch "mega-phgo-runtime") {
         throw "Invalid mega-phgo-runtime executable. The file must be the PHgo custom runtime and respond to --phgo-runtime-probe: $runtimeExe"
     }
     $muscleExe = Join-Path $RuntimePath $MuscleExecutable
@@ -50,7 +69,7 @@ $windowsRuntime = Join-Path $runtimeRoot "windows-amd64\runtime"
 $linuxRuntime = Join-Path $runtimeRoot "linux-amd64\runtime"
 $macRuntime = Join-Path $runtimeRoot "macos-amd64\runtime"
 
-Assert-Runtime -RuntimePath $windowsRuntime -Executable "mega-phgo-runtime.exe" -MuscleExecutable "muscleWin64.exe"
+Assert-Runtime -RuntimePath $windowsRuntime -Executable "mega-phgo-runtime.bin" -MuscleExecutable "muscleWin64.bin"
 if (Test-RuntimeExecutable -RuntimePath $linuxRuntime -Executable "mega-phgo-runtime") {
     Assert-Runtime -RuntimePath $linuxRuntime -Executable "mega-phgo-runtime" -MuscleExecutable "muscleUnix64.exe"
 } else {

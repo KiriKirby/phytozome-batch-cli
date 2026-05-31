@@ -108,7 +108,7 @@ func TestRunPlanWithRuntimeDefaultsToMegaPHGORuntimeStub(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected source runtime stub error")
 	}
-	if !strings.Contains(err.Error(), "mega-phgo-runtime folder") {
+	if !strings.Contains(err.Error(), "PHgo runtime files") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if result.ArtifactDir == "" {
@@ -224,7 +224,7 @@ func TestMegaPHGORuntimeRejectsWrongKindAfterRuntimeExecution(t *testing.T) {
 			t.Fatalf("restore wd: %v", err)
 		}
 	}()
-	runtimeDir := filepath.Join(root, "mega-phgo-runtime")
+	runtimeDir := root
 	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
 		t.Fatalf("mkdir runtime dir: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestMegaPHGORuntimeRejectsWrongKindAfterRuntimeExecution(t *testing.T) {
 	}
 	muscle := "muscleUnix64.exe"
 	if runtime.GOOS == "windows" {
-		muscle = "muscleWin64.exe"
+		muscle = "muscleWin64.bin"
 	} else if runtime.GOOS == "darwin" {
 		muscle = "muscledarwin64"
 	}
@@ -281,7 +281,7 @@ func TestMegaPHGORuntimeReturnsRuntimeErrorTextBeforeArtifactLookup(t *testing.T
 			t.Fatalf("restore wd: %v", err)
 		}
 	}()
-	runtimeDir := filepath.Join(root, "mega-phgo-runtime")
+	runtimeDir := root
 	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
 		t.Fatalf("mkdir runtime dir: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestMegaPHGORuntimeReturnsRuntimeErrorTextBeforeArtifactLookup(t *testing.T
 	}
 	muscle := "muscleUnix64.exe"
 	if runtime.GOOS == "windows" {
-		muscle = "muscleWin64.exe"
+		muscle = "muscleWin64.bin"
 	} else if runtime.GOOS == "darwin" {
 		muscle = "muscledarwin64"
 	}
@@ -440,7 +440,7 @@ func smallRunPlan(t *testing.T, dir string) RunPlan {
 
 func runtimeExecutableNameForTest() string {
 	if runtime.GOOS == "windows" {
-		return megaphgo.RuntimeExecutable + ".exe"
+		return megaphgo.RuntimeExecutable + ".bin"
 	}
 	return megaphgo.RuntimeExecutable
 }

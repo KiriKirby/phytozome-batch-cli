@@ -50,7 +50,7 @@ func TestInstallManagedUnsupportedPlatform(t *testing.T) {
 	}
 }
 
-func TestManagedExecutableRequiresExactMegaPHGORuntimeFolder(t *testing.T) {
+func TestManagedExecutableRequiresExactBundledRuntimeRoot(t *testing.T) {
 	requireBundledRuntimePlatform(t)
 	t.Cleanup(withTempApplicationDir(t))
 	toolsDir, err := ToolsDir()
@@ -74,7 +74,7 @@ func TestManagedExecutableRequiresExactMegaPHGORuntimeFolder(t *testing.T) {
 		t.Fatalf("write local muscle: %v", err)
 	}
 	if exe, found, err := ManagedExecutable(); err != nil || !found || filepath.Dir(exe) != toolsDir {
-		t.Fatalf("ManagedExecutable = %q, %v, %v; want runtime in tools dir", exe, found, err)
+		t.Fatalf("ManagedExecutable = %q, %v, %v; want runtime in bundled runtime root", exe, found, err)
 	}
 }
 
