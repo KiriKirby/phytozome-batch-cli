@@ -3595,9 +3595,6 @@ func (p *Prompter) selectKeywordRows(groups []model.KeywordSearchGroup, initial 
 				}
 			}
 		}
-		if len(chosen) == 0 {
-			return KeywordRowSelection{}, fmt.Errorf("no rows selected")
-		}
 		if result.Action == "blast" {
 			if result.ActionRow >= 0 && result.ActionRow < len(flatRows) {
 				return KeywordRowSelection{Rows: []model.KeywordResultRow{flatRows[result.ActionRow]}, Selected: append([]bool(nil), selected...), SelectedByGroup: selectedByGroup, RunBlast: true}, nil
@@ -3617,6 +3614,9 @@ func (p *Prompter) selectKeywordRows(groups []model.KeywordSearchGroup, initial 
 				return KeywordRowSelection{Rows: []model.KeywordResultRow{flatRows[result.ActionRow]}, Selected: append([]bool(nil), selected...), SelectedByGroup: singleSelectedByGroup, CreateCanvas: true}, nil
 			}
 			return KeywordRowSelection{Rows: chosen, Selected: append([]bool(nil), selected...), SelectedByGroup: selectedByGroup, CreateCanvas: true}, nil
+		}
+		if len(chosen) == 0 {
+			return KeywordRowSelection{}, fmt.Errorf("no rows selected")
 		}
 		if result.GenerateFile {
 			return KeywordRowSelection{Rows: chosen, Selected: append([]bool(nil), selected...), SelectedByGroup: selectedByGroup, GenerateFile: true}, nil
@@ -4298,14 +4298,14 @@ func (p *Prompter) selectBlastRowsWithInitial(rows []model.BlastResultRow, allow
 				chosenNumbers = append(chosenNumbers, i+1)
 			}
 		}
-		if len(chosen) == 0 {
-			return BlastRowSelection{}, fmt.Errorf("no rows selected")
-		}
 		if result.Action == "canvas" {
 			if result.ActionRow >= 0 && result.ActionRow < len(rows) {
 				return BlastRowSelection{Rows: []model.BlastResultRow{rows[result.ActionRow]}, CreateCanvas: true}, nil
 			}
 			return BlastRowSelection{Rows: chosen, CreateCanvas: true}, nil
+		}
+		if len(chosen) == 0 {
+			return BlastRowSelection{}, fmt.Errorf("no rows selected")
 		}
 		if result.GenerateFile {
 			return BlastRowSelection{

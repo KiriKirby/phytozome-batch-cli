@@ -299,6 +299,15 @@ func (w *BlastWizard) reviewKeywordSnapshot(ctx context.Context, snapshot sessio
 			}
 			continue
 		}
+		if selection.CreateCanvas {
+			if err := w.runKeywordRowsCanvasMode(ctx, selected, groups, selection.Rows, selection.SelectedByGroup); err != nil {
+				if errors.Is(err, prompt.ErrBackToRowSelection) {
+					continue
+				}
+				return err
+			}
+			continue
+		}
 		if !selection.GenerateFile {
 			continue
 		}
@@ -424,6 +433,15 @@ func (w *BlastWizard) reviewSingleBlastSnapshot(ctx context.Context, selected mo
 			}
 			continue
 		}
+		if selection.CreateCanvas {
+			if err := w.runBlastRowsCanvasMode(ctx, run.Item, selection.Rows); err != nil {
+				if errors.Is(err, prompt.ErrBackToRowSelection) {
+					continue
+				}
+				return err
+			}
+			continue
+		}
 		if !selection.GenerateFile {
 			continue
 		}
@@ -455,6 +473,15 @@ func (w *BlastWizard) reviewMultiBlastSnapshot(ctx context.Context, selected mod
 		module.FilterFlagsByRun = cloneBoolMatrixWorkflow(selection.FilterFlagsByRun)
 		if selection.RunBlast {
 			if err := w.runBlastRowsBlastMode(ctx, selected, selection.Rows); err != nil {
+				if errors.Is(err, prompt.ErrBackToRowSelection) {
+					continue
+				}
+				return err
+			}
+			continue
+		}
+		if selection.CreateCanvas {
+			if err := w.runBlastRunsCanvasMode(ctx, runs, selection.SelectedByRun); err != nil {
 				if errors.Is(err, prompt.ErrBackToRowSelection) {
 					continue
 				}
