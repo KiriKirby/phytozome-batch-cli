@@ -58,7 +58,13 @@ func maybeHandleReleaseUpdate(args []string) bool {
 	if shouldSkipReleaseUpdateCheck() {
 		return false
 	}
+	currentVersion := strings.TrimSpace(version)
 	appendUpdateDebugLog("release update check start")
+	appendUpdateDebugLog("current build version: " + currentVersion)
+	if currentVersion == "" {
+		currentVersion = "unknown"
+	}
+	_, _ = fmt.Fprintf(os.Stdout, "Checking for updates on GitHub (%s)...\n", currentVersion)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
@@ -118,8 +124,7 @@ func maybeHandleReleaseUpdate(args []string) bool {
 }
 
 func shouldSkipReleaseUpdateCheck() bool {
-	normalized := strings.TrimSpace(strings.ToLower(version))
-	return normalized == "" || normalized == "dev"
+	return strings.TrimSpace(version) == ""
 }
 
 func shouldAutoAcceptUpdate() bool {

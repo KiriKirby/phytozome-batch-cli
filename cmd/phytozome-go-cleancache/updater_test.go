@@ -67,6 +67,28 @@ func TestShouldAutoAcceptUpdate(t *testing.T) {
 	}
 }
 
+func TestShouldSkipReleaseUpdateCheck(t *testing.T) {
+	original := version
+	t.Cleanup(func() {
+		version = original
+	})
+
+	version = ""
+	if !shouldSkipReleaseUpdateCheck() {
+		t.Fatal("shouldSkipReleaseUpdateCheck returned false for empty version")
+	}
+
+	version = "dev"
+	if shouldSkipReleaseUpdateCheck() {
+		t.Fatal("shouldSkipReleaseUpdateCheck returned true for dev builds")
+	}
+
+	version = "v20260531T075742Z"
+	if shouldSkipReleaseUpdateCheck() {
+		t.Fatal("shouldSkipReleaseUpdateCheck returned true for release builds")
+	}
+}
+
 func TestUpdateAssetSpecForWindows(t *testing.T) {
 	spec, err := updateAssetSpecFor("windows", "amd64")
 	if err != nil {
