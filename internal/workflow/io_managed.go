@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/KiriKirby/phytozome-go/internal/blastplus"
+	"github.com/KiriKirby/phytozome-go/internal/megaphgo"
 	phygoboost "github.com/KiriKirby/phytozome-go/internal/phygoboost"
 )
 
@@ -26,6 +27,16 @@ func installBlastPlusManaged(ctx context.Context) (string, bool, error) {
 	err := phygoboost.RunTaskSpec(ctx, phygoboost.TaskSpec{Level: phygoboost.ExecManaged, Description: "install managed blast+"}, func(runCtx context.Context) error {
 		var err error
 		binDir, err = blastplus.InstallManaged(runCtx, phygoboost.HTTPClient())
+		return err
+	})
+	return binDir, true, err
+}
+
+func installTreeRuntimeManaged(ctx context.Context) (string, bool, error) {
+	var binDir string
+	err := phygoboost.RunTaskSpec(ctx, phygoboost.TaskSpec{Level: phygoboost.ExecManaged, Description: "install app-local PHgo tree runtime"}, func(runCtx context.Context) error {
+		var err error
+		binDir, err = megaphgo.InstallManaged(runCtx, phygoboost.HTTPClient())
 		return err
 	})
 	return binDir, true, err

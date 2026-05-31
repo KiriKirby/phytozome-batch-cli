@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/url"
@@ -16,6 +18,7 @@ import (
 	"time"
 
 	"github.com/KiriKirby/phytozome-go/internal/blastplus"
+	"github.com/KiriKirby/phytozome-go/internal/fastautil"
 	"github.com/KiriKirby/phytozome-go/internal/model"
 )
 
@@ -57,19 +60,15 @@ func (c *Client) RunLocalBlast(ctx context.Context, req model.BlastRequest) (mod
 	if err != nil {
 		return model.BlastJob{}, err
 	}
-	fastaPath, err := downloadToCache(ctx, c.httpClient, dbURL, dir)
+	prepared, err := c.preparedLocalBlastDB(ctx, rel, program, dbURL, dbType, dir)
 	if err != nil {
 		return model.BlastJob{}, err
 	}
-	dbPrefix := filepath.Join(dir, sanitizeFileName(strings.ToLower(program)+"_"+rel.Name)+"_db")
-	if err := ensureBlastDB(ctx, fastaPath, dbPrefix, dbType); err != nil {
-		return model.BlastJob{}, err
-	}
-	fastaIndex, err := buildFastaIndex(fastaPath)
+	fastaIndex, err := c.loadFastaHeaders(ctx, prepared.FASTAPath)
 	if err != nil {
 		return model.BlastJob{}, err
 	}
-	result, err := runBlastAndParse(ctx, program, dbPrefix, fastaIndex, req)
+	result, err := runBlastAndParse(ctx, program, prepared.DBPrefix, fastaIndex, req)
 	if err != nil {
 		return model.BlastJob{}, err
 	}
@@ -101,6 +100,73 @@ func (c *Client) WaitForBlastResults(ctx context.Context, jobID string, pollInte
 		return model.BlastResult{}, fmt.Errorf("TAIR local BLAST result %s is not available", jobID)
 	}
 	return result, nil
+}
+
+type preparedLocalBlastDB struct {
+	FASTAPath string
+	DBPrefix  string
+}
+
+func (c *Client) preparedLocalBlastDB(ctx context.Context, rel releaseInfo, program string, dbURL string, dbType string, dir string) (preparedLocalBlastDB, error) {
+	cacheKey := preparedLocalBlastCacheKey(rel, program, dbURL, dbType)
+	c.mu.RLock()
+	if cached, ok := c.localBlastDBs[cacheKey]; ok {
+		c.mu.RUnlock()
+		parts := strings.SplitN(cached, "\n", 2)
+		if len(parts) == 2 && blastDBComplete(parts[1], dbType) {
+			return preparedLocalBlastDB{FASTAPath: parts[0], DBPrefix: parts[1]}, nil
+		}
+	} else {
+		c.mu.RUnlock()
+	}
+	if cached, ok := readCachedJSON[preparedLocalBlastDB]("localblast-prepared", cacheKey); ok {
+		if blastDBComplete(cached.DBPrefix, dbType) {
+			c.mu.Lock()
+			c.localBlastDBs[cacheKey] = cached.FASTAPath + "\n" + cached.DBPrefix
+			c.mu.Unlock()
+			return cached, nil
+		}
+	}
+
+	value, err, _ := c.sf.Do("tair-localblast-prepared:"+cacheKey, func() (any, error) {
+		c.mu.RLock()
+		if cached, ok := c.localBlastDBs[cacheKey]; ok {
+			c.mu.RUnlock()
+			parts := strings.SplitN(cached, "\n", 2)
+			if len(parts) == 2 && blastDBComplete(parts[1], dbType) {
+				return preparedLocalBlastDB{FASTAPath: parts[0], DBPrefix: parts[1]}, nil
+			}
+		} else {
+			c.mu.RUnlock()
+		}
+		if cached, ok := readCachedJSON[preparedLocalBlastDB]("localblast-prepared", cacheKey); ok {
+			if blastDBComplete(cached.DBPrefix, dbType) {
+				c.mu.Lock()
+				c.localBlastDBs[cacheKey] = cached.FASTAPath + "\n" + cached.DBPrefix
+				c.mu.Unlock()
+				return cached, nil
+			}
+		}
+
+		fastaPath, err := downloadToCache(ctx, c.httpClient, dbURL, dir)
+		if err != nil {
+			return preparedLocalBlastDB{}, err
+		}
+		dbPrefix := filepath.Join(dir, sanitizeFileName(strings.ToLower(program)+"_"+rel.Name)+"_db")
+		if err := ensureBlastDB(ctx, fastaPath, dbPrefix, dbType); err != nil {
+			return preparedLocalBlastDB{}, err
+		}
+		prepared := preparedLocalBlastDB{FASTAPath: fastaPath, DBPrefix: dbPrefix}
+		c.mu.Lock()
+		c.localBlastDBs[cacheKey] = prepared.FASTAPath + "\n" + prepared.DBPrefix
+		c.mu.Unlock()
+		writeCachedJSON("localblast-prepared", cacheKey, prepared)
+		return prepared, nil
+	})
+	if err != nil {
+		return preparedLocalBlastDB{}, err
+	}
+	return value.(preparedLocalBlastDB), nil
 }
 
 func localBlastDB(rel releaseInfo, program string) (string, string, error) {
@@ -161,6 +227,7 @@ func ensureBlastDB(ctx context.Context, fastaPath string, dbPrefix string, dbTyp
 	if !blastDBComplete(dbPrefix, dbType) {
 		return fmt.Errorf("makeblastdb completed but DB files are missing for %s", dbPrefix)
 	}
+	_ = markBlastDBPrepared(dbPrefix, dbType)
 	return nil
 }
 
@@ -190,6 +257,23 @@ func removeBlastDBFiles(prefix string) error {
 	matches, _ := filepath.Glob(prefix + ".*")
 	for _, match := range matches {
 		_ = os.Remove(match)
+	}
+	return nil
+}
+
+func preparedLocalBlastCacheKey(rel releaseInfo, program string, dbURL string, dbType string) string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{rel.Name, program, dbURL, dbType}, "|")))
+	return hex.EncodeToString(sum[:16])
+}
+
+func markBlastDBPrepared(dbPrefix string, dbType string) error {
+	if strings.TrimSpace(dbPrefix) == "" {
+		return nil
+	}
+	marker := dbPrefix + ".ready"
+	payload := []byte(strings.TrimSpace(dbType))
+	if err := os.WriteFile(marker, payload, 0o644); err != nil {
+		return err
 	}
 	return nil
 }
@@ -277,9 +361,12 @@ func localBlastQueryFASTA(input string) (string, map[string]int, int, error) {
 	lengths := map[string]int{}
 	current := ""
 	seen := map[string]int{}
+	skipCurrent := false
 	var seq strings.Builder
 	flush := func() error {
-		if current == "" {
+		if current == "" || skipCurrent {
+			skipCurrent = false
+			seq.Reset()
 			return nil
 		}
 		s := strings.ToUpper(strings.Join(strings.Fields(seq.String()), ""))
@@ -302,8 +389,19 @@ func localBlastQueryFASTA(input string) (string, map[string]int, int, error) {
 			if err := flush(); err != nil {
 				return "", nil, 0, err
 			}
-			current = uniqueQueryID(strings.TrimPrefix(line, ">"), len(lengths)+1, seen)
+			header := strings.TrimPrefix(line, ">")
+			if fastautil.IsIgnoredPHGONoteHeader(header) {
+				current = ""
+				skipCurrent = true
+				seq.Reset()
+				continue
+			}
+			skipCurrent = false
+			current = uniqueQueryID(header, len(lengths)+1, seen)
 			seq.Reset()
+			continue
+		}
+		if skipCurrent {
 			continue
 		}
 		if current == "" {
@@ -389,8 +487,10 @@ func buildFastaIndex(path string) (map[string]fastaEntry, error) {
 	index := make(map[string]fastaEntry)
 	header := ""
 	length := 0
+	skipCurrent := false
 	flush := func() {
-		if header == "" {
+		if header == "" || skipCurrent {
+			skipCurrent = false
 			return
 		}
 		entry := fastaEntry{Defline: header, Length: length}
@@ -403,7 +503,17 @@ func buildFastaIndex(path string) (map[string]fastaEntry, error) {
 		if strings.HasPrefix(line, ">") {
 			flush()
 			header = strings.TrimPrefix(line, ">")
+			if fastautil.IsIgnoredPHGONoteHeader(header) {
+				header = ""
+				length = 0
+				skipCurrent = true
+				continue
+			}
 			length = 0
+			skipCurrent = false
+			continue
+		}
+		if skipCurrent {
 			continue
 		}
 		length += len(strings.TrimSpace(line))
@@ -497,12 +607,29 @@ func enrichLocalBlastRows(ctx context.Context, c *Client, rel releaseInfo, versi
 		return
 	}
 	lookup := make(map[string]model.KeywordResultRow)
+	var index tairIndex
+	indexReady := false
+	if rel.GFFURL != "" {
+		if idx, err := c.cachedIndex(ctx, version); err == nil && len(idx.Rows) > 0 {
+			index = idx
+			indexReady = true
+		}
+	}
 	for i := range *rows {
 		row := &(*rows)[i]
 		row.Species = version.DisplayLabel()
 		row.JBrowseName = rel.Name
 		row.TargetID = version.ProteomeID
-		if hit, ok := lookup[strings.ToUpper(strings.TrimSpace(row.SequenceID))]; ok {
+		cacheKey := strings.ToUpper(strings.TrimSpace(row.SequenceID))
+		if hit, ok := lookup[cacheKey]; ok {
+			row.Protein = firstNonEmpty(hit.GeneIdentifier, hit.TranscriptID, row.Protein)
+			row.SequenceID = firstNonEmpty(hit.SequenceID, row.SequenceID)
+			row.TranscriptID = hit.TranscriptID
+			row.GeneReportURL = hit.GeneReportURL
+			row.Defline = firstNonEmpty(row.Defline, hit.Description)
+			row.UniProtAccession = hit.UniProt
+		} else if hit, ok := localBlastHitRow(indexReady, index, row.SequenceID); ok {
+			lookup[cacheKey] = hit
 			row.Protein = firstNonEmpty(hit.GeneIdentifier, hit.TranscriptID, row.Protein)
 			row.SequenceID = firstNonEmpty(hit.SequenceID, row.SequenceID)
 			row.TranscriptID = hit.TranscriptID
@@ -510,7 +637,7 @@ func enrichLocalBlastRows(ctx context.Context, c *Client, rel releaseInfo, versi
 			row.Defline = firstNonEmpty(row.Defline, hit.Description)
 			row.UniProtAccession = hit.UniProt
 		} else if liveHit, hitErr := c.findRow(ctx, version, row.SequenceID); hitErr == nil {
-			lookup[strings.ToUpper(strings.TrimSpace(row.SequenceID))] = liveHit
+			lookup[cacheKey] = liveHit
 			hit := liveHit
 			row.Protein = firstNonEmpty(hit.GeneIdentifier, hit.TranscriptID, row.Protein)
 			row.SequenceID = firstNonEmpty(hit.SequenceID, row.SequenceID)
@@ -523,6 +650,14 @@ func enrichLocalBlastRows(ctx context.Context, c *Client, rel releaseInfo, versi
 			row.GeneReportURL = rel.ReportURLBase + urlQueryEscape(stripTranscriptSuffix(row.SequenceID))
 		}
 	}
+}
+
+func localBlastHitRow(indexReady bool, index tairIndex, identifier string) (model.KeywordResultRow, bool) {
+	if !indexReady {
+		return model.KeywordResultRow{}, false
+	}
+	rows := (&Client{}).searchKeywordRowsByIdentifiers(index, identifierKeys(identifier), 8)
+	return bestMatchingRow(identifier, rows)
 }
 
 func lookupFastaEntry(index map[string]fastaEntry, id string) (fastaEntry, bool) {

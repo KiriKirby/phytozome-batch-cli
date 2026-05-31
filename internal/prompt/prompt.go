@@ -24,28 +24,31 @@ import (
 	"sync"
 
 	"github.com/KiriKirby/phytozome-go/internal/model"
+	"github.com/KiriKirby/phytozome-go/internal/phylo"
 	"github.com/KiriKirby/phytozome-go/internal/tui"
 )
 
 type Prompter struct {
-	out                   io.Writer
-	sessionPath           []string
-	blastProgramPath      string
-	homeNavigationEnabled bool
-	rowStates             map[string]tui.RowSelectionState
-	blastRunStates        map[string]tui.BlastRunSelectionState
-	keywordSelections     map[string][]bool
-	blastSelections       map[string][]bool
-	blastRunSelected      map[string][][]bool
-	blastFilterSettings   model.BlastFilterSettings
-	blastFilterFlags      map[string][]bool
-	blastRunFilterFlags   map[string][][]bool
-	lastExportSettings    ExportSettings
-	lastExternalRefs      ExternalReferenceSettings
-	externalRefsSet       bool
-	loadKeywordFASTA      func(row model.KeywordResultRow) (string, error)
-	loadBlastFASTA        func(row model.BlastResultRow) (string, error)
-	detailFASTACache      map[string]string
+	out                    io.Writer
+	sessionPath            []string
+	blastProgramPath       string
+	homeNavigationEnabled  bool
+	rowStates              map[string]tui.RowSelectionState
+	blastRunStates         map[string]tui.BlastRunSelectionState
+	keywordSelections      map[string][]bool
+	blastSelections        map[string][]bool
+	blastRunSelected       map[string][][]bool
+	canvasTreeStates       map[string]tui.CanvasTreePanelState
+	blastFilterSettings    model.BlastFilterSettings
+	blastFilterFlags       map[string][]bool
+	blastRunFilterFlags    map[string][][]bool
+	lastExportSettings     ExportSettings
+	lastExternalRefs       ExternalReferenceSettings
+	externalRefsSet        bool
+	loadKeywordFASTA       func(row model.KeywordResultRow) (string, error)
+	loadBlastFASTA         func(row model.BlastResultRow) (string, error)
+	canvasTreePanelChanged func(state tui.CanvasTreePanelState, opened bool)
+	detailFASTACache       map[string]string
 }
 
 type FamilySearchProvider func(keyword string, scope []model.SpeciesCandidate) []model.SpeciesCandidate
@@ -78,6 +81,10 @@ func ColumnHelpEnglish(id string) string {
 func (p *Prompter) SetDetailLoaders(keyword func(row model.KeywordResultRow) (string, error), blast func(row model.BlastResultRow) (string, error)) {
 	p.loadKeywordFASTA = keyword
 	p.loadBlastFASTA = blast
+}
+
+func (p *Prompter) SetCanvasTreePanelChanged(handler func(state tui.CanvasTreePanelState, opened bool)) {
+	p.canvasTreePanelChanged = handler
 }
 
 func detailPageIsFASTA(pageIndex int, itemIndex int, totalPages int) bool {
@@ -593,6 +600,8 @@ type CanvasSelection struct {
 	ActionRow     int
 	SaveBaseName  string
 	WriteSession  bool
+	TreeSettings  phylo.TreeSettings
+	TreePanel     tui.CanvasTreePanelState
 }
 
 type BlastRunView struct {
@@ -628,8 +637,11 @@ type ExportSettings struct {
 }
 
 type CanvasSaveSettings struct {
-	BaseName     string
-	WriteSession bool
+	BaseName        string
+	WriteSession    bool
+	WriteText       bool
+	FastaHeaderMode model.FastaHeaderMode
+	UsePhgoHeader   bool
 }
 
 type BlastFilterSettingsResult struct {
@@ -703,6 +715,7 @@ func New(in io.Reader, out io.Writer) *Prompter {
 		keywordSelections:     make(map[string][]bool),
 		blastSelections:       make(map[string][]bool),
 		blastRunSelected:      make(map[string][][]bool),
+		canvasTreeStates:      make(map[string]tui.CanvasTreePanelState),
 		blastFilterSettings:   model.DefaultBlastFilterSettings(),
 		blastFilterFlags:      make(map[string][]bool),
 		blastRunFilterFlags:   make(map[string][][]bool),
@@ -871,6 +884,31 @@ func (p *Prompter) ChooseMode() (string, error) {
 		return "", ErrExitRequested
 	}
 	return result.Value, nil
+}
+
+func (p *Prompter) NewickBrowserTarget(backTarget error) (string, error) {
+	result, err := tui.RunMultiLinePage(tui.MultiLinePage{
+		Path:           p.tuiPath("Startup", "Explore", "Tree viewer browser"),
+		Title:          p.t("Tree viewer browser"),
+		Description:    p.t("Enter one local .nwk/.pgv path, file:// link, or http(s) .nwk/.pgv URL. Press Enter to open it in a new browser page."),
+		AllowEmpty:     false,
+		RawInput:       true,
+		ConfirmOnEnter: true,
+		AllowBack:      true,
+		AllowHome:      p.allowHome(true),
+		ConfirmText:    tui.ButtonOpen,
+		Hints: []string{
+			p.t("Only one line is accepted here, and it must point to a .nwk or .pgv file."),
+			p.t("Each submission opens a new independent viewer page. Leaving this screen stops the local tree viewer service."),
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	if navErr := tuiNavError(result.Nav, backTarget); navErr != nil {
+		return "", navErr
+	}
+	return strings.TrimSpace(result.Text), nil
 }
 
 func (p *Prompter) ChooseBlastTargetDatabase() (string, error) {
@@ -3251,7 +3289,7 @@ func (p *Prompter) CanvasAddItemInput() (string, string, error) {
 	result, err := tui.RunMultiLinePage(tui.MultiLinePage{
 		Path:           p.tuiPath("Startup", "Explore", "Canvas", "Add canvas"),
 		Title:          "Add canvas",
-		Description:    "Paste FASTA / phgo FASTA text, or enter one snapshot path or output file name. FASTA creates a new canvas item. Snapshot import can bring in one or more saved tables.",
+		Description:    "Paste FASTA / phgo FASTA text, drop one FASTA file, or enter one .pgo session snapshot to create new canvas item(s).",
 		AllowEmpty:     false,
 		ConfirmOnEnter: false,
 		AllowBack:      true,
@@ -3271,7 +3309,7 @@ func (p *Prompter) CanvasAddRowsInput() (string, error) {
 	result, err := tui.RunMultiLinePage(tui.MultiLinePage{
 		Path:           p.tuiPath("Startup", "Explore", "Canvas", "Add rows"),
 		Title:          "Add rows",
-		Description:    "Paste FASTA / phgo FASTA text to append rows to the current canvas table. Snapshot import is not supported here.",
+		Description:    "Paste FASTA / phgo FASTA text to append rows to the current canvas table. Session snapshots (.pgo) can only be added from Add canvas.",
 		AllowEmpty:     false,
 		ConfirmOnEnter: false,
 		AllowBack:      true,
@@ -3285,63 +3323,6 @@ func (p *Prompter) CanvasAddRowsInput() (string, error) {
 		return "", navErr
 	}
 	return strings.TrimSpace(result.Text), nil
-}
-
-func (p *Prompter) SelectCanvasSnapshotItems(items []model.CanvasItem, title string) ([]int, error) {
-	if len(items) == 0 {
-		return nil, nil
-	}
-	rows := make([]tui.TableRow, 0, len(items))
-	columns := []tui.TableColumn{
-		{ID: "title", Header: "Title", Sortable: true},
-		{ID: "kind", Header: "Kind", Sortable: true},
-		{ID: "rows", Header: "Rows", Sortable: true},
-	}
-	selected := make([]bool, len(items))
-	for i, item := range items {
-		selected[i] = true
-		rows = append(rows, tui.TableRow{
-			Cells: []string{
-				strings.TrimSpace(firstNonEmptyText(item.Title, fmt.Sprintf("%d", i+1))),
-				string(item.Kind),
-				fmt.Sprintf("%d", len(item.Rows)),
-			},
-			Detail: strings.TrimSpace(item.Subtitle),
-		})
-	}
-	for {
-		result, err := tui.RunRowSelectionPage(tui.RowSelectionPage{
-			Path:         p.tuiPath("Startup", "Explore", "Canvas", "Import snapshot"),
-			Title:        "Import snapshot tables",
-			Description:  "Choose which tables to import from the frozen snapshot.",
-			Columns:      columns,
-			Rows:         rows,
-			Selected:     selected,
-			AllowBack:    true,
-			AllowHome:    p.allowHome(true),
-			ConfirmText:  tui.ButtonApply,
-			GenerateText: tui.ButtonApply,
-			State:        p.rowStates["canvas-import:"+strings.TrimSpace(title)],
-		})
-		if err != nil {
-			return nil, err
-		}
-		p.rowStates["canvas-import:"+strings.TrimSpace(title)] = result.State
-		if navErr := tuiNavError(result.Nav, ErrBackToRowSelection); navErr != nil {
-			return nil, navErr
-		}
-		selected = append([]bool(nil), result.Selected...)
-		if !result.GenerateFile {
-			continue
-		}
-		out := make([]int, 0, len(selected))
-		for i, ok := range selected {
-			if ok {
-				out = append(out, i)
-			}
-		}
-		return out, nil
-	}
 }
 
 func (p *Prompter) CanvasRenameInput(initial string) (string, error) {
@@ -3362,18 +3343,37 @@ func (p *Prompter) CanvasRenameInput(initial string) (string, error) {
 }
 
 func (p *Prompter) CanvasSaveSettings(defaultBaseName string, backTarget error) (CanvasSaveSettings, error) {
+	defaults := p.lastExportSettings
+	if strings.TrimSpace(defaults.FastaHeaderMode.String()) == "" {
+		defaults.FastaHeaderMode = model.FastaHeaderModePhgo
+		defaults.UsePhgoHeader = true
+	}
+	if !defaults.WriteText && !defaults.WriteSession {
+		defaults.WriteText = true
+		defaults.WriteSession = true
+	}
 	result, err := tui.RunExportSettingsModal(tui.ExportSettingsPage{
-		Path:           p.tuiPath("Startup", "Explore", "Canvas", "Save snapshot"),
-		Title:          "Save canvas snapshot",
-		Message:        p.t("Save the whole canvas as one .pgo snapshot. The file name controls the snapshot name."),
-		FileLabel:      "File name",
-		FileInitial:    strings.TrimSpace(defaultBaseName),
-		SessionLabel:   p.t("Save session snapshot (.pgo)"),
-		SessionInitial: true,
-		SnapshotOnly:   true,
-		AllowBack:      true,
-		AllowHome:      p.allowHome(true),
-		ConfirmText:    tui.ButtonSave,
+		Path:                p.tuiPath("Startup", "Explore", "Canvas", "Save snapshot"),
+		Title:               "Canvas export settings",
+		Message:             p.t("FASTA exports all selected canvas rows into one file in canvas order. Snapshot saves the whole canvas workspace as .pgo."),
+		FileLabel:           "File name",
+		FileInitial:         strings.TrimSpace(defaultBaseName),
+		SessionLabel:        p.t("Save canvas snapshot (.pgo)"),
+		SessionInitial:      defaults.WriteSession,
+		ShowReport:          false,
+		ShowSession:         true,
+		WriteText:           true,
+		WriteExcel:          false,
+		WriteRawExcel:       false,
+		ShowWriteText:       true,
+		ShowWriteExcel:      false,
+		ShowWriteRawExcel:   false,
+		ShowFastaHeaderMode: true,
+		FastaHeaderMode:     string(model.NormalizeFastaHeaderMode(defaults.FastaHeaderMode, defaults.UsePhgoHeader)),
+		UsePhgoHeader:       model.NormalizeFastaHeaderMode(defaults.FastaHeaderMode, defaults.UsePhgoHeader) == model.FastaHeaderModePhgo,
+		AllowBack:           true,
+		AllowHome:           p.allowHome(true),
+		ConfirmText:         tui.ButtonExport,
 	})
 	if err != nil {
 		return CanvasSaveSettings{}, err
@@ -3381,11 +3381,21 @@ func (p *Prompter) CanvasSaveSettings(defaultBaseName string, backTarget error) 
 	if navErr := tuiNavError(result.Nav, backTarget); navErr != nil {
 		return CanvasSaveSettings{}, navErr
 	}
-	baseName := sanitizeFileName(result.FileName)
-	if baseName == "" {
-		return CanvasSaveSettings{}, fmt.Errorf("file name cannot be empty")
+	settings := CanvasSaveSettings{
+		BaseName:        sanitizeFileName(result.FileName),
+		WriteSession:    result.WriteSession,
+		WriteText:       result.WriteText,
+		FastaHeaderMode: model.NormalizeFastaHeaderMode(model.FastaHeaderMode(result.FastaHeaderMode), result.UsePhgoHeader),
+		UsePhgoHeader:   result.UsePhgoHeader,
 	}
-	return CanvasSaveSettings{BaseName: baseName, WriteSession: result.WriteSession}, nil
+	p.lastExportSettings.BaseName = settings.BaseName
+	p.lastExportSettings.WriteSession = settings.WriteSession
+	p.lastExportSettings.WriteText = settings.WriteText
+	p.lastExportSettings.WriteExcel = false
+	p.lastExportSettings.WriteRawExcel = false
+	p.lastExportSettings.FastaHeaderMode = settings.FastaHeaderMode
+	p.lastExportSettings.UsePhgoHeader = settings.UsePhgoHeader
+	return settings, nil
 }
 
 func (p *Prompter) keywordWideSearchContext() bool {
@@ -4470,6 +4480,373 @@ func canvasRowWithSelectedAlias(row model.CanvasRow, alias string) model.CanvasR
 	return row
 }
 
+func canvasRowWithDisplayName(row model.CanvasRow, name string) model.CanvasRow {
+	row.DisplayName = strings.TrimSpace(name)
+	row.DisplayNameLocked = true
+	return row
+}
+
+func canvasRowWithTreeDisplayName(row model.CanvasRow, name string) model.CanvasRow {
+	row.DisplayName = strings.TrimSpace(name)
+	return row
+}
+
+func canvasRowDisplayName(row model.CanvasRow, fallback string) string {
+	if name := strings.TrimSpace(row.DisplayName); name != "" {
+		return name
+	}
+	if name := canvasRowColumnValue(row, "label_name", fallback); name != "" {
+		return name
+	}
+	return canvasRowOriginalHead(row, fallback)
+}
+
+func canvasRowOriginalHead(row model.CanvasRow, fallback string) string {
+	switch row.Kind {
+	case model.CanvasKindFasta:
+		if row.FASTA != nil {
+			return canvasFastaHead(*row.FASTA, fallback)
+		}
+	case model.CanvasKindKeyword:
+		if row.KeywordRow != nil {
+			return strings.TrimSpace(firstNonEmptyText(row.KeywordRow.SequenceHeaderLabel, row.KeywordRow.ProteinID, row.KeywordRow.TranscriptID, row.KeywordRow.GeneIdentifier, row.KeywordRow.LabelName, fallback))
+		}
+	case model.CanvasKindBlast:
+		if row.BlastRow != nil {
+			return strings.TrimSpace(firstNonEmptyText(row.BlastRow.SubjectID, row.BlastRow.Protein, row.BlastRow.SequenceID, row.BlastRow.TranscriptID, row.BlastRow.LabelName, fallback))
+		}
+	}
+	return strings.TrimSpace(fallback)
+}
+
+func canvasRowColumnValue(row model.CanvasRow, columnID string, fallback string) string {
+	columnID = strings.TrimSpace(columnID)
+	switch columnID {
+	case "source_type":
+		switch row.Kind {
+		case model.CanvasKindFasta:
+			if row.FASTA != nil {
+				return strings.TrimSpace(firstNonEmptyText(row.FASTA.SourceDatabase, string(model.CanvasKindFasta)))
+			}
+		case model.CanvasKindKeyword:
+			if row.KeywordRow != nil {
+				return strings.TrimSpace(firstNonEmptyText(row.KeywordRow.SourceDatabase, string(model.CanvasKindKeyword)))
+			}
+		case model.CanvasKindBlast:
+			if row.BlastRow != nil {
+				return strings.TrimSpace(firstNonEmptyText(row.BlastRow.SourceDatabase, string(model.CanvasKindBlast)))
+			}
+		}
+		return ""
+	case "head":
+		switch row.Kind {
+		case model.CanvasKindFasta:
+			if row.FASTA != nil {
+				return canvasFastaHead(*row.FASTA, fallback)
+			}
+		case model.CanvasKindKeyword:
+			if row.KeywordRow != nil {
+				return strings.TrimSpace(firstNonEmptyText(row.KeywordRow.SequenceHeaderLabel, row.KeywordRow.ProteinID, row.KeywordRow.TranscriptID, row.KeywordRow.GeneIdentifier))
+			}
+		case model.CanvasKindBlast:
+			if row.BlastRow != nil {
+				return strings.TrimSpace(firstNonEmptyText(row.BlastRow.SubjectID, row.BlastRow.Protein, row.BlastRow.SequenceID))
+			}
+		}
+		return ""
+	case "species":
+		switch row.Kind {
+		case model.CanvasKindFasta:
+			if row.FASTA != nil {
+				return strings.TrimSpace(row.FASTA.OrganismShort)
+			}
+		case model.CanvasKindKeyword:
+			if row.KeywordRow != nil {
+				return strings.TrimSpace(row.KeywordRow.Genome)
+			}
+		case model.CanvasKindBlast:
+			if row.BlastRow != nil {
+				return strings.TrimSpace(row.BlastRow.Species)
+			}
+		}
+		return ""
+	case "label_name":
+		switch row.Kind {
+		case model.CanvasKindFasta:
+			if row.FASTA != nil {
+				return strings.TrimSpace(row.FASTA.LabelName)
+			}
+		case model.CanvasKindKeyword:
+			if row.KeywordRow != nil {
+				return strings.TrimSpace(row.KeywordRow.LabelName)
+			}
+		case model.CanvasKindBlast:
+			if row.BlastRow != nil {
+				return strings.TrimSpace(row.BlastRow.LabelName)
+			}
+		}
+		return ""
+	case "gene_id":
+		switch row.Kind {
+		case model.CanvasKindFasta:
+			if row.FASTA != nil {
+				return strings.TrimSpace(row.FASTA.GeneID)
+			}
+		case model.CanvasKindKeyword:
+			if row.KeywordRow != nil {
+				return strings.TrimSpace(row.KeywordRow.GeneIdentifier)
+			}
+		case model.CanvasKindBlast:
+			if row.BlastRow != nil {
+				return strings.TrimSpace(firstNonEmptyText(row.BlastRow.SequenceID, row.BlastRow.TranscriptID, row.BlastRow.SubjectID, row.BlastRow.Protein))
+			}
+		}
+		return ""
+	case "source_label_name":
+		switch row.Kind {
+		case model.CanvasKindFasta:
+			if row.FASTA != nil {
+				return strings.TrimSpace(row.FASTA.BlastSourceLabelName)
+			}
+		case model.CanvasKindBlast:
+			if row.BlastRow != nil {
+				return strings.TrimSpace(row.BlastRow.BlastLabelName)
+			}
+		}
+		return ""
+	case "source_gene_id":
+		switch row.Kind {
+		case model.CanvasKindFasta:
+			if row.FASTA != nil {
+				return strings.TrimSpace(row.FASTA.BlastSourceGeneID)
+			}
+		case model.CanvasKindBlast:
+			if row.BlastRow != nil {
+				return strings.TrimSpace(row.BlastRow.BlastGeneID)
+			}
+		}
+		return ""
+	case "display_name":
+		return strings.TrimSpace(row.DisplayName)
+	default:
+		return canvasRowActiveColumnValue(row, columnID)
+	}
+}
+
+func canvasRowActiveColumnValue(row model.CanvasRow, columnID string) string {
+	columnID = strings.TrimSpace(columnID)
+	if columnID == "" {
+		return ""
+	}
+	switch row.Kind {
+	case model.CanvasKindKeyword:
+		if row.KeywordRow != nil {
+			return keywordColumnValue(*row.KeywordRow, columnID)
+		}
+	case model.CanvasKindBlast:
+		if row.BlastRow != nil {
+			return blastColumnValue(*row.BlastRow, columnID)
+		}
+	case model.CanvasKindFasta:
+		if row.FASTA != nil {
+			return canvasFastaActiveColumnValue(*row.FASTA, columnID)
+		}
+	}
+	return ""
+}
+
+func canvasFastaActiveColumnValue(source model.QuerySequenceSource, columnID string) string {
+	switch strings.TrimSpace(columnID) {
+	case "source_database":
+		return strings.TrimSpace(source.SourceDatabase)
+	case "label_name":
+		return strings.TrimSpace(source.LabelName)
+	case "phgo_alias":
+		return strings.TrimSpace(source.PhgoAliases)
+	case "alias":
+		return strings.TrimSpace(source.Aliases)
+	case "symbols":
+		return strings.TrimSpace(source.Symbols)
+	case "synonyms":
+		return strings.TrimSpace(source.Synonyms)
+	case "auto_define":
+		return strings.TrimSpace(source.AutoDefine)
+	case "gene_identifier", "geneid", "gene_id":
+		return strings.TrimSpace(source.GeneID)
+	case "transcript", "transcript_id":
+		return strings.TrimSpace(source.TranscriptID)
+	case "protein_id", "protein":
+		return strings.TrimSpace(source.ProteinID)
+	case "sequence_id":
+		return strings.TrimSpace(source.PreferredSequenceID)
+	case "genome", "species":
+		return strings.TrimSpace(source.OrganismShort)
+	case "description", "discripition", "annotation", "defline":
+		return strings.TrimSpace(source.Annotation)
+	case "blast_labelname":
+		return strings.TrimSpace(source.BlastSourceLabelName)
+	case "blast_geneid":
+		return strings.TrimSpace(source.BlastSourceGeneID)
+	default:
+		return ""
+	}
+}
+
+func keywordColumnValue(row model.KeywordResultRow, columnID string) string {
+	columnID = strings.TrimSpace(columnID)
+	if columnID == "" {
+		return ""
+	}
+	for _, def := range keywordDisplayColumns([]model.KeywordResultRow{row}) {
+		if def.ID == columnID && def.Value != nil {
+			return strings.TrimSpace(def.Value(row))
+		}
+	}
+	values := map[string]string{
+		"source_database":       row.SourceDatabase,
+		"search_term":           row.SearchTerm,
+		"search_type":           row.SearchType,
+		"label_name":            keywordLabelName(row),
+		"labelname_type":        row.LabelNameType,
+		"phgo_alias":            keywordPhgoAliases(row),
+		"protein_id":            row.ProteinID,
+		"transcript":            row.TranscriptID,
+		"transcript_id":         row.TranscriptID,
+		"gene_identifier":       row.GeneIdentifier,
+		"geneid":                row.GeneIdentifier,
+		"gene_id":               row.GeneIdentifier,
+		"genome":                row.Genome,
+		"species":               row.Genome,
+		"location":              row.Location,
+		"alias":                 row.Aliases,
+		"symbols":               row.Symbols,
+		"synonyms":              row.Synonyms,
+		"uniprot":               row.UniProt,
+		"description":           row.Description,
+		"comments":              row.Comments,
+		"auto_define":           row.AutoDefine,
+		"gene_report_url":       row.GeneReportURL,
+		"sequence_header_label": row.SequenceHeaderLabel,
+		"sequence_id":           row.SequenceID,
+	}
+	if value, ok := values[columnID]; ok {
+		return strings.TrimSpace(value)
+	}
+	if row.ExtraColumns != nil {
+		return strings.TrimSpace(row.ExtraColumns[columnID])
+	}
+	return ""
+}
+
+func blastColumnValue(row model.BlastResultRow, columnID string) string {
+	columnID = strings.TrimSpace(columnID)
+	if columnID == "" {
+		return ""
+	}
+	for _, def := range blastDisplayColumns([]model.BlastResultRow{row}) {
+		if def.ID == columnID && def.Value != nil {
+			return strings.TrimSpace(def.Value(row))
+		}
+	}
+	values := map[string]string{
+		"source_database":      row.SourceDatabase,
+		"blast_program":        row.BlastProgram,
+		"label_name":           blastLabelName(row),
+		"labelname_type":       row.LabelNameType,
+		"phgo_alias":           row.PhgoAliases,
+		"blast_labelname":      row.BlastLabelName,
+		"blast_geneid":         row.BlastGeneID,
+		"protein":              firstNonEmptyText(row.Protein, row.SubjectID),
+		"subject_id":           firstNonEmptyText(row.SubjectID, row.Protein),
+		"species":              row.Species,
+		"e_value":              row.EValue,
+		"percent_identity":     fmt.Sprintf("%.2f", row.PercentIdentity),
+		"uniprot_accession":    row.UniProtAccession,
+		"uniprot_entry_name":   row.UniProtEntryName,
+		"uniprot_reviewed":     row.UniProtReviewed,
+		"uniprot_protein_name": row.UniProtProteinName,
+		"uniprot_gene_names":   row.UniProtGeneNames,
+		"uniprot_keywords":     row.UniProtKeywords,
+		"uniprot_ec":           row.UniProtEC,
+		"uniprot_go":           row.UniProtGO,
+		"target_uniprot_canonical_length_percent": row.TargetUniProtCanonicalLengthPercent,
+		"align_query_length_percent":              blastAlignQueryLengthPercent(row),
+		"interpro_conserved_region_status":        row.InterProConservedRegionStatus,
+		"interpro_entry_name":                     row.InterProEntryName,
+		"interpro_entry_type":                     row.InterProEntryType,
+		"interpro_coverage_percent":               row.InterProCoveragePercent,
+		"interpro_match_regions":                  row.InterProMatchRegions,
+		"interpro_accessions":                     row.InterProAccessions,
+		"interpro_signature_accessions":           row.InterProSignatureAccessions,
+		"interpro_pfam_accessions":                row.InterProPfamAccessions,
+		"target_length":                           fmt.Sprintf("%d", row.TargetLength),
+		"align_len":                               fmt.Sprintf("%d", row.AlignLength),
+		"strands":                                 row.Strands,
+		"query_id":                                row.QueryID,
+		"query_from":                              fmt.Sprintf("%d", row.QueryFrom),
+		"query_to":                                fmt.Sprintf("%d", row.QueryTo),
+		"target_from":                             fmt.Sprintf("%d", row.TargetFrom),
+		"target_to":                               fmt.Sprintf("%d", row.TargetTo),
+		"bitscore":                                fmt.Sprintf("%.2f", row.Bitscore),
+		"mismatches":                              fmt.Sprintf("%d", row.Mismatches),
+		"gap_openings":                            fmt.Sprintf("%d", row.GapOpenings),
+		"identical":                               fmt.Sprintf("%d", row.Identical),
+		"positives":                               fmt.Sprintf("%d", row.Positives),
+		"gaps":                                    fmt.Sprintf("%d", row.Gaps),
+		"query_length":                            fmt.Sprintf("%d", row.QueryLength),
+		"uniprot_canonical_length":                row.UniProtCanonicalLength,
+		"jbrowse_name":                            row.JBrowseName,
+		"target_id":                               fmt.Sprintf("%d", row.TargetID),
+		"sequence_id":                             row.SequenceID,
+		"transcript_id":                           row.TranscriptID,
+		"transcript":                              row.TranscriptID,
+		"defline":                                 row.Defline,
+		"description":                             row.Defline,
+		"gene_report_url":                         row.GeneReportURL,
+	}
+	if value, ok := values[columnID]; ok {
+		return strings.TrimSpace(value)
+	}
+	return ""
+}
+
+func canvasDisplayNameSourceColumnIDs(columns []tui.TableColumn) []string {
+	out := make([]string, 0, len(columns))
+	for _, column := range columns {
+		id := strings.TrimSpace(column.ID)
+		if id == "" {
+			continue
+		}
+		switch id {
+		case "display_name", "source_row":
+			continue
+		default:
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func applyCanvasDisplayNameSource(item *model.CanvasItem, sourceColumnID string) {
+	if item == nil {
+		return
+	}
+	sourceColumnID = strings.TrimSpace(sourceColumnID)
+	if sourceColumnID == "" {
+		sourceColumnID = "label_name"
+	}
+	for i := range item.Rows {
+		if item.Rows[i].DisplayNameLocked {
+			continue
+		}
+		value := strings.TrimSpace(canvasRowColumnValue(item.Rows[i], sourceColumnID, item.Title))
+		if value == "" {
+			value = canvasRowOriginalHead(item.Rows[i], item.Title)
+		}
+		item.Rows[i] = canvasRowWithTreeDisplayName(item.Rows[i], value)
+	}
+}
+
 func promptAliasTextWithPinned(pin string, value string) string {
 	aliases := make([]string, 0, 1+len(splitPromptAliasText(value)))
 	if strings.TrimSpace(pin) != "" {
@@ -4535,31 +4912,50 @@ func buildBlastSelectionTable(rows []model.BlastResultRow) ([]tui.TableColumn, [
 	return columns, tableRows
 }
 
+func canvasDefaultFixedColumns() []model.CanvasColumn {
+	return []model.CanvasColumn{
+		{ID: "source_type", Header: "source type"},
+		{ID: "head", Header: "head"},
+		{ID: "species", Header: "species"},
+		{ID: "label_name", Header: "label_name"},
+		{ID: "gene_id", Header: "geneid"},
+		{ID: "source_label_name", Header: "blast_labelname"},
+		{ID: "source_gene_id", Header: "blast_geneid"},
+		{ID: "display_name", Header: "displayname"},
+	}
+}
+
+func canvasTableColumns(item model.CanvasItem) []model.CanvasColumn {
+	columns := canvasDefaultFixedColumns()
+	for _, column := range item.ActiveColumns {
+		id := strings.TrimSpace(column.ID)
+		if id == "" || strings.EqualFold(id, "label_name") {
+			continue
+		}
+		header := strings.TrimSpace(column.Header)
+		if header == "" {
+			header = ColumnDetailLabel(id, ColumnDisplayOptions{})
+		}
+		columns = append(columns, model.CanvasColumn{ID: id, Header: header})
+	}
+	return columns
+}
+
 func buildCanvasSelectionTable(item model.CanvasItem) ([]tui.TableColumn, []tui.TableRow) {
-	columns := []tui.TableColumn{
-		{ID: "source_type", Header: "source type", Sortable: true},
-		{ID: "head", Header: "head", Sortable: true},
-		{ID: "species", Header: "species", Sortable: true},
-		{ID: "label_name", Header: "label_name", Sortable: true},
-		{ID: "gene_id", Header: "geneid", Sortable: true},
-		{ID: "source_label_name", Header: "blast_labelname", Sortable: true},
-		{ID: "source_gene_id", Header: "blast_geneid", Sortable: true},
-		{ID: "source_row", Header: "source row", Sortable: true},
+	canvasColumns := canvasTableColumns(item)
+	columns := make([]tui.TableColumn, 0, len(canvasColumns))
+	for _, column := range canvasColumns {
+		columns = append(columns, tui.TableColumn{ID: column.ID, Header: column.Header, Sortable: true})
 	}
 	rows := make([]tui.TableRow, 0, len(item.Rows))
 	for _, row := range item.Rows {
 		view := canvasSelectionRowView(row, item.Title)
+		cells := make([]string, 0, len(canvasColumns))
+		for _, column := range canvasColumns {
+			cells = append(cells, canvasSelectionColumnValue(view, row, column.ID, item.Title))
+		}
 		rows = append(rows, tui.TableRow{
-			Cells: []string{
-				view.SourceType,
-				view.Head,
-				view.Species,
-				view.LabelName,
-				view.GeneID,
-				view.SourceLabelName,
-				view.SourceGeneID,
-				view.SourceRow,
-			},
+			Cells:         cells,
 			Detail:        view.Detail,
 			DetailPages:   view.DetailPages,
 			Selectable:    canvasRowHasSequence(row),
@@ -4567,6 +4963,40 @@ func buildCanvasSelectionTable(item model.CanvasItem) ([]tui.TableColumn, []tui.
 		})
 	}
 	return columns, rows
+}
+
+func CanvasVisibleRowOrder(item model.CanvasItem, sortState tui.TableSort) []int {
+	columns, rows := buildCanvasSelectionTable(item)
+	if sortState.Column < -1 || sortState.Column >= len(columns) {
+		sortState = tui.TableSort{Column: -1, Direction: tui.SortAscending}
+	}
+	if sortState.Column >= 0 && (sortState.Column >= len(columns) || !columns[sortState.Column].Sortable) {
+		sortState = tui.TableSort{Column: -1, Direction: tui.SortAscending}
+	}
+	return tui.SortedTableRowOrder(rows, sortState)
+}
+
+func canvasSelectionColumnValue(view canvasSelectionView, row model.CanvasRow, columnID string, fallback string) string {
+	switch strings.TrimSpace(columnID) {
+	case "source_type":
+		return view.SourceType
+	case "head":
+		return view.Head
+	case "species":
+		return view.Species
+	case "label_name":
+		return view.LabelName
+	case "gene_id":
+		return view.GeneID
+	case "source_label_name":
+		return view.SourceLabelName
+	case "source_gene_id":
+		return view.SourceGeneID
+	case "display_name":
+		return view.DisplayName
+	default:
+		return canvasRowColumnValue(row, columnID, fallback)
+	}
 }
 
 type canvasSelectionView struct {
@@ -4577,7 +5007,7 @@ type canvasSelectionView struct {
 	GeneID          string
 	SourceLabelName string
 	SourceGeneID    string
-	SourceRow       string
+	DisplayName     string
 	Detail          string
 	DetailPages     []tui.DetailPage
 }
@@ -4594,7 +5024,7 @@ func canvasSelectionRowView(row model.CanvasRow, fallback string) canvasSelectio
 				GeneID:          strings.TrimSpace(row.FASTA.GeneID),
 				SourceLabelName: strings.TrimSpace(row.FASTA.BlastSourceLabelName),
 				SourceGeneID:    strings.TrimSpace(row.FASTA.BlastSourceGeneID),
-				SourceRow:       canvasOptionalRowNumberText(row.FASTA.PhgoRowNumber, row.FASTA.PhgoHasRowNumber),
+				DisplayName:     canvasRowDisplayName(row, fallback),
 				Detail:          firstNonEmptyText(canvasFastaDetail(*row.FASTA), blastRowDetail(canvasFastaRowAsBlastRow(*row.FASTA, fallback))),
 				DetailPages:     canvasFastaDetailPages(*row.FASTA, fallback),
 			}
@@ -4608,6 +5038,7 @@ func canvasSelectionRowView(row model.CanvasRow, fallback string) canvasSelectio
 				Species:     strings.TrimSpace(row.KeywordRow.Genome),
 				LabelName:   strings.TrimSpace(row.KeywordRow.LabelName),
 				GeneID:      strings.TrimSpace(row.KeywordRow.GeneIdentifier),
+				DisplayName: canvasRowDisplayName(row, fallback),
 				Detail:      blastRowDetail(blastRow),
 				DetailPages: blastRowDetailPages(blastRow),
 			}
@@ -4622,12 +5053,13 @@ func canvasSelectionRowView(row model.CanvasRow, fallback string) canvasSelectio
 				GeneID:          strings.TrimSpace(firstNonEmptyText(row.BlastRow.SequenceID, row.BlastRow.TranscriptID, row.BlastRow.SubjectID, row.BlastRow.Protein)),
 				SourceLabelName: strings.TrimSpace(row.BlastRow.BlastLabelName),
 				SourceGeneID:    strings.TrimSpace(row.BlastRow.BlastGeneID),
+				DisplayName:     canvasRowDisplayName(row, fallback),
 				Detail:          blastRowDetail(*row.BlastRow),
 				DetailPages:     blastRowDetailPages(*row.BlastRow),
 			}
 		}
 	}
-	return canvasSelectionView{SourceType: string(row.Kind)}
+	return canvasSelectionView{SourceType: string(row.Kind), DisplayName: canvasRowDisplayName(row, fallback)}
 }
 
 func canvasRowHasSequence(row model.CanvasRow) bool {
@@ -4745,8 +5177,9 @@ func (p *Prompter) SelectCanvas(initial []model.CanvasItem, currentItem int, nex
 	}
 	views := func() []tui.BlastRunItem {
 		out := make([]tui.BlastRunItem, 0, len(items))
-		for _, item := range items {
-			columns, rows := buildCanvasSelectionTable(item)
+		for itemIndex := range items {
+			item := &items[itemIndex]
+			columns, rows := buildCanvasSelectionTable(*item)
 			selected := append([]bool(nil), item.Selected...)
 			if len(selected) != len(item.Rows) {
 				selected = make([]bool, len(item.Rows))
@@ -4759,17 +5192,15 @@ func (p *Prompter) SelectCanvas(initial []model.CanvasItem, currentItem int, nex
 					selected[i] = false
 				}
 			}
-			lineCount := fmt.Sprintf("%d/%d lines", len(item.Rows), len(item.Rows))
-			if strings.TrimSpace(item.Subtitle) != "" {
-				lineCount = item.Subtitle
-			}
+			item.Selected = append([]bool(nil), selected...)
+			item.Subtitle = canvasItemSelectionSummary(len(item.Rows), selected)
 			out = append(out, tui.BlastRunItem{
 				Label:       firstNonEmptyText(strings.TrimSpace(item.Title), "Canvas item"),
-				AltLabel:    strings.TrimSpace(item.Subtitle),
-				Description: lineCount,
+				AltLabel:    "",
+				Description: item.Subtitle,
 				Columns:     columns,
 				Rows:        rows,
-				RowNumbers:  canvasItemRowNumbers(item),
+				RowNumbers:  canvasItemRowNumbers(*item),
 				Selected:    selected,
 			})
 		}
@@ -4778,6 +5209,17 @@ func (p *Prompter) SelectCanvas(initial []model.CanvasItem, currentItem int, nex
 	for {
 		viewItems := views()
 		stateKey := "canvas:" + strings.TrimSpace(title)
+		treeSettings := phylo.DefaultTreeSettings()
+		if stored, ok := p.canvasTreeStates[stateKey]; ok {
+			treeSettings.DisplayNameSource = stored.DisplayNameSource
+			treeSettings.ConversionTarget = phylo.ConversionTarget(stored.ConversionTarget)
+			treeSettings.ConversionAction = phylo.ConversionAction(stored.ConversionAction)
+			treeSettings.ConversionSkipUnselect = stored.ConversionSkipUnselect
+			treeSettings.AlignmentMethod = phylo.AlignmentMethod(stored.AlignmentMethod)
+			treeSettings.AlignmentParams = cloneStringMap(stored.AlignmentParams)
+			treeSettings.TreeMethod = phylo.TreeMethod(stored.TreeMethod)
+			treeSettings.TreeParams = cloneStringMap(stored.TreeParams)
+		}
 		result, err := tui.RunCanvasPage(tui.CanvasPage{
 			Path:          p.tuiPath("Startup", "Explore", "Canvas"),
 			Title:         "Canvas",
@@ -4788,17 +5230,20 @@ func (p *Prompter) SelectCanvas(initial []model.CanvasItem, currentItem int, nex
 			AllowBack:     true,
 			AllowHome:     p.allowHome(true),
 			ConfirmText:   tui.ButtonView,
-			GenerateText:  "Save snapshot",
+			GenerateText:  tui.ButtonExport,
 			ExtraActions: []tui.Action{
-				{Value: "add_item", Label: "Add canvas", Shortcut: "F2", ListOnly: true, LeftPrimary: true},
-				{Value: "delete_item", Label: "Delete canvas", Shortcut: "F3", ListOnly: true, RequiresItems: true, LeftPrimary: true},
-				{Value: "rename_item", Label: "Rename canvas", Shortcut: "F4", ListOnly: true, RequiresItems: true, LeftPrimary: true},
-				{Value: "add_rows", Label: "Add row", Shortcut: "F2", TableOnly: true, RequiresItems: true, LeftPrimary: true},
-				{Value: "delete_rows", Label: "Delete row", Shortcut: "F3", TableOnly: true, RequiresItems: true, LeftPrimary: true},
-				{Value: "rename_row", Label: "Rename", Shortcut: "F4", TableOnly: true, RequiresItems: true, LeftPrimary: true},
+				{Value: "add_item", Label: "Add canvas", Shortcut: "Ctrl+D", ListOnly: true, LeftPrimary: true},
+				{Value: "delete_item", Label: "Delete canvas", Shortcut: "Del", ListOnly: true, RequiresItems: true, LeftPrimary: true},
+				{Value: "rename_item", Label: "Rename canvas", Shortcut: "F2", ListOnly: true, RequiresItems: true, LeftPrimary: true},
+				{Value: "add_rows", Label: "Add row", Shortcut: "Ctrl+D", TableOnly: true, RequiresItems: true, LeftPrimary: true},
+				{Value: "delete_rows", Label: "Delete row", Shortcut: "Del", TableOnly: true, RequiresItems: true, LeftPrimary: true},
+				{Value: "rename_row", Label: "Rename", Shortcut: "F2", TableOnly: true, RequiresItems: true, LeftPrimary: true},
+				{Value: "refresh_tree", Label: "Refresh tree", Shortcut: "Ctrl+R", RequiresItems: true, LeftPrimary: true},
+				{Value: "open_tree_viewer", Label: "Open preview", Shortcut: "Ctrl+P", RequiresItems: true, LeftPrimary: true},
 			},
 			State:         p.blastRunStates[stateKey],
 			AliasColumnID: "label_name",
+			TreePanel:     buildCanvasTreePanel(viewItems, items, treeSettings, p.canvasTreeStates[stateKey]),
 			LoadAliases: func(runIndex int, rowIndex int) tui.RowAliasChoices {
 				if runIndex < 0 || runIndex >= len(items) || rowIndex < 0 || rowIndex >= len(items[runIndex].Rows) {
 					return tui.RowAliasChoices{}
@@ -4820,6 +5265,60 @@ func (p *Prompter) SelectCanvas(initial []model.CanvasItem, currentItem int, nex
 					return tui.TableRow{}, fmt.Errorf("updated canvas row is unavailable")
 				}
 				return refreshedRows[rowIndex], nil
+			},
+			ApplyCellEdit: func(runIndex int, rowIndex int, columnID string, value string) (tui.TableRow, error) {
+				columnID = strings.TrimSpace(columnID)
+				if !strings.EqualFold(columnID, "display_name") {
+					return tui.TableRow{}, fmt.Errorf("%s is not editable in Canvas", columnID)
+				}
+				if runIndex < 0 || runIndex >= len(items) || rowIndex < 0 || rowIndex >= len(items[runIndex].Rows) {
+					return tui.TableRow{}, fmt.Errorf("no canvas row is selected")
+				}
+				items[runIndex].Rows[rowIndex] = canvasRowWithDisplayName(items[runIndex].Rows[rowIndex], value)
+				_, refreshedRows := buildCanvasSelectionTable(items[runIndex])
+				if rowIndex >= len(refreshedRows) {
+					return tui.TableRow{}, fmt.Errorf("updated canvas row is unavailable")
+				}
+				return refreshedRows[rowIndex], nil
+			},
+			ApplyTreeDisplayNameSource: func(sourceColumnID string) []tui.BlastRunItem {
+				for i := range items {
+					applyCanvasDisplayNameSource(&items[i], sourceColumnID)
+				}
+				nextView := make([]tui.BlastRunItem, 0, len(items))
+				for itemIndex := range items {
+					item := &items[itemIndex]
+					columns, rows := buildCanvasSelectionTable(*item)
+					selected := append([]bool(nil), item.Selected...)
+					if len(selected) != len(item.Rows) {
+						selected = make([]bool, len(item.Rows))
+						for i := range selected {
+							selected[i] = true
+						}
+					}
+					for i, row := range item.Rows {
+						if i < len(selected) && !canvasRowHasSequence(row) {
+							selected[i] = false
+						}
+					}
+					item.Selected = append([]bool(nil), selected...)
+					item.Subtitle = canvasItemSelectionSummary(len(item.Rows), selected)
+					nextView = append(nextView, tui.BlastRunItem{
+						Label:       firstNonEmptyText(strings.TrimSpace(item.Title), "Canvas item"),
+						AltLabel:    "",
+						Description: item.Subtitle,
+						Columns:     columns,
+						Rows:        rows,
+						RowNumbers:  canvasItemRowNumbers(*item),
+						Selected:    selected,
+					})
+				}
+				return nextView
+			},
+			TreePanelChanged: func(state tui.CanvasTreePanelState, opened bool) {
+				if p.canvasTreePanelChanged != nil {
+					p.canvasTreePanelChanged(state, opened)
+				}
 			},
 			LoadDetail: func(runIndex int, rowIndex int, pageIndex int, itemIndex int) (tui.DetailItem, bool, error) {
 				if runIndex < 0 || runIndex >= len(items) || rowIndex < 0 || rowIndex >= len(items[runIndex].Rows) {
@@ -4899,6 +5398,7 @@ func (p *Prompter) SelectCanvas(initial []model.CanvasItem, currentItem int, nex
 			return CanvasSelection{}, err
 		}
 		p.blastRunStates[stateKey] = result.State
+		p.canvasTreeStates[stateKey] = result.TreePanel
 		if navErr := tuiNavError(result.Nav, backTarget); navErr != nil {
 			return CanvasSelection{}, navErr
 		}
@@ -4907,6 +5407,7 @@ func (p *Prompter) SelectCanvas(initial []model.CanvasItem, currentItem int, nex
 				continue
 			}
 			items[i].Selected = append([]bool(nil), result.SelectedByRun[i]...)
+			items[i].Subtitle = canvasItemSelectionSummary(len(items[i].Rows), items[i].Selected)
 		}
 		return CanvasSelection{
 			Items:         items,
@@ -4915,14 +5416,306 @@ func (p *Prompter) SelectCanvas(initial []model.CanvasItem, currentItem int, nex
 			GenerateFile:  result.GenerateFile || result.DoneAll,
 			Action:        result.Action,
 			ActionRow:     result.ActionRow,
+			TreeSettings:  treeSettingsFromPanel(result.TreePanel),
+			TreePanel:     result.TreePanel,
 		}, nil
 	}
+}
+
+func buildCanvasTreePanel(items []tui.BlastRunItem, canvasItems []model.CanvasItem, settings phylo.TreeSettings, state tui.CanvasTreePanelState) tui.CanvasTreePanel {
+	displayNames := make([]tui.Choice, 0, 16)
+	if len(items) > 0 || len(canvasItems) > 0 {
+		for _, column := range canvasDefaultFixedColumns() {
+			id := strings.TrimSpace(column.ID)
+			if id == "" || strings.EqualFold(id, "display_name") || strings.EqualFold(id, "source_row") {
+				continue
+			}
+			displayNames = append(displayNames, tui.Choice{Value: id, Label: firstNonEmptyText(strings.TrimSpace(column.Header), id)})
+		}
+	}
+	if len(displayNames) == 0 {
+		displayNames = append(displayNames, tui.Choice{Value: phylo.DefaultDisplayNameSource, Label: "label_name"})
+	}
+	inputSequenceKind := canvasTreePanelSequenceKind(canvasItems)
+	settings = treeSettingsWithPanelConversionState(settings, state)
+	sequenceKind := canvasTreeTargetSequenceKind(settings)
+	settings = phylo.NormalizeTreeSettingsForKind(settings, sequenceKind)
+	alignmentByTarget := map[string][]tui.CanvasTreeMethod{
+		string(phylo.ConversionTargetProtein): canvasTreeAlignmentMethodsForKind(phylo.SequenceProtein, settings.AlignmentParams),
+		string(phylo.ConversionTargetDNA):     canvasTreeAlignmentMethodsForKind(phylo.SequenceNucleotide, settings.AlignmentParams),
+	}
+	treeByTarget := map[string][]tui.CanvasTreeMethod{
+		string(phylo.ConversionTargetProtein): canvasTreeTreeMethodsForKind(phylo.SequenceProtein, settings.TreeParams),
+		string(phylo.ConversionTargetDNA):     canvasTreeTreeMethodsForKind(phylo.SequenceNucleotide, settings.TreeParams),
+	}
+	alignmentMethods := alignmentByTarget[string(settings.ConversionTarget)]
+	treeMethods := treeByTarget[string(settings.ConversionTarget)]
+	if state.DisplayNameSource == "" {
+		state.DisplayNameSource = settings.DisplayNameSource
+	}
+	hadConversionState := strings.TrimSpace(state.ConversionTarget) != "" || strings.TrimSpace(state.ConversionAction) != ""
+	if strings.TrimSpace(state.ConversionTarget) == "" {
+		state.ConversionTarget = string(settings.ConversionTarget)
+	}
+	if strings.TrimSpace(state.ConversionAction) == "" {
+		state.ConversionAction = string(settings.ConversionAction)
+	}
+	if !hadConversionState && !state.ConversionSkipUnselect {
+		state.ConversionSkipUnselect = true
+	}
+	if state.AlignmentMethod == "" || !canvasTreeMethodIDAvailable(alignmentMethods, state.AlignmentMethod) {
+		state.AlignmentMethod = string(settings.AlignmentMethod)
+		if !canvasTreeMethodIDAvailable(alignmentMethods, state.AlignmentMethod) && len(alignmentMethods) > 0 {
+			state.AlignmentMethod = strings.TrimSpace(alignmentMethods[0].ID)
+		}
+	}
+	if state.TreeMethod == "" || !canvasTreeMethodIDAvailable(treeMethods, state.TreeMethod) {
+		state.TreeMethod = string(settings.TreeMethod)
+		if !canvasTreeMethodIDAvailable(treeMethods, state.TreeMethod) && len(treeMethods) > 0 {
+			state.TreeMethod = strings.TrimSpace(treeMethods[0].ID)
+		}
+	}
+	if state.AlignmentParams == nil {
+		state.AlignmentParams = cloneStringMap(settings.AlignmentParams)
+	}
+	if state.TreeParams == nil {
+		state.TreeParams = cloneStringMap(settings.TreeParams)
+	}
+	state.EnabledEver = state.EnabledEver || len(items) > 0
+	return tui.CanvasTreePanel{
+		Available:          len(items) > 0,
+		State:              state,
+		DisplayNameSources: displayNames,
+		AlignmentMethods:   alignmentMethods,
+		TreeMethods:        treeMethods,
+		AlignmentByTarget:  alignmentByTarget,
+		TreeByTarget:       treeByTarget,
+		Status:             canvasTreePanelStatus(inputSequenceKind, sequenceKind, settings),
+	}
+}
+
+func treeSettingsWithPanelConversionState(settings phylo.TreeSettings, state tui.CanvasTreePanelState) phylo.TreeSettings {
+	settings = phylo.NormalizeTreeSettings(settings)
+	if strings.TrimSpace(state.ConversionTarget) != "" {
+		settings.ConversionTarget = phylo.ConversionTarget(strings.TrimSpace(state.ConversionTarget))
+	}
+	if strings.TrimSpace(state.ConversionAction) != "" {
+		settings.ConversionAction = phylo.ConversionAction(strings.TrimSpace(state.ConversionAction))
+	}
+	if strings.TrimSpace(state.ConversionTarget) != "" || strings.TrimSpace(state.ConversionAction) != "" {
+		settings.ConversionSkipUnselect = state.ConversionSkipUnselect
+	}
+	return phylo.NormalizeTreeSettings(settings)
+}
+
+func canvasTreeTargetSequenceKind(settings phylo.TreeSettings) phylo.SequenceKind {
+	settings = phylo.NormalizeTreeSettings(settings)
+	if settings.ConversionTarget == phylo.ConversionTargetDNA {
+		return phylo.SequenceNucleotide
+	}
+	return phylo.SequenceProtein
+}
+
+func canvasTreeAlignmentMethodsForKind(kind phylo.SequenceKind, params map[string]string) []tui.CanvasTreeMethod {
+	defs := phylo.AlignmentDefinitionsForKind(kind)
+	methods := make([]tui.CanvasTreeMethod, 0, len(defs))
+	for _, def := range defs {
+		methods = append(methods, canvasTreeMethodFromDefinition(def, params))
+	}
+	return methods
+}
+
+func canvasTreeTreeMethodsForKind(kind phylo.SequenceKind, params map[string]string) []tui.CanvasTreeMethod {
+	defs := phylo.TreeDefinitionsForKind(kind)
+	methods := make([]tui.CanvasTreeMethod, 0, len(defs))
+	for _, def := range defs {
+		methods = append(methods, canvasTreeMethodFromDefinition(def, params))
+	}
+	return methods
+}
+
+func canvasTreePanelStatus(inputKind phylo.SequenceKind, targetKind phylo.SequenceKind, settings phylo.TreeSettings) string {
+	target := "protein"
+	if targetKind == phylo.SequenceNucleotide {
+		target = "DNA"
+	}
+	switch inputKind {
+	case phylo.SequenceNucleotide:
+		return fmt.Sprintf("mega-phgo-runtime will prepare %s tree input from selected nucleotide rows; Reactree consumes generated artifacts.", target)
+	case phylo.SequenceProtein:
+		return fmt.Sprintf("mega-phgo-runtime will prepare %s tree input from selected protein rows; Reactree consumes generated artifacts.", target)
+	default:
+		action := "convert"
+		if settings.ConversionAction == phylo.ConversionActionSkip {
+			action = "skip"
+		}
+		return fmt.Sprintf("mega-phgo-runtime handles mixed/unknown rows with target=%s and mismatch=%s before Reactree preview.", target, action)
+	}
+}
+
+func canvasTreeMethodIDAvailable(methods []tui.CanvasTreeMethod, id string) bool {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false
+	}
+	for _, method := range methods {
+		if strings.EqualFold(strings.TrimSpace(method.ID), id) {
+			return true
+		}
+	}
+	return false
+}
+
+func canvasTreePanelSequenceKind(items []model.CanvasItem) phylo.SequenceKind {
+	kind := phylo.SequenceUnknown
+	for _, item := range items {
+		selected := normalizePromptCanvasSelection(item.Selected, len(item.Rows))
+		for i, row := range item.Rows {
+			if i >= len(selected) || !selected[i] || !canvasRowHasSequence(row) {
+				continue
+			}
+			rowKind := canvasTreeRowSequenceKind(row)
+			if rowKind == phylo.SequenceUnknown {
+				continue
+			}
+			if kind == phylo.SequenceUnknown {
+				kind = rowKind
+				continue
+			}
+			if kind != rowKind {
+				return phylo.SequenceUnknown
+			}
+		}
+	}
+	return kind
+}
+
+func normalizePromptCanvasSelection(selected []bool, size int) []bool {
+	if size <= 0 {
+		return nil
+	}
+	if len(selected) == size {
+		return append([]bool(nil), selected...)
+	}
+	out := make([]bool, size)
+	copy(out, selected)
+	return out
+}
+
+func canvasTreeRowSequenceKind(row model.CanvasRow) phylo.SequenceKind {
+	switch row.Kind {
+	case model.CanvasKindFasta:
+		if row.FASTA == nil {
+			return phylo.SequenceUnknown
+		}
+		if row.FASTA.SequenceKind == model.SequenceDNA {
+			return phylo.SequenceNucleotide
+		}
+		if row.FASTA.SequenceKind == model.SequenceProtein {
+			return phylo.SequenceProtein
+		}
+		return promptInferPhyloSequenceKind(firstNonEmptyText(row.FASTA.Sequence, row.FASTA.NucleotideSequence, row.FASTA.ProteinSequence))
+	case model.CanvasKindKeyword, model.CanvasKindBlast:
+		return phylo.SequenceProtein
+	default:
+		return phylo.SequenceUnknown
+	}
+}
+
+func promptInferPhyloSequenceKind(sequence string) phylo.SequenceKind {
+	sequence = strings.TrimSpace(sequence)
+	if sequence == "" {
+		return phylo.SequenceUnknown
+	}
+	dna, protein := 0, 0
+	for _, ch := range sequence {
+		switch {
+		case ch == '-' || ch == '*' || ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t':
+			continue
+		case strings.ContainsRune("ACGTUNacgtun", ch):
+			dna++
+		case (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z'):
+			protein++
+		default:
+			return phylo.SequenceUnknown
+		}
+	}
+	if protein > 0 {
+		return phylo.SequenceProtein
+	}
+	if dna > 0 {
+		return phylo.SequenceNucleotide
+	}
+	return phylo.SequenceUnknown
+}
+
+func canvasTreeMethodFromDefinition(def phylo.MethodDefinition, current map[string]string) tui.CanvasTreeMethod {
+	params := make([]tui.CanvasTreeParameter, 0, len(def.Parameters))
+	for _, param := range def.Parameters {
+		value := param.Default
+		if current != nil {
+			if stored, ok := current[param.ID]; ok {
+				value = stored
+			}
+		}
+		params = append(params, tui.CanvasTreeParameter{
+			ID:       param.ID,
+			Label:    param.Label,
+			Kind:     string(param.Kind),
+			Value:    value,
+			Default:  param.Default,
+			Options:  append([]string(nil), param.Options...),
+			ReadOnly: param.ReadOnly,
+			Section:  param.Kind == phylo.ParameterSection,
+		})
+	}
+	return tui.CanvasTreeMethod{ID: def.ID, Label: def.Label, Parameters: params}
+}
+
+func treeSettingsFromPanel(panel tui.CanvasTreePanelState) phylo.TreeSettings {
+	return phylo.NormalizeTreeSettings(phylo.TreeSettings{
+		DisplayNameSource:      strings.TrimSpace(panel.DisplayNameSource),
+		ConversionTarget:       phylo.ConversionTarget(strings.TrimSpace(panel.ConversionTarget)),
+		ConversionAction:       phylo.ConversionAction(strings.TrimSpace(panel.ConversionAction)),
+		ConversionSkipUnselect: panel.ConversionSkipUnselect,
+		AlignmentMethod:        phylo.AlignmentMethod(strings.TrimSpace(panel.AlignmentMethod)),
+		AlignmentParams:        cloneStringMap(panel.AlignmentParams),
+		TreeMethod:             phylo.TreeMethod(strings.TrimSpace(panel.TreeMethod)),
+		TreeParams:             cloneStringMap(panel.TreeParams),
+	})
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
+
+func canvasItemSelectionSummary(total int, selected []bool) string {
+	if total < 0 {
+		total = 0
+	}
+	selectedCount := 0
+	for _, ok := range selected {
+		if ok {
+			selectedCount++
+		}
+	}
+	if selectedCount > total {
+		selectedCount = total
+	}
+	return fmt.Sprintf("%d/%d lines", selectedCount, total)
 }
 
 func canvasItemRowNumbers(item model.CanvasItem) []int {
 	out := make([]int, len(item.Rows))
 	for i, row := range item.Rows {
-		if row.RowNumber > 0 {
+		if row.RowNumber != 0 {
 			out[i] = row.RowNumber
 			continue
 		}
@@ -4971,18 +5764,25 @@ func cloneCanvasItems(items []model.CanvasItem) []model.CanvasItem {
 	out := make([]model.CanvasItem, len(items))
 	for i := range items {
 		out[i] = model.CanvasItem{
-			Title:        items[i].Title,
-			Subtitle:     items[i].Subtitle,
-			Kind:         items[i].Kind,
-			Selected:     append([]bool(nil), items[i].Selected...),
-			SourceLabel:  items[i].SourceLabel,
-			ImportedFrom: items[i].ImportedFrom,
-			Rows:         make([]model.CanvasRow, len(items[i].Rows)),
+			Title:         items[i].Title,
+			Subtitle:      items[i].Subtitle,
+			Kind:          items[i].Kind,
+			Selected:      append([]bool(nil), items[i].Selected...),
+			SourceLabel:   items[i].SourceLabel,
+			ImportedFrom:  items[i].ImportedFrom,
+			ActiveColumns: append([]model.CanvasColumn(nil), items[i].ActiveColumns...),
+			Rows:          make([]model.CanvasRow, len(items[i].Rows)),
 		}
 		for j := range items[i].Rows {
 			row := items[i].Rows[j]
 			out[i].Rows[j].RowNumber = row.RowNumber
 			out[i].Rows[j].Kind = row.Kind
+			out[i].Rows[j].DisplayName = row.DisplayName
+			out[i].Rows[j].DisplayNameLocked = row.DisplayNameLocked
+			if row.SequenceData != nil {
+				copySequence := *row.SequenceData
+				out[i].Rows[j].SequenceData = &copySequence
+			}
 			if row.SequenceReady != nil {
 				ready := *row.SequenceReady
 				out[i].Rows[j].SequenceReady = &ready
@@ -5670,6 +6470,8 @@ func (p *Prompter) ExportSettingsWithOptions(label string, allowFolder bool, all
 		AllowEmptyFile:         allowEmptyFileName,
 		ReportLabel:            p.t("Data analysis report (PDF)"),
 		ReportInitial:          defaults.WriteReport,
+		ShowReport:             true,
+		ShowSession:            true,
 		AllowBack:              true,
 		AllowHome:              p.allowHome(true),
 		ConfirmText:            tui.ButtonExport,
@@ -5678,6 +6480,10 @@ func (p *Prompter) ExportSettingsWithOptions(label string, allowFolder bool, all
 		WriteText:              defaults.WriteText,
 		WriteExcel:             defaults.WriteExcel,
 		WriteRawExcel:          defaults.WriteRawExcel,
+		ShowWriteText:          true,
+		ShowWriteExcel:         true,
+		ShowWriteRawExcel:      true,
+		ShowFastaHeaderMode:    true,
 		FastaHeaderMode:        string(model.NormalizeFastaHeaderMode(defaults.FastaHeaderMode, defaults.UsePhgoHeader)),
 		UsePhgoHeader:          model.NormalizeFastaHeaderMode(defaults.FastaHeaderMode, defaults.UsePhgoHeader) == model.FastaHeaderModePhgo,
 		FileInitial:            defaults.BaseName,
@@ -6002,6 +6808,35 @@ func (p *Prompter) BlastPlusInstallAction(description string) (string, error) {
 	}
 	return "", ErrDialogClosed
 
+}
+
+// TreeRuntimeInstallAction prompts the user when the phylogenetic tree tools need the app-local PHgo runtime folder.
+// It returns:
+//   - "install" : download and populate the app-local mega-phgo-runtime folder
+func (p *Prompter) TreeRuntimeInstallAction(description string) (string, error) {
+	result, err := tui.RunActionModalPage(tui.ActionModalPage{
+		Path:    p.tuiPath("Startup", "Canvas", "Tree tools"),
+		Title:   p.t("PHgo runtime required"),
+		Message: "The PHgo tree runtime is required for phylogenetic tree alignment and tree inference.\n\n" + strings.TrimSpace(description) + "\n\nDownload and populate the application-local mega-phgo-runtime folder now, then continue opening the tree tools?",
+		Actions: []tui.Action{
+			{Value: "close", Label: tui.ButtonClose},
+		},
+		ConfirmText:  tui.ButtonInstall,
+		ConfirmValue: "install",
+	})
+	if err != nil {
+		return "", err
+	}
+	if navErr := tuiNavError(result.Nav, ErrBackToQueryInput); navErr != nil {
+		return "", navErr
+	}
+	if result.Value == "close" || result.Value == "" {
+		return "", ErrDialogClosed
+	}
+	if result.Value != "" {
+		return result.Value, nil
+	}
+	return "", ErrDialogClosed
 }
 
 func parseKeywordIdentityValues(lines []string) []string {

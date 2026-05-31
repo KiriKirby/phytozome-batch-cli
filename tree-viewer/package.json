@@ -1,0 +1,20 @@
+{
+  "name": "phytozome-go-tree-viewer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node src/labels.test.mjs",
+    "patch:reactree": "node scripts/patch-reactree-dpi.mjs",
+    "build": "npm run patch:reactree && vite build"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^5.1.1",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "reactreejs": "^1.0.3",
+    "svg2pdf.js": "^2.6.0",
+    "vite": "^7.2.7"
+  },
+  "devDependencies": {}
+}

@@ -48,15 +48,24 @@ function Restore-EnvValue {
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent $scriptDir
+. (Join-Path $scriptDir "mega-phgo-runtime-release.ps1")
 $binDir = Join-Path $repoRoot "bin"
 $zipPath = Join-Path $binDir "phytozome-go_windows_amd64_wezterm.zip"
 $linuxArchivePath = Join-Path $binDir "phytozome-go_linux_amd64_wezterm.tar.gz"
 $macIntelArchivePath = Join-Path $binDir "phytozome-go_macos_amd64_wezterm.tar.gz"
 $macArmArchivePath = Join-Path $binDir "phytozome-go_macos_arm64_wezterm.tar.gz"
+$megaPHGORuntimeRoot = Join-Path $repoRoot "assets\mega-phgo-runtime"
+$megaPHGOWindowsRuntime = Join-Path $megaPHGORuntimeRoot "windows-amd64\runtime"
+$megaPHGOLinuxRuntime = Join-Path $megaPHGORuntimeRoot "linux-amd64\runtime"
+$megaPHGOMacRuntime = Join-Path $megaPHGORuntimeRoot "macos-amd64\runtime"
 
 if ([string]::IsNullOrWhiteSpace($BuildVersion)) {
     $BuildVersion = "v" + (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
 }
+
+$megaPHGOWindowsArchivePath = Join-Path $binDir (Get-MegaPHGORuntimeAssetName -Platform "windows-amd64" -RepoRoot $repoRoot)
+$megaPHGOLinuxArchivePath = Join-Path $binDir (Get-MegaPHGORuntimeAssetName -Platform "linux-amd64" -RepoRoot $repoRoot)
+$megaPHGOMacArchivePath = Join-Path $binDir (Get-MegaPHGORuntimeAssetName -Platform "macos-amd64" -RepoRoot $repoRoot)
 
 Push-Location $repoRoot
 try {
@@ -80,6 +89,10 @@ try {
         Invoke-Checked "go build ./..." { go build ./... }
     }
 
+    Invoke-Checked "Reactree tree viewer assets" {
+        powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-tree-viewer.ps1
+    }
+
     Invoke-Checked "Windows WezTerm package" {
         powershell -NoProfile -ExecutionPolicy Bypass -File scripts\package-windows-wezterm.ps1 -Version $WezTermVersion -BuildVersion $BuildVersion
     }
@@ -91,6 +104,12 @@ try {
     }
     Invoke-Checked "macOS Apple Silicon WezTerm package" {
         powershell -NoProfile -ExecutionPolicy Bypass -File scripts\package-macos-wezterm.ps1 -Version $WezTermVersion -BuildVersion $BuildVersion -GOARCH arm64
+    }
+    Invoke-Checked "mega-phgo-runtime preparation" {
+        powershell -NoProfile -ExecutionPolicy Bypass -File scripts\prepare-mega-phgo-runtime.ps1
+    }
+    Invoke-Checked "mega-phgo-runtime assets" {
+        powershell -NoProfile -ExecutionPolicy Bypass -File scripts\package-mega-phgo-runtime.ps1
     }
 
     $entries = @(tar -tf $zipPath)
@@ -170,6 +189,11 @@ try {
         "bin\phytozome-go_macos_amd64_wezterm.tar.gz",
         "bin\phytozome-go_macos_arm64_wezterm.tar.gz"
     )
+    foreach ($runtimeAsset in @($megaPHGOWindowsArchivePath, $megaPHGOLinuxArchivePath, $megaPHGOMacArchivePath)) {
+        if (Test-Path -LiteralPath $runtimeAsset -PathType Leaf) {
+            $assets += $runtimeAsset
+        }
+    }
     $hashLines = foreach ($asset in $assets) {
         $item = Get-Item -LiteralPath $asset
         $hash = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -205,6 +229,12 @@ try {
             $ReleaseTitle = "phytozome GO $BuildVersion"
         }
         if ([string]::IsNullOrWhiteSpace($ReleaseNotes)) {
+            $runtimeReleaseAssets = @()
+            foreach ($runtimeAsset in @($megaPHGOWindowsArchivePath, $megaPHGOLinuxArchivePath, $megaPHGOMacArchivePath)) {
+                if (Test-Path -LiteralPath $runtimeAsset -PathType Leaf) {
+                    $runtimeReleaseAssets += [System.IO.Path]::GetFileName($runtimeAsset)
+                }
+            }
             $ReleaseNotes = @"
 Release $BuildVersion
 
@@ -221,15 +251,26 @@ Assets:
 - phytozome-go_macos_arm64_wezterm.tar.gz
 - SHA256SUMS.txt
 "@
+            if ($runtimeReleaseAssets.Count -gt 0) {
+                $ReleaseNotes += (($runtimeReleaseAssets | ForEach-Object { "- $_" }) -join [Environment]::NewLine) + [Environment]::NewLine
+            }
         }
 
         Invoke-Checked "GitHub release $BuildVersion" {
+            $releaseAssets = @(
+                "bin\phytozome-go_windows_amd64_wezterm.zip",
+                "bin\phytozome-go_linux_amd64_wezterm.tar.gz",
+                "bin\phytozome-go_macos_amd64_wezterm.tar.gz",
+                "bin\phytozome-go_macos_arm64_wezterm.tar.gz",
+                "bin\SHA256SUMS.txt"
+            )
+            foreach ($runtimeAsset in @($megaPHGOWindowsArchivePath, $megaPHGOLinuxArchivePath, $megaPHGOMacArchivePath)) {
+                if (Test-Path -LiteralPath $runtimeAsset -PathType Leaf) {
+                    $releaseAssets += $runtimeAsset
+                }
+            }
             gh release create $BuildVersion `
-                bin\phytozome-go_windows_amd64_wezterm.zip `
-                bin\phytozome-go_linux_amd64_wezterm.tar.gz `
-                bin\phytozome-go_macos_amd64_wezterm.tar.gz `
-                bin\phytozome-go_macos_arm64_wezterm.tar.gz `
-                bin\SHA256SUMS.txt `
+                @releaseAssets `
                 --title $ReleaseTitle `
                 --notes $ReleaseNotes
         }

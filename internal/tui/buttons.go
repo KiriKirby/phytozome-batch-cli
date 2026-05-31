@@ -56,6 +56,7 @@ const (
 	ShortcutFilter      = "Ctrl+F"
 	ShortcutExport      = "Ctrl+G"
 	ShortcutExportAll   = "Ctrl+D"
+	ShortcutPreview     = "Ctrl+P"
 	ShortcutBlast       = "Ctrl+B"
 	ShortcutRetry       = "Ctrl+R"
 	ShortcutWideSearch  = "Ctrl+W"

@@ -27,6 +27,7 @@ import (
 
 	"github.com/KiriKirby/phytozome-go/internal/appfs"
 	"github.com/KiriKirby/phytozome-go/internal/blastplus"
+	"github.com/KiriKirby/phytozome-go/internal/fastautil"
 	"github.com/KiriKirby/phytozome-go/internal/model"
 	phygoboost "github.com/KiriKirby/phytozome-go/internal/phygoboost"
 	"github.com/KiriKirby/phytozome-go/internal/progressctx"
@@ -1205,8 +1206,11 @@ func localBlastQueryFASTA(input string) (string, map[string]int, int, error) {
 	entryCount := 0
 	currentHeader := ""
 	currentID := ""
+	skipCurrent := false
 	flush := func() error {
-		if currentHeader == "" {
+		if currentHeader == "" || skipCurrent {
+			skipCurrent = false
+			seq.Reset()
 			return nil
 		}
 		cleanSeq := localBlastSanitizeSequence(seq.String())
@@ -1238,7 +1242,18 @@ func localBlastQueryFASTA(input string) (string, map[string]int, int, error) {
 				return "", nil, 0, err
 			}
 			currentHeader = sanitizeFastaHeader(strings.TrimSpace(strings.TrimPrefix(line, ">")))
+			if fastautil.IsIgnoredPHGONoteHeader(currentHeader) {
+				currentHeader = ""
+				currentID = ""
+				skipCurrent = true
+				seq.Reset()
+				continue
+			}
+			skipCurrent = false
 			currentID = uniqueFastaQueryID(currentHeader, entryCount+1, seenIDs)
+			continue
+		}
+		if skipCurrent {
 			continue
 		}
 		if currentHeader == "" {
@@ -1616,21 +1631,32 @@ func buildFastaIndex(fastaPath string) (map[string]fastaEntry, error) {
 	index := make(map[string]fastaEntry)
 	var curHeader string
 	var curLen int
+	skipCurrent := false
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, ">") {
 			// flush previous
-			if curHeader != "" {
+			if curHeader != "" && !skipCurrent {
 				token := headerToken(curHeader)
 				index[token] = fastaEntry{Defline: curHeader, Length: curLen}
 			}
 			curHeader = strings.TrimPrefix(line, ">")
+			if fastautil.IsIgnoredPHGONoteHeader(curHeader) {
+				curHeader = ""
+				curLen = 0
+				skipCurrent = true
+				continue
+			}
 			curLen = 0
+			skipCurrent = false
 		} else {
+			if skipCurrent {
+				continue
+			}
 			curLen += len(strings.TrimSpace(line))
 		}
 	}
-	if curHeader != "" {
+	if curHeader != "" && !skipCurrent {
 		token := headerToken(curHeader)
 		index[token] = fastaEntry{Defline: curHeader, Length: curLen}
 	}

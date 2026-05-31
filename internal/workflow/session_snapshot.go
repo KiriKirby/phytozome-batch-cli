@@ -9,8 +9,10 @@ package workflow
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -18,6 +20,7 @@ import (
 
 	"github.com/KiriKirby/phytozome-go/internal/appfs"
 	"github.com/KiriKirby/phytozome-go/internal/model"
+	"github.com/KiriKirby/phytozome-go/internal/phylo"
 	"github.com/KiriKirby/phytozome-go/internal/prompt"
 	"github.com/KiriKirby/phytozome-go/internal/sessionsnapshot"
 	"github.com/KiriKirby/phytozome-go/internal/tui"
@@ -493,9 +496,13 @@ func (w *BlastWizard) reviewCanvasSnapshot(ctx context.Context, snapshot session
 	if snapshot.CanvasReview != nil {
 		w.prompt.RestoreCanvasReviewState(canvasStateKey("canvas"), snapshot.CanvasReview.SelectionState)
 	}
+	if module.Tree != nil {
+		w.restoreCanvasTreeSnapshot(*module.Tree)
+	}
 	w.hydrateCommonSnapshotState(snapshot)
 	w.hydrateRuntimeCache(snapshot.RuntimeCache)
 	w.hydrateSnapshotSequenceCache(snapshot.SequenceCache)
+	items = w.hydrateCanvasRowSequenceData(items)
 	state := canvasLaunchState{
 		Items:         items,
 		CurrentItem:   module.CurrentItem,
@@ -506,19 +513,216 @@ func (w *BlastWizard) reviewCanvasSnapshot(ctx context.Context, snapshot session
 	return w.runCanvasMode(ctx, state)
 }
 
+func (w *BlastWizard) hydrateCanvasRowSequenceData(items []model.CanvasItem) []model.CanvasItem {
+	out := cloneCanvasItems(items)
+	for itemIndex := range out {
+		for rowIndex := range out[itemIndex].Rows {
+			row := &out[itemIndex].Rows[rowIndex]
+			if row.SequenceData != nil && strings.TrimSpace(row.SequenceData.Sequence) != "" {
+				continue
+			}
+			switch row.Kind {
+			case model.CanvasKindKeyword:
+				if row.KeywordRow == nil {
+					continue
+				}
+				if sequence := strings.TrimSpace(extractInlineKeywordSequence(*row.KeywordRow)); sequence != "" {
+					row.SequenceData = &model.ProteinSequenceData{
+						Sequence:       sequence,
+						OriginalHeader: keywordProteinSequenceHeader(*row.KeywordRow),
+					}
+					row.SequenceReady = &canvasSequenceReadyTrue
+					continue
+				}
+				sequenceID := strings.TrimSpace(row.KeywordRow.SequenceID)
+				if sequenceID == "" {
+					continue
+				}
+				targetID := keywordSequenceFetchTargetID(w.source, w.lastKeywordSpecies)
+				if cached, ok := w.cachedProteinSequence(w.proteinSequenceCacheKey(targetID, sequenceID)); ok && strings.TrimSpace(cached.Sequence) != "" {
+					copyData := cached
+					row.SequenceData = &copyData
+					row.SequenceReady = &canvasSequenceReadyTrue
+				}
+			case model.CanvasKindBlast:
+				if row.BlastRow == nil {
+					continue
+				}
+				if sequence := strings.TrimSpace(extractInlineBlastSequence(*row.BlastRow)); sequence != "" {
+					row.SequenceData = &model.ProteinSequenceData{
+						Sequence:       sequence,
+						OriginalHeader: blastProteinSequenceHeader(*row.BlastRow),
+					}
+					row.SequenceReady = &canvasSequenceReadyTrue
+					continue
+				}
+				sequenceID := strings.TrimSpace(firstNonEmpty(row.BlastRow.SequenceID, row.BlastRow.TranscriptID, row.BlastRow.Protein))
+				if sequenceID == "" {
+					continue
+				}
+				targetID := row.BlastRow.TargetID
+				if cached, ok := w.cachedProteinSequence(w.proteinSequenceCacheKey(targetID, sequenceID)); ok && strings.TrimSpace(cached.Sequence) != "" {
+					copyData := cached
+					row.SequenceData = &copyData
+					row.SequenceReady = &canvasSequenceReadyTrue
+				}
+			}
+		}
+	}
+	return out
+}
+
+func (w *BlastWizard) restoreCanvasTreeSnapshot(tree sessionsnapshot.CanvasTreeV2) {
+	w.prompt.RestoreCanvasTreePanelState(canvasStateKey("canvas"), tree.PanelState)
+	w.canvasTreeLastPayload = phylo.ViewerPayload{}
+	w.canvasTreeLastPlan = phylo.RunPlan{}
+	w.canvasTreeForceCompute = false
+	baseDir := normalizeLegacyTreeArtifactPath(tree.LastArtifactDir)
+	if (tree.LastPayload.UpdatedAt.IsZero() && strings.TrimSpace(tree.LastPayload.Newick) == "") && baseDir != "" {
+		if payload, ok := readTreeSnapshotViewerPayload(baseDir); ok {
+			tree.LastPayload = payload
+		}
+	}
+	hasPayload := !tree.LastPayload.UpdatedAt.IsZero() || strings.TrimSpace(tree.LastPayload.Newick) != ""
+	if baseDir == "" {
+		if hasPayload {
+			w.canvasTreeLastPayload = tree.LastPayload
+		}
+		return
+	}
+	manifest := tree.LastManifest
+	if manifest.SchemaVersion == 0 {
+		if loaded, err := phylo.LoadRunManifest(baseDir); err == nil {
+			manifest = loaded
+		}
+	}
+	settings := treeSettingsFromSnapshotPanel(tree.PanelState)
+	if manifest.SchemaVersion != 0 {
+		settings = manifest.Settings
+	}
+	metadata := tree.LastPayload.Metadata
+	records := append([]phylo.InputRecord(nil), metadata.Records...)
+	inputFASTA := readTreeSnapshotTextFile(baseDir, firstNonEmpty(manifest.InputFASTA, "input.fasta"))
+	runtimeRequest := readTreeSnapshotTextFile(baseDir, firstNonEmpty(manifest.RuntimeRequest, "runtime-request.json"))
+	runtimeResponse := readTreeSnapshotTextFile(baseDir, firstNonEmpty(manifest.RuntimeResponse, "runtime-response.json"))
+	alignedFASTA := firstNonEmpty(strings.TrimSpace(tree.LastAlignedFASTA), strings.TrimSpace(tree.LastPayload.AlignedFASTA), readTreeSnapshotTextFile(baseDir, firstNonEmpty(manifest.AlignedFASTA, "aligned.fasta")))
+	newick := firstNonEmpty(strings.TrimSpace(tree.LastNewick), strings.TrimSpace(tree.LastPayload.Newick), readTreeSnapshotTextFile(baseDir, firstNonEmpty(manifest.NewickPath, "tree.nwk")))
+	fingerprints := tree.Fingerprints
+	if manifest.Fingerprints != (phylo.Fingerprints{}) {
+		fingerprints = manifest.Fingerprints
+	}
+	updatedAt := tree.LastPayload.UpdatedAt
+	if updatedAt.IsZero() {
+		updatedAt = manifest.CreatedAt
+	}
+	plan := phylo.RunPlan{
+		SessionID:       strings.TrimSpace(tree.LastPayload.SessionID),
+		RunID:           strings.TrimSpace(tree.LastRunID),
+		BaseDir:         baseDir,
+		Settings:        settings,
+		Kind:            canvasTreeTargetSequenceKind(settings),
+		Records:         records,
+		Metadata:        metadata,
+		InputFASTA:      strings.TrimSpace(inputFASTA),
+		RuntimeRequest:  strings.TrimSpace(runtimeRequest),
+		RuntimeResponse: strings.TrimSpace(runtimeResponse),
+		AlignedFASTA:    strings.TrimSpace(alignedFASTA),
+		Newick:          strings.TrimSpace(newick),
+		Fingerprints:    fingerprints,
+		UpdatedAt:       updatedAt,
+	}
+	if strings.TrimSpace(plan.SessionID) == "" {
+		plan.SessionID = w.canvasTreeSessionID()
+	}
+	if strings.TrimSpace(plan.RunID) == "" {
+		plan.RunID = "snapshot"
+	}
+	if plan.InputFASTA == "" && len(records) > 0 {
+		plan.InputFASTA = phylo.InputFASTA(records)
+	}
+	if strings.TrimSpace(plan.AlignedFASTA) != "" {
+		if err := phylo.ValidateRunPlanAlignment(plan, plan.AlignedFASTA); err != nil {
+			return
+		}
+	}
+	w.canvasTreeLastPlan = plan
+	w.canvasTreeForceCompute = true
+	if hasPayload {
+		w.canvasTreeLastPayload = tree.LastPayload
+	}
+}
+
+func readTreeSnapshotTextFile(baseDir string, name string) string {
+	baseDir = strings.TrimSpace(baseDir)
+	name = strings.TrimSpace(name)
+	if baseDir == "" || name == "" {
+		return ""
+	}
+	if filepath.IsAbs(name) {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(baseDir, filepath.Clean(name)))
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func readTreeSnapshotViewerPayload(baseDir string) (phylo.ViewerPayload, bool) {
+	data := readTreeSnapshotTextFile(baseDir, "viewer.payload.json")
+	if strings.TrimSpace(data) == "" {
+		return phylo.ViewerPayload{}, false
+	}
+	var payload phylo.ViewerPayload
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		return phylo.ViewerPayload{}, false
+	}
+	return payload, true
+}
+
+func treeSettingsFromSnapshotPanel(panel tui.CanvasTreePanelState) phylo.TreeSettings {
+	return phylo.NormalizeTreeSettings(phylo.TreeSettings{
+		DisplayNameSource:      strings.TrimSpace(panel.DisplayNameSource),
+		ConversionTarget:       phylo.ConversionTarget(strings.TrimSpace(panel.ConversionTarget)),
+		ConversionAction:       phylo.ConversionAction(strings.TrimSpace(panel.ConversionAction)),
+		ConversionSkipUnselect: panel.ConversionSkipUnselect,
+		AlignmentMethod:        phylo.AlignmentMethod(strings.TrimSpace(panel.AlignmentMethod)),
+		AlignmentParams:        cloneTreeParamMap(panel.AlignmentParams),
+		TreeMethod:             phylo.TreeMethod(strings.TrimSpace(panel.TreeMethod)),
+		TreeParams:             cloneTreeParamMap(panel.TreeParams),
+	})
+}
+
+func cloneTreeParamMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
+
 func canvasItemsFromSnapshot(items []sessionsnapshot.CanvasItemV1) []model.CanvasItem {
 	out := make([]model.CanvasItem, len(items))
 	for i := range items {
 		out[i].Title = items[i].Title
-		out[i].Subtitle = items[i].Subtitle
 		out[i].Kind = items[i].Kind
 		out[i].Selected = append([]bool(nil), items[i].Selected...)
 		out[i].SourceLabel = items[i].SourceLabel
 		out[i].ImportedFrom = items[i].ImportedFrom
+		out[i].ActiveColumns = append([]model.CanvasColumn(nil), items[i].ActiveColumns...)
 		out[i].Rows = make([]model.CanvasRow, len(items[i].Rows))
 		for j := range items[i].Rows {
 			out[i].Rows[j].RowNumber = items[i].Rows[j].RowNumber
 			out[i].Rows[j].Kind = items[i].Rows[j].Kind
+			out[i].Rows[j].DisplayName = items[i].Rows[j].DisplayName
+			out[i].Rows[j].DisplayNameLocked = items[i].Rows[j].DisplayNameLocked
+			if items[i].Rows[j].SequenceData != nil {
+				copySequence := *items[i].Rows[j].SequenceData
+				out[i].Rows[j].SequenceData = &copySequence
+			}
 			if items[i].Rows[j].SequenceReady != nil {
 				ready := *items[i].Rows[j].SequenceReady
 				out[i].Rows[j].SequenceReady = &ready
@@ -536,6 +740,7 @@ func canvasItemsFromSnapshot(items []sessionsnapshot.CanvasItemV1) []model.Canva
 				out[i].Rows[j].FASTA = &copySource
 			}
 		}
+		updateCanvasItemSubtitle(&out[i])
 	}
 	return out
 }
@@ -597,6 +802,7 @@ func hydrateSnapshotArtifacts(snapshot sessionsnapshot.Snapshot) error {
 		if restorePath == "" {
 			restorePath = strings.TrimSpace(artifact.SourcePath)
 		}
+		restorePath = normalizeLegacyTreeArtifactPath(restorePath)
 		if restorePath == "" {
 			failures = append(failures, fmt.Sprintf("%s: missing restore path", firstNonEmpty(artifact.Path, artifact.ID)))
 			continue
@@ -614,6 +820,62 @@ func hydrateSnapshotArtifacts(snapshot sessionsnapshot.Snapshot) error {
 		return nil
 	}
 	return fmt.Errorf("%s", strings.Join(failures, "\n"))
+}
+
+func normalizeLegacyTreeArtifactPath(rawPath string) string {
+	rawPath = strings.TrimSpace(rawPath)
+	if rawPath == "" {
+		return ""
+	}
+	rel, ok := legacyTreeArtifactRelativePath(rawPath)
+	if !ok {
+		return rawPath
+	}
+	root, err := appfs.CacheRoot()
+	if err != nil {
+		return rawPath
+	}
+	return filepath.Join(root, rel)
+}
+
+func legacyTreeArtifactRelativePath(rawPath string) (string, bool) {
+	cleaned := filepath.Clean(filepath.FromSlash(strings.TrimSpace(rawPath)))
+	if cleaned == "" || cleaned == "." {
+		return "", false
+	}
+	if outputDir, err := appfs.OutputDir(); err == nil {
+		treeRoot := filepath.Clean(filepath.Join(outputDir, "tree"))
+		if rel, ok := relativePathWithin(cleaned, treeRoot); ok {
+			if rel == "." {
+				return "tree", true
+			}
+			return filepath.Join("tree", rel), true
+		}
+	}
+	slash := filepath.ToSlash(cleaned)
+	if slash == "output/tree" {
+		return "tree", true
+	}
+	if strings.HasPrefix(slash, "output/tree/") {
+		return filepath.FromSlash(strings.TrimPrefix(slash, "output/")), true
+	}
+	return "", false
+}
+
+func relativePathWithin(target string, root string) (string, bool) {
+	target = filepath.Clean(strings.TrimSpace(target))
+	root = filepath.Clean(strings.TrimSpace(root))
+	if target == "" || root == "" {
+		return "", false
+	}
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return "", false
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", false
+	}
+	return rel, true
 }
 
 func (w *BlastWizard) snapshotHandoffState() *sessionsnapshot.HandoffStateV2 {
@@ -1128,10 +1390,14 @@ func cloneBoolMatrixWorkflow(values [][]bool) [][]bool {
 }
 
 func (w *BlastWizard) snapshotKeywordSequenceCache(ctx context.Context, selected model.SpeciesCandidate, rows []model.KeywordResultRow) (*sessionsnapshot.SequenceCacheV1, error) {
-	results := w.prefetchKeywordSequences(ctx, selected, rows, nil)
+	return w.snapshotKeywordRowsSequenceCache(ctx, selected, rows)
+}
+
+func (w *BlastWizard) snapshotKeywordRowsSequenceCache(ctx context.Context, selected model.SpeciesCandidate, rows []model.KeywordResultRow) (*sessionsnapshot.SequenceCacheV1, error) {
 	targetID := keywordSequenceFetchTargetID(w.source, selected)
 	seenIDs := make(map[string]struct{}, len(rows))
-	entries := make([]sessionsnapshot.SequenceCacheEntryV1, 0, len(results))
+	entries := make([]sessionsnapshot.SequenceCacheEntryV1, 0, len(rows))
+	rowsToFetch := make([]model.KeywordResultRow, 0, len(rows))
 	for _, row := range rows {
 		sequenceID := strings.TrimSpace(row.SequenceID)
 		if sequenceID == "" {
@@ -1141,6 +1407,28 @@ func (w *BlastWizard) snapshotKeywordSequenceCache(ctx context.Context, selected
 			continue
 		}
 		seenIDs[sequenceID] = struct{}{}
+		if inline := inlineKeywordSnapshotSequenceEntry(targetID, row); inline != nil {
+			entries = append(entries, *inline)
+			continue
+		}
+		cacheKey := w.proteinSequenceCacheKey(targetID, sequenceID)
+		if cached, ok := w.cachedProteinSequence(cacheKey); ok {
+			entries = append(entries, sessionsnapshot.SequenceCacheEntryV1{
+				TargetID:       targetID,
+				SequenceID:     sequenceID,
+				Sequence:       strings.TrimSpace(cached.Sequence),
+				OriginalHeader: firstNonEmpty(strings.TrimSpace(cached.OriginalHeader), keywordProteinSequenceHeader(row)),
+			})
+			continue
+		}
+		rowsToFetch = append(rowsToFetch, row)
+	}
+	results := w.prefetchKeywordSequences(ctx, selected, rowsToFetch, nil)
+	for _, row := range rowsToFetch {
+		sequenceID := strings.TrimSpace(row.SequenceID)
+		if sequenceID == "" {
+			continue
+		}
 		fetched, ok := results[sequenceID]
 		if !ok {
 			continue
@@ -1159,15 +1447,6 @@ func (w *BlastWizard) snapshotKeywordSequenceCache(ctx context.Context, selected
 			OriginalHeader: firstNonEmpty(strings.TrimSpace(fetched.data.OriginalHeader), keywordProteinSequenceHeader(row)),
 		})
 	}
-	for _, row := range rows {
-		if inline := inlineKeywordSnapshotSequenceEntry(targetID, row); inline != nil {
-			if _, ok := seenIDs[inline.SequenceID]; ok {
-				continue
-			}
-			seenIDs[inline.SequenceID] = struct{}{}
-			entries = append(entries, *inline)
-		}
-	}
 	return &sessionsnapshot.SequenceCacheV1{Entries: entries}, nil
 }
 
@@ -1176,6 +1455,10 @@ func (w *BlastWizard) snapshotBlastSequenceCache(ctx context.Context, runs []bla
 	for _, run := range runs {
 		rows = append(rows, run.Results.Rows...)
 	}
+	return w.snapshotBlastRowsSequenceCache(ctx, rows)
+}
+
+func (w *BlastWizard) snapshotBlastRowsSequenceCache(ctx context.Context, rows []model.BlastResultRow) (*sessionsnapshot.SequenceCacheV1, error) {
 	results := w.prefetchBlastSequences(ctx, rows, nil)
 	seen := make(map[string]struct{}, len(rows))
 	entries := make([]sessionsnapshot.SequenceCacheEntryV1, 0, len(results))
@@ -1211,6 +1494,63 @@ func (w *BlastWizard) snapshotBlastSequenceCache(ctx context.Context, runs []bla
 		})
 	}
 	return &sessionsnapshot.SequenceCacheV1{Entries: entries}, nil
+}
+
+func (w *BlastWizard) snapshotCanvasSequenceCache(ctx context.Context, items []model.CanvasItem) (*sessionsnapshot.SequenceCacheV1, error) {
+	keywordRows := make([]model.KeywordResultRow, 0)
+	blastRows := make([]model.BlastResultRow, 0)
+	for _, item := range items {
+		for _, row := range item.Rows {
+			switch row.Kind {
+			case model.CanvasKindKeyword:
+				if row.KeywordRow != nil {
+					keywordRows = append(keywordRows, *row.KeywordRow)
+				}
+			case model.CanvasKindBlast:
+				if row.BlastRow != nil {
+					blastRows = append(blastRows, *row.BlastRow)
+				}
+			}
+		}
+	}
+
+	merged := make([]sessionsnapshot.SequenceCacheEntryV1, 0, len(keywordRows)+len(blastRows))
+	seen := make(map[string]struct{}, len(keywordRows)+len(blastRows))
+	appendEntries := func(cache *sessionsnapshot.SequenceCacheV1) {
+		if cache == nil {
+			return
+		}
+		for _, entry := range cache.Entries {
+			key := snapshotSequenceEntryDedupKey(entry)
+			if key == ":" {
+				continue
+			}
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			merged = append(merged, entry)
+		}
+	}
+
+	if len(keywordRows) > 0 {
+		cache, err := w.snapshotKeywordRowsSequenceCache(ctx, w.lastKeywordSpecies, keywordRows)
+		if err != nil {
+			return nil, err
+		}
+		appendEntries(cache)
+	}
+	if len(blastRows) > 0 {
+		cache, err := w.snapshotBlastRowsSequenceCache(ctx, blastRows)
+		if err != nil {
+			return nil, err
+		}
+		appendEntries(cache)
+	}
+	if len(merged) == 0 {
+		return nil, nil
+	}
+	return &sessionsnapshot.SequenceCacheV1{Entries: merged}, nil
 }
 
 func (w *BlastWizard) snapshotKeywordSequenceCacheWithModal(ctx context.Context, selected model.SpeciesCandidate, rows []model.KeywordResultRow) (*sessionsnapshot.SequenceCacheV1, error) {
@@ -1312,6 +1652,41 @@ func extractInlineKeywordSequence(row model.KeywordResultRow) string {
 	return ""
 }
 
+func extractInlineBlastSequence(row model.BlastResultRow) string {
+	for _, value := range []string{
+		strings.TrimSpace(row.Defline),
+	} {
+		if strings.Contains(value, "\n") {
+			lines := strings.Split(value, "\n")
+			if len(lines) >= 2 {
+				candidate := strings.ToUpper(strings.Join(lines[1:], ""))
+				if isLikelySequenceText(candidate) {
+					return candidate
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func isLikelySequenceText(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	value = strings.ReplaceAll(value, "\r", "")
+	value = strings.ReplaceAll(value, "\n", "")
+	for _, ch := range value {
+		switch {
+		case ch >= 'A' && ch <= 'Z':
+		case ch == '*', ch == '-', ch == '.', ch == '~':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func snapshotSequenceEntryDedupKey(entry sessionsnapshot.SequenceCacheEntryV1) string {
 	return strconv.Itoa(entry.TargetID) + ":" + strings.TrimSpace(entry.SequenceID)
 }
@@ -1344,6 +1719,33 @@ func inferSnapshotDatabase(snapshot sessionsnapshot.Snapshot) string {
 					return database
 				}
 			}
+		}
+	}
+	if snapshot.Canvas != nil {
+		for _, item := range snapshot.Canvas.Items {
+			for _, row := range item.Rows {
+				if database := normalizeSnapshotDatabase(canvasSnapshotRowSourceDatabase(row)); database != "" && database != "fasta" {
+					return database
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func canvasSnapshotRowSourceDatabase(row sessionsnapshot.CanvasRowV1) string {
+	switch row.Kind {
+	case model.CanvasKindKeyword:
+		if row.KeywordRow != nil {
+			return row.KeywordRow.SourceDatabase
+		}
+	case model.CanvasKindBlast:
+		if row.BlastRow != nil {
+			return row.BlastRow.SourceDatabase
+		}
+	case model.CanvasKindFasta:
+		if row.FASTA != nil {
+			return row.FASTA.SourceDatabase
 		}
 	}
 	return ""

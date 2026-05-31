@@ -78,6 +78,9 @@ func TestUpdateAssetSpecForWindows(t *testing.T) {
 	if spec.ArchiveKind != "zip" {
 		t.Fatalf("ArchiveKind = %q", spec.ArchiveKind)
 	}
+	if spec.OutputRelative != "output" {
+		t.Fatalf("OutputRelative = %q", spec.OutputRelative)
+	}
 }
 
 func TestUpdateAssetSpecForMacArm64(t *testing.T) {
@@ -90,6 +93,9 @@ func TestUpdateAssetSpecForMacArm64(t *testing.T) {
 	}
 	if spec.RelaunchRelative != "Contents/MacOS/phytozome-go" {
 		t.Fatalf("RelaunchRelative = %q", spec.RelaunchRelative)
+	}
+	if spec.OutputRelative != "Contents/MacOS/output" {
+		t.Fatalf("OutputRelative = %q", spec.OutputRelative)
 	}
 }
 
@@ -114,6 +120,7 @@ func TestBuildPowerShellUpdaterScriptOmitsEmptyArgumentList(t *testing.T) {
 		InstallRoot:  `C:\bundle`,
 		StageDir:     `C:\bundle.update-1`,
 		RelaunchPath: `C:\bundle\phytozome-go.exe`,
+		Spec:         updateAssetSpec{OutputRelative: "output"},
 	}
 	script := buildPowerShellUpdaterScript(plan, nil)
 	if strings.Contains(script, "-ArgumentList @()") {
@@ -122,6 +129,9 @@ func TestBuildPowerShellUpdaterScriptOmitsEmptyArgumentList(t *testing.T) {
 	if !strings.Contains(script, "Start-Process -FilePath $Launcher -WorkingDirectory $WorkingDir") {
 		t.Fatalf("buildPowerShellUpdaterScript missing Start-Process line:\n%s", script)
 	}
+	if !strings.Contains(script, "Copy-PreservedOutputToStage") || !strings.Contains(script, "$OutputRelative = 'output'") {
+		t.Fatalf("buildPowerShellUpdaterScript missing output preservation:\n%s", script)
+	}
 }
 
 func TestBuildPowerShellUpdaterScriptIncludesArgumentsWhenPresent(t *testing.T) {
@@ -129,10 +139,37 @@ func TestBuildPowerShellUpdaterScriptIncludesArgumentsWhenPresent(t *testing.T) 
 		InstallRoot:  `C:\bundle`,
 		StageDir:     `C:\bundle.update-1`,
 		RelaunchPath: `C:\bundle\phytozome-go.exe`,
+		Spec:         updateAssetSpec{OutputRelative: "output"},
 	}
 	script := buildPowerShellUpdaterScript(plan, []string{"--instance-id", "1"})
 	if !strings.Contains(script, "-ArgumentList @('--instance-id', '1')") {
 		t.Fatalf("buildPowerShellUpdaterScript missing argument list:\n%s", script)
+	}
+}
+
+func TestWriteShellUpdaterPreservesOutput(t *testing.T) {
+	plan := stagedUpdatePlan{
+		InstallRoot:  "/tmp/bundle",
+		StageDir:     "/tmp/bundle.update-1",
+		BackupDir:    "/tmp/bundle.backup-old",
+		RelaunchPath: "/tmp/bundle/phytozome-go",
+		Spec:         updateAssetSpec{OutputRelative: "output"},
+	}
+	path, err := writeShellUpdater(plan, nil)
+	if err != nil {
+		t.Fatalf("writeShellUpdater returned error: %v", err)
+	}
+	defer os.Remove(path)
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read shell updater: %v", err)
+	}
+	text := string(content)
+	if !strings.Contains(text, "OUTPUT_REL='output'") {
+		t.Fatalf("shell updater missing output relative path:\n%s", text)
+	}
+	if !strings.Contains(text, "preserve_output") || !strings.Contains(text, "cp -a \"$SOURCE\"/. \"$DEST\"/") {
+		t.Fatalf("shell updater missing output preservation:\n%s", text)
 	}
 }
 

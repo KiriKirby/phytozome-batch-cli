@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/KiriKirby/phytozome-go/internal/model"
+	"github.com/KiriKirby/phytozome-go/internal/phylo"
 	"github.com/KiriKirby/phytozome-go/internal/tui"
 )
 
@@ -234,8 +235,12 @@ func TestWriteReadCanvasSnapshotRoundTrip(t *testing.T) {
 				Kind:         model.CanvasKindKeyword,
 				SourceLabel:  "PAL family",
 				ImportedFrom: "snapshot",
+				ActiveColumns: []model.CanvasColumn{
+					{ID: "search_term", Header: "search_tern"},
+					{ID: "description", Header: "discripition"},
+				},
 				Rows: []CanvasRowV1{
-					{Kind: model.CanvasKindKeyword, KeywordRow: &model.KeywordResultRow{LabelName: "PAL1", ProteinID: "AT2G37040.1"}},
+					{Kind: model.CanvasKindKeyword, DisplayName: "PAL1", DisplayNameLocked: true, KeywordRow: &model.KeywordResultRow{LabelName: "PAL1", ProteinID: "AT2G37040.1"}},
 					{Kind: model.CanvasKindFasta, FASTA: &model.QuerySequenceSource{LabelName: "query1", Annotation: ">query1\nMSTNPKPQR"}},
 				},
 				Selected: []bool{true, false},
@@ -243,6 +248,43 @@ func TestWriteReadCanvasSnapshotRoundTrip(t *testing.T) {
 			CurrentItem:   0,
 			NextNumericID: 3,
 			ImportedFrom:  "demo.pgo",
+			Tree: &CanvasTreeV2{
+				PanelState: tui.CanvasTreePanelState{
+					EnabledEver:            true,
+					Expanded:               true,
+					CurrentControl:         0,
+					DisplayNameSource:      "label_name",
+					ConversionTarget:       string(phylo.ConversionTargetProtein),
+					ConversionAction:       string(phylo.ConversionActionConvert),
+					ConversionSkipUnselect: true,
+					AlignmentMethod:        "muscle",
+					TreeMethod:             "neighbor_joining",
+				},
+				LastPayload: phylo.ViewerPayload{
+					SchemaVersion: 1,
+					SessionID:     "canvas",
+					UpdatedAt:     time.Now(),
+					Newick:        "(PHGOT000001,PHGOT000002);",
+				},
+				LastManifest: phylo.RunManifest{
+					SchemaVersion: 1,
+					Settings:      phylo.DefaultTreeSettings(),
+				},
+				LastArtifactDir:  filepath.Join(dir, "tree", "canvas", "run"),
+				LastRunID:        "run",
+				LastAlignedFASTA: ">PHGOT000001\nMPEP\n",
+				LastNewick:       "(PHGOT000001,PHGOT000002);",
+				Fingerprints:     phylo.Fingerprints{Alignment: "a", Tree: "t", Preview: "p"},
+				ArtifactPaths:    []string{"artifacts/tree/canvas/run/tree.nwk"},
+			},
+		},
+		SequenceCache: &SequenceCacheV1{
+			Entries: []SequenceCacheEntryV1{{
+				TargetID:       370201,
+				SequenceID:     "AT2G37040.1",
+				Sequence:       "MSTNPKPQR",
+				OriginalHeader: ">AT2G37040.1",
+			}},
 		},
 		CanvasReview: &CanvasReviewStateV1{
 			SelectionState: tui.BlastRunSelectionState{
@@ -265,13 +307,31 @@ func TestWriteReadCanvasSnapshotRoundTrip(t *testing.T) {
 	if out.Canvas.Items[0].Title != "group 1" || len(out.Canvas.Items[0].Rows) != 2 {
 		t.Fatalf("canvas item payload mismatch: %#v", out.Canvas.Items[0])
 	}
+	if out.Canvas.Items[0].Rows[0].DisplayName != "PAL1" {
+		t.Fatalf("canvas display name did not round-trip: %#v", out.Canvas.Items[0].Rows[0])
+	}
+	if !out.Canvas.Items[0].Rows[0].DisplayNameLocked {
+		t.Fatalf("canvas display-name lock did not round-trip: %#v", out.Canvas.Items[0].Rows[0])
+	}
 	if out.Canvas.Items[0].SourceLabel != "PAL family" || out.Canvas.Items[0].ImportedFrom != "snapshot" {
 		t.Fatalf("canvas item metadata mismatch: %#v", out.Canvas.Items[0])
+	}
+	if len(out.Canvas.Items[0].ActiveColumns) == 0 {
+		t.Fatalf("canvas active columns should round-trip: %#v", out.Canvas.Items[0])
 	}
 	if out.Canvas.Items[0].Rows[0].RowNumber != 0 || out.Canvas.Items[0].Rows[1].RowNumber != 0 {
 		t.Fatalf("canvas row number payload mismatch: %#v", out.Canvas.Items[0].Rows)
 	}
+	if out.Canvas.Tree == nil || out.Canvas.Tree.LastPayload.Newick == "" || out.Canvas.Tree.PanelState.AlignmentMethod != "muscle" {
+		t.Fatalf("canvas tree state did not round-trip: %#v", out.Canvas.Tree)
+	}
+	if out.Canvas.Tree.LastManifest.SchemaVersion != 1 || out.Canvas.Tree.Fingerprints.Tree != "t" {
+		t.Fatalf("canvas tree manifest/fingerprints mismatch: %#v", out.Canvas.Tree)
+	}
 	if out.CanvasReview == nil || !out.CanvasReview.SelectionState.Valid || out.CanvasReview.SelectionState.ControlMode != 2 {
 		t.Fatalf("canvas review state did not round-trip: %#v", out.CanvasReview)
+	}
+	if out.SequenceCache == nil || len(out.SequenceCache.Entries) != 1 || out.SequenceCache.Entries[0].SequenceID != "AT2G37040.1" {
+		t.Fatalf("canvas sequence cache did not round-trip: %#v", out.SequenceCache)
 	}
 }

@@ -572,6 +572,39 @@ func (c *Client) FetchProteinSequence(ctx context.Context, targetID int, sequenc
 	return c.fetchProteinSequenceByTranscript(ctx, gene.ID)
 }
 
+func (c *Client) FetchNucleotideSequence(ctx context.Context, targetID int, sequenceID string, program string) (model.ProteinSequenceData, error) {
+	sequenceID = strings.TrimSpace(sequenceID)
+	if sequenceID == "" {
+		return model.ProteinSequenceData{}, fmt.Errorf("empty nucleotide sequence id")
+	}
+	_ = program
+	if sequence, err := c.fetchCDSSequenceByTranscript(ctx, sequenceID); err == nil {
+		return sequence, nil
+	}
+	if targetID == 0 {
+		return model.ProteinSequenceData{}, fmt.Errorf("no target proteome id available to resolve nucleotide sequence %s", sequenceID)
+	}
+	gene, err := c.FetchGeneByProtein(ctx, targetID, sequenceID)
+	if err != nil {
+		if byTranscript, transcriptErr := c.FetchGeneByTranscript(ctx, targetID, sequenceID); transcriptErr == nil {
+			gene = byTranscript
+		} else {
+			return model.ProteinSequenceData{}, err
+		}
+	}
+	transcript, err := gene.PrimaryTranscriptByProtein(sequenceID)
+	if err != nil {
+		transcript, err = gene.PrimaryTranscript(sequenceID)
+	}
+	if err != nil {
+		transcript, err = gene.PrimaryTranscript("")
+	}
+	if err != nil {
+		return model.ProteinSequenceData{}, err
+	}
+	return c.fetchCDSSequenceByTranscript(ctx, transcript.SecondaryIdentifier)
+}
+
 func (c *Client) FetchProteinQuerySequence(ctx context.Context, species model.SpeciesCandidate, proteinID string) (*model.QuerySequenceSource, error) {
 	gene, err := c.FetchGeneByProtein(ctx, species.ProteomeID, proteinID)
 	if err != nil {
@@ -681,6 +714,84 @@ func (c *Client) fetchProteinSequenceByTranscript(ctx context.Context, transcrip
 		c.mu.Unlock()
 		writeCachedJSON("protein-sequences-v2", transcriptInternalID, record)
 
+		return record, nil
+	})
+	if err != nil {
+		return model.ProteinSequenceData{}, err
+	}
+	return value.(model.ProteinSequenceData), nil
+}
+
+func (c *Client) fetchCDSSequenceByTranscript(ctx context.Context, transcriptInternalID string) (model.ProteinSequenceData, error) {
+	return c.fetchNucleotideSequenceByTranscript(ctx, "cds", transcriptInternalID)
+}
+
+func (c *Client) fetchNucleotideSequenceByTranscript(ctx context.Context, sequenceKind string, transcriptInternalID string) (model.ProteinSequenceData, error) {
+	transcriptInternalID = strings.TrimSpace(transcriptInternalID)
+	sequenceKind = strings.ToLower(strings.TrimSpace(sequenceKind))
+	if sequenceKind == "" {
+		sequenceKind = "cds"
+	}
+	cacheKey := sequenceKind + ":" + transcriptInternalID
+	c.mu.RLock()
+	if cached, ok := c.proteinSequenceCache[cacheKey]; ok {
+		c.mu.RUnlock()
+		return cached, nil
+	}
+	c.mu.RUnlock()
+	cacheName := "nucleotide-sequences-v1"
+	if cached, ok := readCachedJSON[model.ProteinSequenceData](cacheName, cacheKey); ok && strings.TrimSpace(cached.Sequence) != "" {
+		c.mu.Lock()
+		c.proteinSequenceCache[cacheKey] = cached
+		c.mu.Unlock()
+		return cached, nil
+	}
+	value, err, _ := c.sf.Do("nucleotide-seq:"+cacheKey, func() (any, error) {
+		c.mu.RLock()
+		if cached, ok := c.proteinSequenceCache[cacheKey]; ok {
+			c.mu.RUnlock()
+			return cached, nil
+		}
+		c.mu.RUnlock()
+		if cached, ok := readCachedJSON[model.ProteinSequenceData](cacheName, cacheKey); ok && strings.TrimSpace(cached.Sequence) != "" {
+			c.mu.Lock()
+			c.proteinSequenceCache[cacheKey] = cached
+			c.mu.Unlock()
+			return cached, nil
+		}
+
+		requestURL := "https://phytozome-next.jgi.doe.gov/api/db/sequence/" + url.PathEscape(sequenceKind) + "/" + url.PathEscape(transcriptInternalID)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+		if err != nil {
+			return model.ProteinSequenceData{}, fmt.Errorf("create nucleotide sequence request: %w", err)
+		}
+		resp, err := c.baseHTTP.Do(req)
+		if err != nil {
+			return model.ProteinSequenceData{}, fmt.Errorf("fetch nucleotide sequence: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusNoContent {
+			return model.ProteinSequenceData{}, fmt.Errorf("no nucleotide sequence for transcript id %s", transcriptInternalID)
+		}
+		if resp.StatusCode != http.StatusOK {
+			body := readShortErrorBody(resp.Body)
+			return model.ProteinSequenceData{}, fmt.Errorf("fetch nucleotide sequence: status %s body %s", resp.Status, strings.TrimSpace(string(body)))
+		}
+		var payload proteinSequenceResponse
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+			return model.ProteinSequenceData{}, fmt.Errorf("decode nucleotide sequence response: %w", err)
+		}
+		if len(payload) == 0 || strings.TrimSpace(payload[0].Residues) == "" {
+			return model.ProteinSequenceData{}, fmt.Errorf("nucleotide sequence response empty for transcript id %s", transcriptInternalID)
+		}
+		record := model.ProteinSequenceData{
+			Sequence:       strings.TrimSpace(payload[0].Residues),
+			OriginalHeader: phytozomeProteinOriginalHeader(payload[0]),
+		}
+		c.mu.Lock()
+		c.proteinSequenceCache[cacheKey] = record
+		c.mu.Unlock()
+		writeCachedJSON(cacheName, cacheKey, record)
 		return record, nil
 	})
 	if err != nil {

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/KiriKirby/phytozome-go/internal/appfs"
+	"github.com/KiriKirby/phytozome-go/internal/fastautil"
 	"github.com/KiriKirby/phytozome-go/internal/model"
 	"github.com/KiriKirby/phytozome-go/internal/searchengine/tairkeyword"
 	"golang.org/x/sync/singleflight"
@@ -42,13 +43,22 @@ type Client struct {
 	mu            sync.RWMutex
 	sf            singleflight.Group
 
-	releases       map[string]releaseInfo
-	rowIndex       map[string]tairIndex
-	familyLists    map[string][]familyCandidate
-	proteinSeqs    map[string]map[string]proteinEntry
-	nucleotideSeqs map[string]map[string]proteinEntry
-	externalSeqs   map[string]proteinEntry
-	localResults   map[string]model.BlastResult
+	releases        map[string]releaseInfo
+	rowIndex        map[string]tairIndex
+	familyLists     map[string][]familyCandidate
+	proteinSeqs     map[string]map[string]proteinEntry
+	nucleotideSeqs  map[string]map[string]proteinEntry
+	fastaHeaders    map[string]map[string]fastaEntry
+	descriptions    map[string]map[string]descriptionEntry
+	representative  map[string]map[string]string
+	externalSeqs    map[string]proteinEntry
+	liveGeneDocs    map[string][]tairSearchDoc
+	liveProteinDocs map[string][]tairSearchDoc
+	liveKeywordDocs map[string][]tairKeywordSearchDoc
+	familyRows      map[string][]model.KeywordResultRow
+	querySources    map[string]model.QuerySequenceSource
+	localBlastDBs   map[string]string
+	localResults    map[string]model.BlastResult
 }
 
 type releaseInfo struct {
@@ -122,14 +132,23 @@ func NewClient(httpClient *http.Client) *Client {
 		httpClient = &http.Client{Timeout: 60 * time.Second}
 	}
 	c := &Client{
-		httpClient:     httpClient,
-		releases:       make(map[string]releaseInfo),
-		rowIndex:       make(map[string]tairIndex),
-		familyLists:    make(map[string][]familyCandidate),
-		proteinSeqs:    make(map[string]map[string]proteinEntry),
-		nucleotideSeqs: make(map[string]map[string]proteinEntry),
-		externalSeqs:   make(map[string]proteinEntry),
-		localResults:   make(map[string]model.BlastResult),
+		httpClient:      httpClient,
+		releases:        make(map[string]releaseInfo),
+		rowIndex:        make(map[string]tairIndex),
+		familyLists:     make(map[string][]familyCandidate),
+		proteinSeqs:     make(map[string]map[string]proteinEntry),
+		nucleotideSeqs:  make(map[string]map[string]proteinEntry),
+		fastaHeaders:    make(map[string]map[string]fastaEntry),
+		descriptions:    make(map[string]map[string]descriptionEntry),
+		representative:  make(map[string]map[string]string),
+		externalSeqs:    make(map[string]proteinEntry),
+		liveGeneDocs:    make(map[string][]tairSearchDoc),
+		liveProteinDocs: make(map[string][]tairSearchDoc),
+		liveKeywordDocs: make(map[string][]tairKeywordSearchDoc),
+		familyRows:      make(map[string][]model.KeywordResultRow),
+		querySources:    make(map[string]model.QuerySequenceSource),
+		localBlastDBs:   make(map[string]string),
+		localResults:    make(map[string]model.BlastResult),
 	}
 	for _, rel := range defaultReleases() {
 		c.releases[strings.ToLower(rel.Name)] = rel
@@ -487,6 +506,9 @@ func (c *Client) SearchKeywordRowsByFamily(ctx context.Context, version model.Sp
 	if key == "" {
 		return nil, nil
 	}
+	if cached, ok := c.cachedFamilyRows(version, key, limit); ok {
+		return cached, nil
+	}
 	if rel, err := c.releaseForVersion(version); err == nil && rel.GFFURL != "" {
 		if idx, idxErr := c.cachedIndex(ctx, version); idxErr == nil && len(idx.Rows) > 0 {
 			rows := c.searchKeywordRowsByFamilyIndex(idx, key, limit)
@@ -495,6 +517,7 @@ func (c *Client) SearchKeywordRowsByFamily(ctx context.Context, version model.Sp
 					rows[i].SearchTerm = key
 					rows[i].SearchType = tairkeyword.SearchTypeFamily
 				}
+				c.storeFamilyRows(version, key, limit, rows)
 				return rows, nil
 			}
 		}
@@ -514,7 +537,9 @@ func (c *Client) SearchKeywordRowsByFamily(ctx context.Context, version model.Sp
 	if err != nil {
 		return nil, err
 	}
-	return limitKeywordRows(rows, limit), nil
+	rows = limitKeywordRows(rows, limit)
+	c.storeFamilyRows(version, key, limit, rows)
+	return rows, nil
 }
 
 func (c *Client) FetchFamilyCandidates(ctx context.Context, version model.SpeciesCandidate) ([]model.SpeciesCandidate, error) {
@@ -565,6 +590,37 @@ func (c *Client) cachedLiveFamilyCandidates(ctx context.Context, version model.S
 	}
 	families, _ := value.([]familyCandidate)
 	return append([]familyCandidate(nil), families...), nil
+}
+
+func (c *Client) cachedFamilyRows(version model.SpeciesCandidate, family string, limit int) ([]model.KeywordResultRow, bool) {
+	cacheKey := familyRowsCacheKey(version, family, limit)
+	if cacheKey == "" {
+		return nil, false
+	}
+	c.mu.RLock()
+	cached, ok := c.familyRows[cacheKey]
+	c.mu.RUnlock()
+	if !ok || len(cached) == 0 {
+		if cached, diskOK := readCachedJSON[[]model.KeywordResultRow]("family-rows", cacheKey); diskOK && len(cached) > 0 {
+			c.mu.Lock()
+			c.familyRows[cacheKey] = cloneKeywordResultRows(cached)
+			c.mu.Unlock()
+			return cloneKeywordResultRows(cached), true
+		}
+		return nil, false
+	}
+	return cloneKeywordResultRows(cached), true
+}
+
+func (c *Client) storeFamilyRows(version model.SpeciesCandidate, family string, limit int, rows []model.KeywordResultRow) {
+	cacheKey := familyRowsCacheKey(version, family, limit)
+	if cacheKey == "" || len(rows) == 0 {
+		return
+	}
+	c.mu.Lock()
+	c.familyRows[cacheKey] = cloneKeywordResultRows(rows)
+	c.mu.Unlock()
+	writeCachedJSON("family-rows", cacheKey, rows)
 }
 
 func familyCandidatesToSpecies(families []familyCandidate) []model.SpeciesCandidate {
@@ -632,13 +688,25 @@ func (c *Client) searchLiveIdentifierRows(ctx context.Context, version model.Spe
 		}
 		addRows(filterDocsByIdentifier(docs, term, "model"))
 	default:
-		geneDocs, err := c.searchTAIRGeneDocs(ctx, stripTranscriptSuffix(term))
-		if err == nil {
-			addRows(filterDocsByIdentifier(geneDocs, term, "any"))
+		type docResult struct {
+			kind string
+			docs []tairSearchDoc
+			err  error
 		}
-		proteinDocs, err := c.searchTAIRProteinDocs(ctx, term)
-		if err == nil {
-			addRows(filterDocsByIdentifier(proteinDocs, term, "any"))
+		results := make(chan docResult, 2)
+		go func() {
+			docs, err := c.searchTAIRGeneDocs(ctx, stripTranscriptSuffix(term))
+			results <- docResult{kind: "gene", docs: docs, err: err}
+		}()
+		go func() {
+			docs, err := c.searchTAIRProteinDocs(ctx, term)
+			results <- docResult{kind: "protein", docs: docs, err: err}
+		}()
+		for range 2 {
+			result := <-results
+			if result.err == nil {
+				addRows(filterDocsByIdentifier(result.docs, term, "any"))
+			}
 		}
 		if len(rows) == 0 {
 			docs, err := c.searchTAIRGeneDocs(ctx, term)
@@ -675,21 +743,56 @@ func (c *Client) searchLiveKeywordRows(ctx context.Context, version model.Specie
 			rows = append(rows, row)
 		}
 	}
-	geneDocs, err := c.searchTAIRGeneDocs(ctx, term)
-	if err != nil {
-		return nil, err
-	}
-	addRows(keywordRowsFromSearchDocs(version, rankGeneDocsForKeyword(geneDocs, term)))
 	if wide {
-		proteinDocs, err := c.searchTAIRProteinDocs(ctx, term)
-		if err == nil {
-			addRows(keywordRowsFromSearchDocs(version, rankGeneDocsForKeyword(proteinDocs, term)))
+		type liveSearchResult struct {
+			kind     string
+			genes    []tairSearchDoc
+			keywords []tairKeywordSearchDoc
+			err      error
 		}
-	}
-	if len(rows) == 0 || wide {
-		keywordDocs, err := c.searchTAIRKeywordDocs(ctx, term)
-		if err == nil {
-			addRows(keywordRowsFromKeywordDocs(version, keywordDocs))
+		results := make(chan liveSearchResult, 3)
+		go func() {
+			docs, err := c.searchTAIRGeneDocs(ctx, term)
+			results <- liveSearchResult{kind: "gene", genes: docs, err: err}
+		}()
+		go func() {
+			docs, err := c.searchTAIRProteinDocs(ctx, term)
+			results <- liveSearchResult{kind: "protein", genes: docs, err: err}
+		}()
+		go func() {
+			docs, err := c.searchTAIRKeywordDocs(ctx, term)
+			results <- liveSearchResult{kind: "keyword", keywords: docs, err: err}
+		}()
+		var firstErr error
+		for range 3 {
+			result := <-results
+			if result.err != nil {
+				if firstErr == nil {
+					firstErr = result.err
+				}
+				continue
+			}
+			switch result.kind {
+			case "gene", "protein":
+				addRows(keywordRowsFromSearchDocs(version, rankGeneDocsForKeyword(result.genes, term)))
+			case "keyword":
+				addRows(keywordRowsFromKeywordDocs(version, result.keywords))
+			}
+		}
+		if len(rows) == 0 && firstErr != nil {
+			return nil, firstErr
+		}
+	} else {
+		geneDocs, err := c.searchTAIRGeneDocs(ctx, term)
+		if err != nil {
+			return nil, err
+		}
+		addRows(keywordRowsFromSearchDocs(version, rankGeneDocsForKeyword(geneDocs, term)))
+		if len(rows) == 0 {
+			keywordDocs, err := c.searchTAIRKeywordDocs(ctx, term)
+			if err == nil {
+				addRows(keywordRowsFromKeywordDocs(version, keywordDocs))
+			}
 		}
 	}
 	sortKeywordRows(rows)
@@ -697,27 +800,99 @@ func (c *Client) searchLiveKeywordRows(ctx context.Context, version model.Specie
 }
 
 func (c *Client) searchTAIRGeneDocs(ctx context.Context, term string) ([]tairSearchDoc, error) {
-	var res tairSearchResponse
-	if err := c.postTAIRJSON(ctx, "/api/search/gene", map[string]string{"key": strings.TrimSpace(term)}, &res); err != nil {
-		return nil, err
-	}
-	return res.Docs, nil
+	return c.searchTAIRDocsCached(ctx, "gene", term, c.liveGeneDocs, "/api/search/gene")
 }
 
 func (c *Client) searchTAIRProteinDocs(ctx context.Context, term string) ([]tairSearchDoc, error) {
-	var res tairSearchResponse
-	if err := c.postTAIRJSON(ctx, "/api/search/protein", map[string]string{"key": strings.TrimSpace(term)}, &res); err != nil {
+	return c.searchTAIRDocsCached(ctx, "protein", term, c.liveProteinDocs, "/api/search/protein")
+}
+
+func (c *Client) searchTAIRDocsCached(ctx context.Context, group string, term string, memory map[string][]tairSearchDoc, endpoint string) ([]tairSearchDoc, error) {
+	term = strings.TrimSpace(term)
+	if term == "" {
+		return nil, nil
+	}
+	cacheKey := liveSearchCacheKey(group, term)
+	c.mu.RLock()
+	if cached, ok := memory[cacheKey]; ok {
+		out := cloneTAIRSearchDocs(cached)
+		c.mu.RUnlock()
+		return out, nil
+	}
+	c.mu.RUnlock()
+	if cached, ok := readCachedJSON[[]tairSearchDoc]("live-"+group+"-docs", cacheKey); ok {
+		c.mu.Lock()
+		memory[cacheKey] = cloneTAIRSearchDocs(cached)
+		c.mu.Unlock()
+		return cloneTAIRSearchDocs(cached), nil
+	}
+	value, err, _ := c.sf.Do("tair-live-"+group+"-docs:"+cacheKey, func() (any, error) {
+		c.mu.RLock()
+		if cached, ok := memory[cacheKey]; ok {
+			out := cloneTAIRSearchDocs(cached)
+			c.mu.RUnlock()
+			return out, nil
+		}
+		c.mu.RUnlock()
+		var res tairSearchResponse
+		if err := c.postTAIRJSON(ctx, endpoint, map[string]string{"key": term}, &res); err != nil {
+			return nil, err
+		}
+		docs := cloneTAIRSearchDocs(res.Docs)
+		c.mu.Lock()
+		memory[cacheKey] = docs
+		c.mu.Unlock()
+		writeCachedJSON("live-"+group+"-docs", cacheKey, docs)
+		return cloneTAIRSearchDocs(docs), nil
+	})
+	if err != nil {
 		return nil, err
 	}
-	return res.Docs, nil
+	return value.([]tairSearchDoc), nil
 }
 
 func (c *Client) searchTAIRKeywordDocs(ctx context.Context, term string) ([]tairKeywordSearchDoc, error) {
-	var res tairKeywordSearchResponse
-	if err := c.postTAIRJSON(ctx, "/api/search/keyword", map[string]string{"key": strings.TrimSpace(term)}, &res); err != nil {
+	term = strings.TrimSpace(term)
+	if term == "" {
+		return nil, nil
+	}
+	cacheKey := liveSearchCacheKey("keyword", term)
+	c.mu.RLock()
+	if cached, ok := c.liveKeywordDocs[cacheKey]; ok {
+		out := cloneTAIRKeywordSearchDocs(cached)
+		c.mu.RUnlock()
+		return out, nil
+	}
+	c.mu.RUnlock()
+	if cached, ok := readCachedJSON[[]tairKeywordSearchDoc]("live-keyword-docs", cacheKey); ok {
+		c.mu.Lock()
+		c.liveKeywordDocs[cacheKey] = cloneTAIRKeywordSearchDocs(cached)
+		c.mu.Unlock()
+		return cloneTAIRKeywordSearchDocs(cached), nil
+	}
+	value, err, _ := c.sf.Do("tair-live-keyword-docs:"+cacheKey, func() (any, error) {
+		c.mu.RLock()
+		if cached, ok := c.liveKeywordDocs[cacheKey]; ok {
+			out := cloneTAIRKeywordSearchDocs(cached)
+			c.mu.RUnlock()
+			return out, nil
+		}
+		c.mu.RUnlock()
+		var keywordRes tairKeywordSearchResponse
+		if err := c.postTAIRJSON(ctx, "/api/search/keyword", map[string]string{"key": term}, &keywordRes); err != nil {
+			return nil, err
+		}
+		docs := cloneTAIRKeywordSearchDocs(keywordRes.Docs)
+		c.mu.Lock()
+		c.liveKeywordDocs[cacheKey] = docs
+		c.mu.Unlock()
+		writeCachedJSON("live-keyword-docs", cacheKey, docs)
+		return cloneTAIRKeywordSearchDocs(docs), nil
+	})
+	if err != nil {
 		return nil, err
 	}
-	return res.Docs, nil
+	return value.([]tairKeywordSearchDoc), nil
 }
 
 func filterDocsByIdentifier(docs []tairSearchDoc, term string, kind string) []tairSearchDoc {
@@ -1295,12 +1470,30 @@ func (c *Client) cachedIndex(ctx context.Context, version model.SpeciesCandidate
 }
 
 func (c *Client) buildIndex(ctx context.Context, rel releaseInfo, version model.SpeciesCandidate) (tairIndex, error) {
-	proteins, _ := c.loadProteinSequences(ctx, rel)
+	var proteins map[string]proteinEntry
+	var descriptions map[string]descriptionEntry
+	var representative map[string]string
+	var preload sync.WaitGroup
+	proteinDone := make(chan struct{})
+	preload.Add(2)
+	go func() {
+		defer close(proteinDone)
+		proteins, _ = c.loadProteinSequences(ctx, rel)
+	}()
+	go func() {
+		defer preload.Done()
+		descriptions = c.loadDescriptionIndex(ctx, rel)
+	}()
+	go func() {
+		defer preload.Done()
+		representative = c.loadRepresentativeModels(ctx, rel)
+	}()
 	reader, closeFn, err := c.openMaybeGzip(ctx, rel.GFFURL)
 	if err != nil {
 		return tairIndex{}, err
 	}
 	defer closeFn()
+	<-proteinDone
 
 	rows := make([]model.KeywordResultRow, 0, 36000)
 	rowByGene := make(map[string]int)
@@ -1342,6 +1535,7 @@ func (c *Client) buildIndex(ctx context.Context, rel releaseInfo, version model.
 	if err := scanner.Err(); err != nil {
 		return tairIndex{}, fmt.Errorf("scan TAIR GFF3: %w", err)
 	}
+	preload.Wait()
 
 	idx := tairIndex{
 		Release:      rel,
@@ -1352,8 +1546,6 @@ func (c *Client) buildIndex(ctx context.Context, rel releaseInfo, version model.
 		ByToken:      make(map[string][]int),
 		ByFamily:     make(map[string][]int),
 	}
-	descriptions := c.loadDescriptionIndex(ctx, rel)
-	representative := c.loadRepresentativeModels(ctx, rel)
 	familyCounts := make(map[string]int)
 	familyNames := make(map[string]string)
 	parentCounts := make(map[string]int)
@@ -1596,6 +1788,10 @@ func (c *Client) FetchUniProtAccessions(ctx context.Context, targetID int, prote
 }
 
 func (c *Client) FetchGeneQuerySequence(ctx context.Context, version model.SpeciesCandidate, reportType string, identifier string) (*model.QuerySequenceSource, error) {
+	cacheKey := querySourceCacheKey(version, reportType, identifier)
+	if cached, ok := c.cachedQuerySource(cacheKey); ok {
+		return cached, nil
+	}
 	row, err := c.findRow(ctx, version, identifier)
 	if err != nil {
 		return nil, err
@@ -1604,7 +1800,12 @@ func (c *Client) FetchGeneQuerySequence(ctx context.Context, version model.Speci
 	if err != nil {
 		return nil, err
 	}
-	return querySourceFromRow(version, row, seq.Sequence), nil
+	source := querySourceFromRow(version, row, seq.Sequence)
+	c.storeQuerySource(cacheKey, source)
+	for _, alias := range querySourceAliases(version, row) {
+		c.storeQuerySource(querySourceCacheKey(version, "any", alias), source)
+	}
+	return source, nil
 }
 
 func (c *Client) FetchProteinQuerySequence(ctx context.Context, version model.SpeciesCandidate, proteinID string) (*model.QuerySequenceSource, error) {
@@ -1612,12 +1813,24 @@ func (c *Client) FetchProteinQuerySequence(ctx context.Context, version model.Sp
 }
 
 func (c *Client) ResolveQuerySequence(ctx context.Context, version model.SpeciesCandidate, input string) (*model.QuerySequenceSource, bool, error) {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return nil, false, nil
+	}
 	reportType, identifier, ok := parseTAIRReportKeyword(input)
 	if !ok && (agiGenePattern.MatchString(input) || agiModelPattern.MatchString(input)) {
 		reportType, identifier, ok = "gene", strings.TrimSpace(input), true
 	}
 	if !ok {
 		return nil, false, nil
+	}
+	cacheKey := querySourceCacheKey(version, reportType, identifier)
+	if cached, hit := c.cachedQuerySource(cacheKey); hit {
+		cached.OriginalInputURL = input
+		if _, _, isURL := parseTAIRReportKeyword(input); isURL {
+			cached.NormalizedURL = normalizeTAIRReportURL(input)
+		}
+		return cached, true, nil
 	}
 	source, err := c.FetchGeneQuerySequence(ctx, version, reportType, identifier)
 	if err != nil {
@@ -1628,6 +1841,60 @@ func (c *Client) ResolveQuerySequence(ctx context.Context, version model.Species
 		source.NormalizedURL = normalizeTAIRReportURL(input)
 	}
 	return source, true, nil
+}
+
+func (c *Client) cachedQuerySource(cacheKey string) (*model.QuerySequenceSource, bool) {
+	cacheKey = strings.TrimSpace(cacheKey)
+	if cacheKey == "" {
+		return nil, false
+	}
+	c.mu.RLock()
+	cached, ok := c.querySources[cacheKey]
+	c.mu.RUnlock()
+	if !ok || strings.TrimSpace(cached.Sequence) == "" {
+		if cached, diskOK := readCachedJSON[model.QuerySequenceSource]("query-sources", cacheKey); diskOK && strings.TrimSpace(cached.Sequence) != "" {
+			c.mu.Lock()
+			c.querySources[cacheKey] = cached
+			c.mu.Unlock()
+			copySource := cached
+			return &copySource, true
+		}
+		return nil, false
+	}
+	copySource := cached
+	return &copySource, true
+}
+
+func (c *Client) storeQuerySource(cacheKey string, source *model.QuerySequenceSource) {
+	cacheKey = strings.TrimSpace(cacheKey)
+	if cacheKey == "" || source == nil || strings.TrimSpace(source.Sequence) == "" {
+		return
+	}
+	copySource := *source
+	c.mu.Lock()
+	c.querySources[cacheKey] = copySource
+	c.mu.Unlock()
+	writeCachedJSON("query-sources", cacheKey, copySource)
+}
+
+func querySourceCacheKey(version model.SpeciesCandidate, reportType string, identifier string) string {
+	return strings.Join([]string{
+		strings.ToLower(strings.TrimSpace(firstNonEmpty(version.JBrowseName, version.GenomeLabel))),
+		strconv.Itoa(version.ProteomeID),
+		strings.ToLower(strings.TrimSpace(reportType)),
+		strings.ToUpper(strings.TrimSpace(identifier)),
+	}, "|")
+}
+
+func querySourceAliases(version model.SpeciesCandidate, row model.KeywordResultRow) []string {
+	return uniqueStrings([]string{
+		row.SequenceID,
+		row.ProteinID,
+		row.TranscriptID,
+		row.GeneIdentifier,
+		stripTranscriptSuffix(firstNonEmpty(row.TranscriptID, row.SequenceID, row.ProteinID, row.GeneIdentifier)),
+		firstNonEmpty(version.JBrowseName, version.GenomeLabel),
+	})
 }
 
 func querySourceFromRow(version model.SpeciesCandidate, row model.KeywordResultRow, proteinSeq string) *model.QuerySequenceSource {
@@ -1655,22 +1922,24 @@ func querySourceFromRow(version model.SpeciesCandidate, row model.KeywordResultR
 }
 
 func (c *Client) findRow(ctx context.Context, version model.SpeciesCandidate, identifier string) (model.KeywordResultRow, error) {
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		return model.KeywordResultRow{}, fmt.Errorf("empty TAIR identifier")
+	}
+	if rel, err := c.releaseForVersion(version); err == nil && rel.GFFURL != "" {
+		if idx, idxErr := c.cachedIndex(ctx, version); idxErr == nil && len(idx.Rows) > 0 {
+			rows := c.searchKeywordRowsByIdentifiers(idx, identifierKeys(identifier), 8)
+			if row, ok := bestMatchingRow(identifier, rows); ok {
+				return row, nil
+			}
+		}
+	}
 	rows, err := c.searchLiveIdentifierRows(ctx, version, identifier, "any")
 	if err != nil {
 		return model.KeywordResultRow{}, err
 	}
-	normalizedGene := strings.ToUpper(stripTranscriptSuffix(identifier))
-	normalizedModel := strings.ToUpper(strings.TrimSpace(identifier))
-	for _, row := range rows {
-		if strings.EqualFold(strings.TrimSpace(row.TranscriptID), normalizedModel) || strings.EqualFold(strings.TrimSpace(row.SequenceID), normalizedModel) {
-			return row, nil
-		}
-		if strings.EqualFold(strings.TrimSpace(row.GeneIdentifier), normalizedGene) {
-			return row, nil
-		}
-	}
-	if len(rows) > 0 {
-		return rows[0], nil
+	if row, ok := bestMatchingRow(identifier, rows); ok {
+		return row, nil
 	}
 	return model.KeywordResultRow{}, fmt.Errorf("TAIR identifier %s was not found in %s", identifier, version.DisplayLabel())
 }
@@ -1708,6 +1977,59 @@ func (c *Client) loadProteinSequences(ctx context.Context, rel releaseInfo) (map
 
 func (c *Client) loadNucleotideSequences(ctx context.Context, rel releaseInfo) (map[string]proteinEntry, error) {
 	return c.loadFASTASequences(ctx, rel.NucleotideURL, c.nucleotideSeqs)
+}
+
+func (c *Client) loadFastaHeaders(ctx context.Context, requestURL string) (map[string]fastaEntry, error) {
+	requestURL = strings.TrimSpace(requestURL)
+	if requestURL == "" {
+		return nil, fmt.Errorf("empty TAIR FASTA URL")
+	}
+	c.mu.RLock()
+	if cached, ok := c.fastaHeaders[requestURL]; ok && len(cached) > 0 {
+		out := cloneFastaEntryMap(cached)
+		c.mu.RUnlock()
+		return out, nil
+	}
+	c.mu.RUnlock()
+	if cached, ok := readCachedJSON[map[string]fastaEntry]("fasta-header-index", requestURL); ok && len(cached) > 0 {
+		c.mu.Lock()
+		c.fastaHeaders[requestURL] = cached
+		c.mu.Unlock()
+		return cloneFastaEntryMap(cached), nil
+	}
+	value, err, _ := c.sf.Do("tair-fasta-header:"+requestURL, func() (any, error) {
+		c.mu.RLock()
+		if cached, ok := c.fastaHeaders[requestURL]; ok && len(cached) > 0 {
+			out := cloneFastaEntryMap(cached)
+			c.mu.RUnlock()
+			return out, nil
+		}
+		c.mu.RUnlock()
+		if cached, ok := readCachedJSON[map[string]fastaEntry]("fasta-header-index", requestURL); ok && len(cached) > 0 {
+			c.mu.Lock()
+			c.fastaHeaders[requestURL] = cached
+			c.mu.Unlock()
+			return cloneFastaEntryMap(cached), nil
+		}
+		reader, closeFn, err := c.openMaybeCompressed(ctx, requestURL)
+		if err != nil {
+			return nil, err
+		}
+		defer closeFn()
+		index, err := parseFastaHeaderIndex(reader)
+		if err != nil {
+			return nil, err
+		}
+		c.mu.Lock()
+		c.fastaHeaders[requestURL] = index
+		c.mu.Unlock()
+		writeCachedJSON("fasta-header-index", requestURL, index)
+		return cloneFastaEntryMap(index), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return value.(map[string]fastaEntry), nil
 }
 
 func (c *Client) loadFASTASequences(ctx context.Context, requestURL string, memory map[string]map[string]proteinEntry) (map[string]proteinEntry, error) {
@@ -1750,6 +2072,50 @@ func (c *Client) loadFASTASequences(ctx context.Context, requestURL string, memo
 	return cloneProteinMap(value.(map[string]proteinEntry)), nil
 }
 
+func parseFastaHeaderIndex(reader io.Reader) (map[string]fastaEntry, error) {
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 1024), 32*1024*1024)
+	index := make(map[string]fastaEntry)
+	header := ""
+	length := 0
+	skipCurrent := false
+	flush := func() {
+		if header == "" || skipCurrent {
+			skipCurrent = false
+			return
+		}
+		entry := fastaEntry{Defline: header, Length: length}
+		for _, key := range identifierKeys(fastaHeaderID(header)) {
+			index[key] = entry
+		}
+	}
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, ">") {
+			flush()
+			header = strings.TrimPrefix(line, ">")
+			if fastautil.IsIgnoredPHGONoteHeader(header) {
+				header = ""
+				length = 0
+				skipCurrent = true
+				continue
+			}
+			length = 0
+			skipCurrent = false
+			continue
+		}
+		if skipCurrent {
+			continue
+		}
+		length += len(strings.TrimSpace(line))
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	flush()
+	return index, nil
+}
+
 type descriptionEntry struct {
 	Identifier               string
 	GeneModelType            string
@@ -1763,10 +2129,33 @@ func (c *Client) loadDescriptionIndex(ctx context.Context, rel releaseInfo) map[
 	if requestURL == "" {
 		return nil
 	}
+	c.mu.RLock()
+	if cached, ok := c.descriptions[requestURL]; ok && len(cached) > 0 {
+		out := cloneDescriptionEntryMap(cached)
+		c.mu.RUnlock()
+		return out
+	}
+	c.mu.RUnlock()
 	if cached, ok := readCachedJSON[map[string]descriptionEntry]("description-index", requestURL); ok && len(cached) > 0 {
-		return cached
+		c.mu.Lock()
+		c.descriptions[requestURL] = cached
+		c.mu.Unlock()
+		return cloneDescriptionEntryMap(cached)
 	}
 	value, err, _ := c.sf.Do("tair-description:"+requestURL, func() (any, error) {
+		c.mu.RLock()
+		if cached, ok := c.descriptions[requestURL]; ok && len(cached) > 0 {
+			out := cloneDescriptionEntryMap(cached)
+			c.mu.RUnlock()
+			return out, nil
+		}
+		c.mu.RUnlock()
+		if cached, ok := readCachedJSON[map[string]descriptionEntry]("description-index", requestURL); ok && len(cached) > 0 {
+			c.mu.Lock()
+			c.descriptions[requestURL] = cached
+			c.mu.Unlock()
+			return cloneDescriptionEntryMap(cached), nil
+		}
 		reader, closeFn, err := c.openMaybeCompressed(ctx, requestURL)
 		if err != nil {
 			return map[string]descriptionEntry{}, err
@@ -1776,8 +2165,11 @@ func (c *Client) loadDescriptionIndex(ctx context.Context, rel releaseInfo) map[
 		if err != nil {
 			return map[string]descriptionEntry{}, err
 		}
+		c.mu.Lock()
+		c.descriptions[requestURL] = entries
+		c.mu.Unlock()
 		writeCachedJSON("description-index", requestURL, entries)
-		return entries, nil
+		return cloneDescriptionEntryMap(entries), nil
 	})
 	if err != nil {
 		return nil
@@ -1790,10 +2182,33 @@ func (c *Client) loadRepresentativeModels(ctx context.Context, rel releaseInfo) 
 	if requestURL == "" {
 		return nil
 	}
+	c.mu.RLock()
+	if cached, ok := c.representative[requestURL]; ok && len(cached) > 0 {
+		out := cloneStringMap(cached)
+		c.mu.RUnlock()
+		return out
+	}
+	c.mu.RUnlock()
 	if cached, ok := readCachedJSON[map[string]string]("representative-models", requestURL); ok && len(cached) > 0 {
-		return cached
+		c.mu.Lock()
+		c.representative[requestURL] = cached
+		c.mu.Unlock()
+		return cloneStringMap(cached)
 	}
 	value, err, _ := c.sf.Do("tair-representative:"+requestURL, func() (any, error) {
+		c.mu.RLock()
+		if cached, ok := c.representative[requestURL]; ok && len(cached) > 0 {
+			out := cloneStringMap(cached)
+			c.mu.RUnlock()
+			return out, nil
+		}
+		c.mu.RUnlock()
+		if cached, ok := readCachedJSON[map[string]string]("representative-models", requestURL); ok && len(cached) > 0 {
+			c.mu.Lock()
+			c.representative[requestURL] = cached
+			c.mu.Unlock()
+			return cloneStringMap(cached), nil
+		}
 		reader, closeFn, err := c.openMaybeCompressed(ctx, requestURL)
 		if err != nil {
 			return map[string]string{}, err
@@ -1803,8 +2218,11 @@ func (c *Client) loadRepresentativeModels(ctx context.Context, rel releaseInfo) 
 		if err != nil {
 			return map[string]string{}, err
 		}
+		c.mu.Lock()
+		c.representative[requestURL] = entries
+		c.mu.Unlock()
 		writeCachedJSON("representative-models", requestURL, entries)
-		return entries, nil
+		return cloneStringMap(entries), nil
 	})
 	if err != nil {
 		return nil
@@ -1818,10 +2236,12 @@ func parseFASTA(reader io.Reader) (map[string]proteinEntry, error) {
 	seqs := make(map[string]proteinEntry)
 	var header string
 	var seq strings.Builder
+	skipCurrent := false
 	flush := func() {
 		header = strings.TrimSpace(header)
 		sequence := strings.TrimSpace(seq.String())
-		if header == "" || sequence == "" {
+		if header == "" || sequence == "" || skipCurrent {
+			skipCurrent = false
 			return
 		}
 		id := fastaHeaderID(header)
@@ -1842,7 +2262,17 @@ func parseFASTA(reader io.Reader) (map[string]proteinEntry, error) {
 		if strings.HasPrefix(line, ">") {
 			flush()
 			header = strings.TrimPrefix(line, ">")
+			if fastautil.IsIgnoredPHGONoteHeader(header) {
+				header = ""
+				skipCurrent = true
+				seq.Reset()
+				continue
+			}
+			skipCurrent = false
 			seq.Reset()
+			continue
+		}
+		if skipCurrent {
 			continue
 		}
 		seq.WriteString(line)
@@ -2042,6 +2472,22 @@ func (c *Client) fetchProteinSequenceFromUniProt(ctx context.Context, sequenceID
 }
 
 func (c *Client) openMaybeCompressed(ctx context.Context, requestURL string) (io.Reader, func(), error) {
+	if strings.Contains(requestURL, "://") == false {
+		f, err := os.Open(requestURL)
+		if err != nil {
+			return nil, nil, err
+		}
+		lower := strings.ToLower(requestURL)
+		if strings.HasSuffix(lower, ".gz") {
+			gz, err := gzip.NewReader(f)
+			if err != nil {
+				_ = f.Close()
+				return nil, nil, err
+			}
+			return gz, func() { _ = gz.Close(); _ = f.Close() }, nil
+		}
+		return f, func() { _ = f.Close() }, nil
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return nil, nil, err
@@ -2298,6 +2744,27 @@ func rowAliases(row model.KeywordResultRow) []string {
 		}
 	}
 	return uniqueStrings(values)
+}
+
+func bestMatchingRow(identifier string, rows []model.KeywordResultRow) (model.KeywordResultRow, bool) {
+	normalizedGene := strings.ToUpper(stripTranscriptSuffix(identifier))
+	normalizedModel := strings.ToUpper(strings.TrimSpace(identifier))
+	for _, row := range rows {
+		if strings.EqualFold(strings.TrimSpace(row.TranscriptID), normalizedModel) ||
+			strings.EqualFold(strings.TrimSpace(row.SequenceID), normalizedModel) ||
+			strings.EqualFold(strings.TrimSpace(row.ProteinID), normalizedModel) {
+			return row, true
+		}
+	}
+	for _, row := range rows {
+		if strings.EqualFold(strings.TrimSpace(row.GeneIdentifier), normalizedGene) {
+			return row, true
+		}
+	}
+	if len(rows) > 0 {
+		return rows[0], true
+	}
+	return model.KeywordResultRow{}, false
 }
 
 func rowSearchText(row model.KeywordResultRow) string {
@@ -2592,6 +3059,63 @@ func cloneProteinMap(values map[string]proteinEntry) map[string]proteinEntry {
 		out[key] = value
 	}
 	return out
+}
+
+func cloneFastaEntryMap(values map[string]fastaEntry) map[string]fastaEntry {
+	out := make(map[string]fastaEntry, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneDescriptionEntryMap(values map[string]descriptionEntry) map[string]descriptionEntry {
+	out := make(map[string]descriptionEntry, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneTAIRSearchDocs(values []tairSearchDoc) []tairSearchDoc {
+	out := make([]tairSearchDoc, len(values))
+	copy(out, values)
+	return out
+}
+
+func cloneTAIRKeywordSearchDocs(values []tairKeywordSearchDoc) []tairKeywordSearchDoc {
+	out := make([]tairKeywordSearchDoc, len(values))
+	copy(out, values)
+	return out
+}
+
+func cloneKeywordResultRows(values []model.KeywordResultRow) []model.KeywordResultRow {
+	out := make([]model.KeywordResultRow, len(values))
+	copy(out, values)
+	return out
+}
+
+func familyRowsCacheKey(version model.SpeciesCandidate, family string, limit int) string {
+	return strings.Join([]string{
+		strings.ToLower(strings.TrimSpace(firstNonEmpty(version.JBrowseName, version.GenomeLabel))),
+		strings.ToLower(strings.TrimSpace(family)),
+		strconv.Itoa(limit),
+	}, "|")
+}
+
+func liveSearchCacheKey(group string, term string) string {
+	return strings.Join([]string{
+		strings.ToLower(strings.TrimSpace(group)),
+		strings.ToLower(strings.TrimSpace(term)),
+	}, "|")
 }
 
 func looksLikeSpecificIdentifier(value string) bool {

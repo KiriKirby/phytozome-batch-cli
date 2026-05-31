@@ -22,6 +22,7 @@ import (
 	"github.com/KiriKirby/phytozome-go/internal/appfs"
 	"github.com/KiriKirby/phytozome-go/internal/interpro"
 	"github.com/KiriKirby/phytozome-go/internal/model"
+	"github.com/KiriKirby/phytozome-go/internal/phylo"
 	"github.com/KiriKirby/phytozome-go/internal/tui"
 	"github.com/KiriKirby/phytozome-go/internal/uniprot"
 )
@@ -123,25 +124,42 @@ type CanvasResultV2 struct {
 	CurrentItem   int            `json:"current_item"`
 	NextNumericID int            `json:"next_numeric_id"`
 	ImportedFrom  string         `json:"imported_from"`
+	Tree          *CanvasTreeV2  `json:"tree,omitempty"`
+}
+
+type CanvasTreeV2 struct {
+	PanelState       tui.CanvasTreePanelState `json:"panel_state"`
+	LastPayload      phylo.ViewerPayload      `json:"last_payload"`
+	LastManifest     phylo.RunManifest        `json:"last_manifest"`
+	LastArtifactDir  string                   `json:"last_artifact_dir,omitempty"`
+	LastRunID        string                   `json:"last_run_id,omitempty"`
+	LastAlignedFASTA string                   `json:"last_aligned_fasta,omitempty"`
+	LastNewick       string                   `json:"last_newick,omitempty"`
+	Fingerprints     phylo.Fingerprints       `json:"fingerprints"`
+	ArtifactPaths    []string                 `json:"artifact_paths,omitempty"`
 }
 
 type CanvasItemV2 struct {
-	Title        string           `json:"title"`
-	Subtitle     string           `json:"subtitle"`
-	Kind         model.CanvasKind `json:"kind"`
-	Rows         []CanvasRowV2    `json:"rows"`
-	Selected     []bool           `json:"selected"`
-	SourceLabel  string           `json:"source_label,omitempty"`
-	ImportedFrom string           `json:"imported_from,omitempty"`
+	Title         string               `json:"title"`
+	Subtitle      string               `json:"subtitle"`
+	Kind          model.CanvasKind     `json:"kind"`
+	Rows          []CanvasRowV2        `json:"rows"`
+	Selected      []bool               `json:"selected"`
+	SourceLabel   string               `json:"source_label,omitempty"`
+	ImportedFrom  string               `json:"imported_from,omitempty"`
+	ActiveColumns []model.CanvasColumn `json:"active_columns,omitempty"`
 }
 
 type CanvasRowV2 struct {
-	RowNumber     int                        `json:"row_number"`
-	Kind          model.CanvasKind           `json:"kind"`
-	KeywordRow    *model.KeywordResultRow    `json:"keyword_row,omitempty"`
-	BlastRow      *model.BlastResultRow      `json:"blast_row,omitempty"`
-	FASTA         *model.QuerySequenceSource `json:"fasta,omitempty"`
-	SequenceReady *bool                      `json:"sequence_ready,omitempty"`
+	RowNumber         int                        `json:"row_number"`
+	Kind              model.CanvasKind           `json:"kind"`
+	DisplayName       string                     `json:"display_name,omitempty"`
+	DisplayNameLocked bool                       `json:"display_name_locked,omitempty"`
+	KeywordRow        *model.KeywordResultRow    `json:"keyword_row,omitempty"`
+	BlastRow          *model.BlastResultRow      `json:"blast_row,omitempty"`
+	FASTA             *model.QuerySequenceSource `json:"fasta,omitempty"`
+	SequenceData      *model.ProteinSequenceData `json:"sequence_data,omitempty"`
+	SequenceReady     *bool                      `json:"sequence_ready,omitempty"`
 }
 
 type BlastRunV2 struct {

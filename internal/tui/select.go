@@ -24,17 +24,21 @@ var ErrBack = errors.New("tui back requested")
 var helpLanguageIndex atomic.Int32
 
 const (
-	colorCanvas       = tcell.ColorBlack
-	colorPanel        = tcell.ColorDarkBlue
-	colorAction       = tcell.ColorDeepSkyBlue
-	colorActionText   = tcell.ColorBlack
-	colorText         = tcell.ColorGhostWhite
-	colorMuted        = tcell.ColorYellow
-	colorAccent       = tcell.ColorGreen
-	colorSelectionOn  = tcell.ColorGreen
-	colorSelectionOff = tcell.ColorRed
-	colorBorder       = tcell.ColorWhite
-	colorInactiveText = tcell.ColorDarkCyan
+	colorCanvas         = tcell.ColorBlack
+	colorPanel          = tcell.ColorDarkBlue
+	colorAction         = tcell.ColorDeepSkyBlue
+	colorActionText     = tcell.ColorBlack
+	colorText           = tcell.ColorGhostWhite
+	colorMuted          = tcell.ColorYellow
+	colorAccent         = tcell.ColorGreen
+	colorSelectionOn    = tcell.ColorGreen
+	colorSelectionOff   = tcell.ColorRed
+	colorBorder         = tcell.ColorWhite
+	colorInactiveText   = tcell.ColorDarkCyan
+	colorTreeAction     = tcell.ColorYellow
+	colorTreeActionText = tcell.ColorBlack
+	colorTreeBorder     = tcell.ColorYellow
+	colorTreeMuted      = tcell.ColorKhaki
 )
 
 type Option struct {
@@ -78,6 +82,7 @@ func SelectStartup(in io.Reader, out io.Writer, info StartupInfo) (StartupChoice
 		"explore": {
 			{Value: "tool:open_session", Label: "Open session", Description: "open a saved .pgo session snapshot from a path or output file name"},
 			{Value: "tool:new_canvas", Label: "New canvas", Description: "create a blank canvas workspace"},
+			{Value: "tool:nwk_browser", Label: "Tree viewer browser", Description: "open one .nwk or .pgv file path or URL at a time in the local tree viewer"},
 			{Value: "tair:family", Label: "TAIR database family index", Description: "TAIR family index search using release version selection"},
 			{Value: "tool:pathway_search", Label: "Pathway search", Description: "pathway search entry point; implementation comes next"},
 		},
@@ -211,7 +216,7 @@ func SelectStartup(in io.Reader, out io.Writer, info StartupInfo) (StartupChoice
 	return result, nil
 }
 
-func newApp() *tview.Application {
+var newApp = func() *tview.Application {
 	configStyles()
 	app := tview.NewApplication().EnableMouse(true).EnablePaste(true)
 	app.SetMouseCapture(func(event *tcell.EventMouse, action tview.MouseAction) (*tcell.EventMouse, tview.MouseAction) {
@@ -228,7 +233,7 @@ func newApp() *tview.Application {
 	return app
 }
 
-func runApp(app *tview.Application) (err error) {
+var runApp = func(app *tview.Application) (err error) {
 	restoreConsoleCloseHandler := installDeferredAppHook(app, installConsoleCloseHandler)
 	defer restoreConsoleCloseHandler()
 	stopResizePoller := installDeferredAppHook(app, installConsoleResizeWatcher)
@@ -386,6 +391,7 @@ func formatLicenseID(id string) string {
 }
 
 type buttonSpec struct {
+	Value       string
 	Label       string
 	Shortcut    string
 	Action      func()

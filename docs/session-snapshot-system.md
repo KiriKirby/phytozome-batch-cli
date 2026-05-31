@@ -45,7 +45,7 @@ The `.pgo` file is a compressed archive with versioned XML modules:
 - `modules/artifact-manifest-v2.xml` lists explicitly selected generated artifacts packed under `artifacts/` in their original text or binary forms.
 - `modules/runtime-cache-v2.xml` stores in-memory workflow caches that have already been computed and would otherwise be silently rebuilt, such as label lookup caches, query-source resolution caches, keyword-term row caches, UniProt and InterPro lookup caches, species-candidate caches, and protein-sequence hit/miss caches.
 
-For the current `v2.1` implementation, artifact packing is intentionally narrow:
+For the current `v2.2` implementation, artifact packing is intentionally narrow:
 
 - only pack artifacts and cache payloads that are explicitly selected by the workflow as needed for later continuity
 - store each packed file with an explicit restore target so snapshot open can rehydrate only the recorded state before workflow continuation begins
@@ -81,9 +81,22 @@ The startup `Explore` section includes `Open session`. The input accepts:
 
 The open-session input is raw path input. A typed `.pgo` path is opened directly and is not reinterpreted as pasted text content.
 
+Canvas Add canvas is the full import entry for FASTA/phgo FASTA text, FASTA/text files, and `.pgo` session snapshots. Add rows is FASTA/phgo FASTA only; if a `.pgo` path, dropped `.pgo` file, or output snapshot name is provided there, the UI must reject it and tell the user to use Add canvas or `Explore -> Open session`.
+
+Canvas item titles follow a fixed source rule:
+
+- result tables with a left sidebar preserve the original left-sidebar title
+- result tables without a left sidebar, such as keyword, family, and single-file BLAST, use numeric titles
+- multi-file BLAST is still a left-sidebar source after family merging; Canvas titles combine the original sidebar main title and family subtitle first line, for example `AT2G37040.1[PAL]`
+- `.pgo` snapshot imports preserve saved left-sidebar titles when present; no-sidebar snapshot sources use the shortened snapshot filename
+- FASTA/text files use the shortened source filename
+- pasted FASTA text uses a numeric title
+
+Canvas tree snapshots also preserve the system-tree tool panel state: the current page, display-name source, conversion target/action, skip-unselect setting, alignment method/parameters, and tree method/parameters. The default restored page is the conversion page, so reopened snapshots expose the Protein/DNA mode choice before alignment and tree settings. A restored tree payload may be shown immediately, but the first user-triggered `Refresh tree` after opening a Canvas snapshot must run a full `mega-phgo-runtime` compute pass before rendering; only later display-label-only changes are render-only.
+
 ## Current Version Rule
 
-- The current unreleased snapshot format is `v2.1`.
+- The current unreleased snapshot format is `v2.2`.
 - Because the software is not yet released, the code may refactor snapshot structure directly instead of carrying long-term compatibility burden for older draft formats.
 - New modules should still keep their meanings explicit and versioned so future changes can evolve cleanly.
 - Store mode/database/result identifiers as plain strings so new workflows can be routed without creating a hardcoded tree.

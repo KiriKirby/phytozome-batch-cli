@@ -71,7 +71,7 @@ macOS Apple Silicon:
 Open `phytozome GO.app` from `phytozome-go_macos_arm64_wezterm.tar.gz`
 ```
 
-All release bundles now ship with a bundled `WezTerm` runtime. Opening the packaged app starts a short cache-clean startup CLI in the first tab, then that cleaner opens the wizard in a fresh tab in the same window and exits. New tabs opened from inside `WezTerm` launch the wizard directly without running the cache cleaner again. You do not need to pass subcommands.
+All release bundles now ship with a bundled `WezTerm` runtime. Opening the packaged app starts a short cache-clean startup CLI in the first tab, then that cleaner opens the wizard in a fresh tab in the same window and exits. That startup preflight only clears `.cache/`. If it installs a newer release, it preserves `output/` and replaces the rest of the bundle so managed tool folders such as `blastplus/` and `mega-phgo-runtime/` are recreated by the new version when needed. New tabs opened from inside `WezTerm` launch the wizard directly without running the cache cleaner again. You do not need to pass subcommands.
 
 ## License
 
@@ -129,12 +129,22 @@ The program keeps all runtime artifacts next to the executable so nothing is sca
   - Phytozome persistent caches
   - lemna release caches
   - local BLAST databases and downloaded FASTA
+  - Canvas tree runtime artifacts and restored tree snapshot files under `.cache/tree/`
+- `blastplus/` and `mega-phgo-runtime/`
+  - managed tool folders created on demand
+  - not preserved across self-update; the updated bundle recreates them when needed
 
 If you choose an extra folder name during batch BLAST export, that folder is created inside `output/`.
 
 ## Session Snapshots
 
 Export settings include `Save session snapshot (.pgo)`. A `.pgo` file stores the current result review state, user row/alias edits, table position/sort state, and cached sequence data needed by later exports so it can be reopened later from `Explore` -> `Open session` and return directly to the saved result table.
+
+`Explore` also includes `NWK tree browser`, which opens one local `.nwk` path, `file://` link, or `http(s)` `.nwk` URL at a time in the embedded Reactree viewer. Each submission opens a new browser page, and leaving that input screen stops the local viewer service.
+
+Canvas tree preview uses the same local viewer stack, but each Canvas page keeps its own separate viewer service. Leaving that Canvas page stops only that page's viewer service, so multiple Canvas pages can preview trees independently.
+
+When an older `.pgo` snapshot still references legacy `output/tree/...` tree artifacts, PHgo remaps those restored files into `.cache/tree/...` during snapshot open instead of recreating the old output-side tree cache.
 
 The snapshot format is documented in `docs/session-snapshot-system.md`.
 
@@ -638,6 +648,8 @@ Current release assets are built for:
 - Linux `amd64` WezTerm bundle tarball
 - macOS `amd64` app bundle tarball
 - macOS `arm64` app bundle tarball
+
+The managed PHgo tree runtime package used by Canvas system-tree analysis is currently published only for Windows `amd64`. Linux and macOS tree-runtime install attempts report unsupported instead of downloading or using placeholder runtime packages.
 
 The repository keeps release binaries in `bin/` during packaging. GitHub Releases is the canonical download point for end users.
 

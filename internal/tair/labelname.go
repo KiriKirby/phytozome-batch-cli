@@ -14,7 +14,7 @@ var tairPhytozomeSpeciesOnce sync.Once
 var tairPhytozomeSpecies model.SpeciesCandidate
 var tairPhytozomeSpeciesOK bool
 
-func tairReferencePhytozomeSpecies() (model.SpeciesCandidate, bool) {
+func ReferencePhytozomeSpecies() (model.SpeciesCandidate, bool) {
 	tairPhytozomeSpeciesOnce.Do(func() {
 		client := phytozome.NewClient(nil)
 		candidates, err := client.FetchSpeciesCandidates(context.Background())
@@ -36,18 +36,18 @@ func (c *Client) ResolveTAIRKeywordRowLabelCandidates(ctx context.Context, row m
 	if aliases, sourceType := c.resolveTAIRViaPhytozomeRow(ctx, row); len(aliases) > 0 {
 		return aliases, sourceType
 	}
-	if aliases := tairOtherNamesFallbackAliases(row); len(aliases) > 0 {
+	if aliases := OtherNamesFallbackAliases(row); len(aliases) > 0 {
 		return aliases, "tair other_names"
 	}
 	return nil, ""
 }
 
 func (c *Client) resolveTAIRViaPhytozomeRow(ctx context.Context, row model.KeywordResultRow) ([]string, string) {
-	species, ok := tairReferencePhytozomeSpecies()
+	species, ok := ReferencePhytozomeSpecies()
 	if !ok {
 		return nil, ""
 	}
-	terms := tairPhytozomeSearchTerms(row)
+	terms := PhytozomeSearchTermsForKeywordRow(row)
 	if len(terms) == 0 {
 		return nil, ""
 	}
@@ -57,14 +57,14 @@ func (c *Client) resolveTAIRViaPhytozomeRow(ctx context.Context, row model.Keywo
 		if err != nil {
 			continue
 		}
-		if aliases, sourceType := tairPhytozomeAliasCandidates(rows); len(aliases) > 0 {
+		if aliases, sourceType := PhytozomeAliasCandidatesFromKeywordRows(rows); len(aliases) > 0 {
 			return aliases, sourceType
 		}
 	}
 	return nil, ""
 }
 
-func tairPhytozomeSearchTerms(row model.KeywordResultRow) []string {
+func PhytozomeSearchTermsForKeywordRow(row model.KeywordResultRow) []string {
 	terms := make([]string, 0, 8)
 	add := func(value string) {
 		value = strings.TrimSpace(value)
@@ -80,7 +80,7 @@ func tairPhytozomeSearchTerms(row model.KeywordResultRow) []string {
 	return uniqueStrings(terms)
 }
 
-func tairPhytozomeAliasCandidates(rows []model.KeywordResultRow) ([]string, string) {
+func PhytozomeAliasCandidatesFromKeywordRows(rows []model.KeywordResultRow) ([]string, string) {
 	synonyms := make([]string, 0, len(rows)*2)
 	symbols := make([]string, 0, len(rows)*2)
 	autoDefine := make([]string, 0, len(rows)*2)
@@ -101,6 +101,6 @@ func tairPhytozomeAliasCandidates(rows []model.KeywordResultRow) ([]string, stri
 	return nil, ""
 }
 
-func tairOtherNamesFallbackAliases(row model.KeywordResultRow) []string {
+func OtherNamesFallbackAliases(row model.KeywordResultRow) []string {
 	return uniqueStrings(labelname.SplitAliases(row.Synonyms))
 }

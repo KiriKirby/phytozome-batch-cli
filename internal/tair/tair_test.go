@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -387,6 +388,60 @@ func TestParseDescriptionTable(t *testing.T) {
 	}
 	if entry.ShortDescription != "ANAC001" || entry.CuratorSummary != "Curator text" {
 		t.Fatalf("unexpected description entry: %#v", entry)
+	}
+}
+
+func TestBestMatchingRowPrefersExactTranscriptThenGene(t *testing.T) {
+	rows := []model.KeywordResultRow{
+		{GeneIdentifier: "AT1G01010", TranscriptID: "AT1G01010.2"},
+		{GeneIdentifier: "AT1G01010", TranscriptID: "AT1G01010.1"},
+	}
+	row, ok := bestMatchingRow("AT1G01010.1", rows)
+	if !ok {
+		t.Fatal("expected best matching row")
+	}
+	if row.TranscriptID != "AT1G01010.1" {
+		t.Fatalf("best match transcript = %q, want AT1G01010.1", row.TranscriptID)
+	}
+	row, ok = bestMatchingRow("AT1G01010", rows)
+	if !ok || row.GeneIdentifier != "AT1G01010" {
+		t.Fatalf("best gene match = %#v, ok=%v", row, ok)
+	}
+}
+
+func TestParseFastaHeaderIndexTracksHeaderAndLength(t *testing.T) {
+	index, err := parseFastaHeaderIndex(strings.NewReader(">AT1G01010.1 desc\nMPEP\nTIDE\n"))
+	if err != nil {
+		t.Fatalf("parseFastaHeaderIndex: %v", err)
+	}
+	entry, ok := lookupFastaEntry(index, "AT1G01010.1")
+	if !ok {
+		t.Fatal("expected fasta header entry")
+	}
+	if entry.Defline != "AT1G01010.1 desc" || entry.Length != 8 {
+		t.Fatalf("fasta header entry = %#v", entry)
+	}
+}
+
+func TestLoadFastaHeadersCachesParsedIndex(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.fa")
+	if err := os.WriteFile(path, []byte(">AT1G01010.1 desc\nMPEPTIDE\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	client := NewClient(nil)
+	index1, err := client.loadFastaHeaders(context.Background(), path)
+	if err != nil {
+		t.Fatalf("loadFastaHeaders first: %v", err)
+	}
+	index2, err := client.loadFastaHeaders(context.Background(), path)
+	if err != nil {
+		t.Fatalf("loadFastaHeaders second: %v", err)
+	}
+	entry1, ok1 := lookupFastaEntry(index1, "AT1G01010.1")
+	entry2, ok2 := lookupFastaEntry(index2, "AT1G01010.1")
+	if !ok1 || !ok2 || entry1.Length != 8 || entry2.Defline == "" {
+		t.Fatalf("cached fasta headers missing entries: first=%#v second=%#v", index1, index2)
 	}
 }
 

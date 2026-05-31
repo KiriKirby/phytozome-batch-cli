@@ -27,10 +27,12 @@ import (
 	"github.com/KiriKirby/phytozome-go/internal/appfs"
 	"github.com/KiriKirby/phytozome-go/internal/blastplus"
 	"github.com/KiriKirby/phytozome-go/internal/export"
+	"github.com/KiriKirby/phytozome-go/internal/fastautil"
 	"github.com/KiriKirby/phytozome-go/internal/interpro"
 	"github.com/KiriKirby/phytozome-go/internal/labelname"
 	"github.com/KiriKirby/phytozome-go/internal/lemna"
 	"github.com/KiriKirby/phytozome-go/internal/model"
+	"github.com/KiriKirby/phytozome-go/internal/phylo"
 	"github.com/KiriKirby/phytozome-go/internal/phytozome"
 	"github.com/KiriKirby/phytozome-go/internal/progressctx"
 	"github.com/KiriKirby/phytozome-go/internal/prompt"
@@ -44,40 +46,41 @@ import (
 )
 
 type BlastWizard struct {
-	httpClient             *http.Client
-	source                 source.DataSource
-	sourceFactory          func(string) source.DataSource
-	prompt                 *prompt.Prompter
-	out                    io.Writer
-	tuiInfo                tui.StartupInfo
-	instanceRunID          string
-	instanceID             string
-	parentInstanceID       string
-	handoffPath            string
-	blastProgramPath       string
-	pendingMode            QueryMode
-	postRunBackTarget      error
-	reuseLastBlastInput    bool
-	reuseLastBlastRows     bool
-	lastBlastRowContext    *blastRowContext
-	lastBlastReviewContext *blastReviewContext
-	lastBlastItems         []blastQueryItem
-	rewindBlastToInput     bool
-	reuseLastKeywordRows   bool
-	lastKeywordGroups      []model.KeywordSearchGroup
-	lastKeywordReport      *keywordReportRunContext
-	lastKeywordSpecies     model.SpeciesCandidate
-	rewindKeywordToInput   bool
-	lastExternalRefs       externalReferenceConfig
-	suppressTaskModals     bool
-	transferKind           string
-	transferTargetDatabase string
-	transferKeywordRows    []model.KeywordResultRow
-	transferBlastRows      []model.BlastResultRow
-	transferCanvasItems    []model.CanvasItem
-	transferCanvasCurrent  int
-	transferCanvasNextID   int
-	transferSourceSpecies  model.SpeciesCandidate
+	httpClient              *http.Client
+	source                  source.DataSource
+	sourceFactory           func(string) source.DataSource
+	prompt                  *prompt.Prompter
+	out                     io.Writer
+	tuiInfo                 tui.StartupInfo
+	instanceRunID           string
+	instanceID              string
+	parentInstanceID        string
+	handoffPath             string
+	blastProgramPath        string
+	pendingMode             QueryMode
+	postRunBackTarget       error
+	reuseLastBlastInput     bool
+	reuseLastBlastRows      bool
+	lastBlastRowContext     *blastRowContext
+	lastBlastReviewContext  *blastReviewContext
+	lastBlastItems          []blastQueryItem
+	rewindBlastToInput      bool
+	reuseLastKeywordRows    bool
+	lastKeywordGroups       []model.KeywordSearchGroup
+	lastKeywordReport       *keywordReportRunContext
+	lastKeywordSpecies      model.SpeciesCandidate
+	rewindKeywordToInput    bool
+	lastExternalRefs        externalReferenceConfig
+	suppressTaskModals      bool
+	ensureCanvasTreeRuntime func(context.Context) error
+	transferKind            string
+	transferTargetDatabase  string
+	transferKeywordRows     []model.KeywordResultRow
+	transferBlastRows       []model.BlastResultRow
+	transferCanvasItems     []model.CanvasItem
+	transferCanvasCurrent   int
+	transferCanvasNextID    int
+	transferSourceSpecies   model.SpeciesCandidate
 
 	speciesCandidatesMu    sync.Mutex
 	speciesCandidatesCache map[string][]model.SpeciesCandidate
@@ -119,6 +122,15 @@ type BlastWizard struct {
 	proteinSequenceCache map[string]model.ProteinSequenceData
 	proteinSequenceMiss  map[string]error
 	proteinSequenceGroup singleflight.Group
+
+	canvasTreeViewerMu     sync.Mutex
+	canvasTreeViewer       *phylo.ViewerServer
+	canvasTreeViewerCancel context.CancelFunc
+	canvasTreeLastPayload  phylo.ViewerPayload
+	canvasTreeLastPlan     phylo.RunPlan
+	canvasTreeForceCompute bool
+	canvasTreeRefreshRun   func(context.Context, canvasLaunchState, phylo.TreeSettings) error
+	canvasTreeRecover      func(description string, backTarget error, allowSkip bool) (string, error)
 }
 
 type InstanceLaunchRequest struct {
@@ -593,6 +605,10 @@ func NewBlastWizardWithTUIInfo(out io.Writer, tuiInfo tui.StartupInfo) *BlastWiz
 		proteinSequenceMiss:       make(map[string]error),
 	}
 	w.prompt.SetDetailLoaders(w.loadKeywordDetailFASTA, w.loadBlastDetailFASTA)
+	w.prompt.SetCanvasTreePanelChanged(func(state tui.CanvasTreePanelState, opened bool) {
+		_ = state
+		_ = opened
+	})
 	w.prompt.SetHomeNavigationEnabled(true)
 	return w
 }
@@ -1142,6 +1158,8 @@ func (w *BlastWizard) runStartupTool(tool string) error {
 		return w.openSessionSnapshotTool(context.Background())
 	case "new_canvas":
 		return w.runCanvasMode(context.Background(), canvasLaunchState{})
+	case "nwk_browser":
+		return w.runNewickBrowserTool(context.Background())
 	case "pathway_search":
 		return w.showInfo(
 			"Pathway search",
@@ -3627,7 +3645,7 @@ func (w *BlastWizard) resumeBlastRowSelection(ctx context.Context, rowContext bl
 			continue
 		}
 		if selection.CreateCanvas {
-			if err := w.runBlastRowsCanvasMode(ctx, firstNonEmpty(rowContext.Item.LabelName, rowContext.Item.RawInput), firstNonEmpty(rowContext.Item.LabelName, rowContext.Item.RawInput), selection.Rows); err != nil {
+			if err := w.runBlastRowsCanvasMode(ctx, rowContext.Item, selection.Rows); err != nil {
 				if errors.Is(err, prompt.ErrBackToRowSelection) {
 					continue
 				}
@@ -7733,6 +7751,9 @@ func parseBlastQueryItems(rawInput string) ([]blastQueryItem, error) {
 		if err != nil {
 			return nil, err
 		}
+		if strings.TrimSpace(item.RawInput) == "" && strings.TrimSpace(item.LabelName) == "" && item.QuerySource == nil && strings.TrimSpace(item.Sequence) == "" {
+			continue
+		}
 		items = append(items, item)
 	}
 	return items, nil
@@ -7855,6 +7876,9 @@ func parseBlastQueryRecord(record string) (blastQueryItem, error) {
 		return blastQueryItem{}, nil
 	}
 	if strings.HasPrefix(record, ">") {
+		if fastautil.IsIgnoredPHGONoteHeader(record) {
+			return blastQueryItem{}, nil
+		}
 		source, ok := parseFastaQuerySequenceInput(record)
 		if !ok {
 			return blastQueryItem{}, fmt.Errorf("invalid FASTA BLAST input near %q", oneLinePreview(record))
@@ -9689,8 +9713,7 @@ func (w *BlastWizard) autoIdentifyKeywordLabelsWithProgress(ctx context.Context,
 		taskUpdate("Reviewing keyword result rows...")
 		working := cloneKeywordSearchGroups(groups)
 		if strings.EqualFold(strings.TrimSpace(w.source.Name()), "tair") {
-			taskUpdate("Resolving TAIR label candidates...")
-			return w.autoIdentifyTAIRKeywordLabels(labelCtx, working), nil
+			return w.autoIdentifyTAIRKeywordLabelsWithProgress(labelCtx, working, taskUpdate), nil
 		}
 		if _, ok := w.source.(*lemna.Client); ok {
 			taskUpdate("Searching Phytozome label candidates for Lemna rows...")
@@ -9703,6 +9726,14 @@ func (w *BlastWizard) autoIdentifyKeywordLabelsWithProgress(ctx context.Context,
 
 func (w *BlastWizard) autoIdentifyLemnaKeywordLabelsWithProgress(ctx context.Context, selected model.SpeciesCandidate, groups []model.KeywordSearchGroup) []keywordLabelIdentification {
 	return w.autoIdentifyLemnaKeywordLabels(ctx, selected, groups, phytozome.NewClient(w.httpClient))
+}
+
+func (w *BlastWizard) autoIdentifyTAIRKeywordLabelsWithProgress(ctx context.Context, groups []model.KeywordSearchGroup, update func(string)) []keywordLabelIdentification {
+	taskUpdate := safeTaskUpdate(update)
+	taskUpdate("Collecting TAIR label candidates from Phytozome...")
+	identifications := w.autoIdentifyTAIRKeywordLabelsWithLookup(ctx, groups, phytozome.NewClient(w.httpClient))
+	taskUpdate("Selecting TAIR label names...")
+	return identifications
 }
 
 func (w *BlastWizard) autoIdentifyLemnaKeywordLabels(ctx context.Context, selected model.SpeciesCandidate, groups []model.KeywordSearchGroup, lookupSource source.DataSource) []keywordLabelIdentification {
@@ -9899,36 +9930,108 @@ func cloneKeywordResultRows(rows []model.KeywordResultRow) []model.KeywordResult
 }
 
 func (w *BlastWizard) autoIdentifyTAIRKeywordLabels(ctx context.Context, groups []model.KeywordSearchGroup) []keywordLabelIdentification {
+	return w.autoIdentifyTAIRKeywordLabelsWithLookup(ctx, groups, phytozome.NewClient(w.httpClient))
+}
+
+func (w *BlastWizard) autoIdentifyTAIRKeywordLabelsWithLookup(ctx context.Context, groups []model.KeywordSearchGroup, lookupSource source.DataSource) []keywordLabelIdentification {
 	taskTimestamp := keywordLabelTaskTimestamp(groups)
 	identifications := make([]keywordLabelIdentification, len(groups))
-	resolver, ok := w.source.(source.TAIRLabelNameResolver)
-	if !ok {
-		return autoIdentifyKeywordLabelIdentifications(groups)
-	}
 	for i := range identifications {
 		identifications[i].TaskTimestamp = taskTimestamp
 		identifications[i].ItemIndex = i
 	}
-	for i, group := range groups {
-		aliases := make([]string, 0, len(group.Rows)*4)
-		sourceType := ""
-		for _, row := range group.Rows {
-			rowAliases, rowSource := resolver.ResolveTAIRKeywordRowLabelCandidates(ctx, row)
-			if sourceType == "" && strings.TrimSpace(rowSource) != "" {
-				sourceType = strings.TrimSpace(rowSource)
-			}
-			aliases = append(aliases, rowAliases...)
+
+	if lookupSource == nil {
+		for i, group := range groups {
+			aliases, sourceType := tairKeywordGroupAliasCandidates(group, nil)
+			ranked := labelname.RankAliases(labelname.AliasRankRequest{
+				TaskTimestamp: taskTimestamp,
+				ItemIndex:     i,
+				SearchTerm:    firstNonEmpty(group.SearchTerm, group.LabelName),
+				Aliases:       aliases,
+			})
+			identifications[i].Aliases = uniqueStrings(ranked.RankedAliases)
+			identifications[i].SourceType = sourceType
 		}
-		ranked := labelname.RankAliases(labelname.AliasRankRequest{
+		return identifications
+	}
+
+	phytozomeSpecies, ok := w.phytozomeSpeciesForTAIRLabels(ctx, lookupSource)
+	keywordRowsByTerm := map[string][]model.KeywordResultRow{}
+	if ok {
+		terms := tairKeywordGroupsPhytozomeSearchTerms(groups)
+		keywordRowsByTerm = w.fetchKeywordRowsByTerms(ctx, lookupSource, phytozomeSpecies, terms)
+	}
+	requests := make([]labelname.AliasRankRequest, len(groups))
+	sourceTypes := make([]string, len(groups))
+	for i, group := range groups {
+		aliases, sourceType := tairKeywordGroupAliasCandidates(group, keywordRowsByTerm)
+		requests[i] = labelname.AliasRankRequest{
 			TaskTimestamp: taskTimestamp,
 			ItemIndex:     i,
 			SearchTerm:    firstNonEmpty(group.SearchTerm, group.LabelName),
-			Aliases:       uniqueStrings(aliases),
-		})
+			Aliases:       aliases,
+		}
+		sourceTypes[i] = sourceType
+	}
+	results := labelname.RankAliasBatch(requests)
+	for i, ranked := range results {
 		identifications[i].Aliases = uniqueStrings(ranked.RankedAliases)
-		identifications[i].SourceType = sourceType
+		identifications[i].SourceType = sourceTypes[i]
 	}
 	return identifications
+}
+
+func (w *BlastWizard) phytozomeSpeciesForTAIRLabels(ctx context.Context, lookupSource source.DataSource) (model.SpeciesCandidate, bool) {
+	if lookupSource == nil {
+		return model.SpeciesCandidate{}, false
+	}
+	candidates, err := w.speciesCandidatesForSource(ctx, lookupSource, nil)
+	if err != nil {
+		return model.SpeciesCandidate{}, false
+	}
+	for _, candidate := range candidates {
+		if candidate.ProteomeID == 167 || strings.EqualFold(strings.TrimSpace(candidate.JBrowseName), "Athaliana_TAIR10") {
+			return candidate, true
+		}
+	}
+	return model.SpeciesCandidate{}, false
+}
+
+func tairKeywordGroupsPhytozomeSearchTerms(groups []model.KeywordSearchGroup) []string {
+	terms := make([]string, 0, len(groups)*2)
+	for _, group := range groups {
+		for _, row := range group.Rows {
+			terms = append(terms, tair.PhytozomeSearchTermsForKeywordRow(row)...)
+		}
+	}
+	return uniqueStrings(terms)
+}
+
+func tairKeywordGroupAliasCandidates(group model.KeywordSearchGroup, keywordRowsByTerm map[string][]model.KeywordResultRow) ([]string, string) {
+	aliases := make([]string, 0, len(group.Rows)*4)
+	sourceType := ""
+	for _, row := range group.Rows {
+		rowAliases, rowSource := tairKeywordRowAliasCandidatesWithLookup(row, keywordRowsByTerm)
+		if sourceType == "" && strings.TrimSpace(rowSource) != "" {
+			sourceType = strings.TrimSpace(rowSource)
+		}
+		aliases = append(aliases, rowAliases...)
+	}
+	return uniqueStrings(aliases), sourceType
+}
+
+func tairKeywordRowAliasCandidatesWithLookup(row model.KeywordResultRow, keywordRowsByTerm map[string][]model.KeywordResultRow) ([]string, string) {
+	for _, term := range tair.PhytozomeSearchTermsForKeywordRow(row) {
+		rows := keywordRowsByTerm[strings.ToLower(strings.TrimSpace(term))]
+		if aliases, sourceType := tair.PhytozomeAliasCandidatesFromKeywordRows(rows); len(aliases) > 0 {
+			return aliases, sourceType
+		}
+	}
+	if aliases := tair.OtherNamesFallbackAliases(row); len(aliases) > 0 {
+		return aliases, "tair other_names"
+	}
+	return nil, ""
 }
 
 func (w *BlastWizard) cachedKeywordTermRows(cacheKey string) ([]model.KeywordResultRow, bool) {
@@ -11184,6 +11287,9 @@ func (w *BlastWizard) fetchProteinSequenceCached(ctx context.Context, targetID i
 	if err := w.cachedProteinSequenceMiss(cacheKey); err != nil {
 		return model.ProteinSequenceData{}, err
 	}
+	if w.source == nil {
+		return model.ProteinSequenceData{}, fmt.Errorf("protein sequence source is unavailable")
+	}
 
 	value, err, _ := w.proteinSequenceGroup.Do(cacheKey, func() (any, error) {
 		if sequence, ok := w.cachedProteinSequence(cacheKey); ok {
@@ -11191,6 +11297,9 @@ func (w *BlastWizard) fetchProteinSequenceCached(ctx context.Context, targetID i
 		}
 		if err := w.cachedProteinSequenceMiss(cacheKey); err != nil {
 			return model.ProteinSequenceData{}, err
+		}
+		if w.source == nil {
+			return model.ProteinSequenceData{}, fmt.Errorf("protein sequence source is unavailable")
 		}
 		sequence, err := w.source.FetchProteinSequence(ctx, targetID, sequenceID)
 		if err != nil {
@@ -11355,12 +11464,6 @@ func (w *BlastWizard) prefetchKeywordSequences(ctx context.Context, selected mod
 }
 
 func keywordSequenceFetchTargetID(src source.DataSource, selected model.SpeciesCandidate) int {
-	if src == nil {
-		return 0
-	}
-	if _, ok := src.(*lemna.Client); ok {
-		return selected.ProteomeID
-	}
 	return selected.ProteomeID
 }
 
@@ -11980,6 +12083,9 @@ func parseFastaQuerySequenceInput(input string) (*model.QuerySequenceSource, boo
 	if header == "" || sequence == "" {
 		return nil, false
 	}
+	if fastautil.IsIgnoredPHGONoteHeader(header) {
+		return nil, false
+	}
 
 	source := &model.QuerySequenceSource{
 		Sequence:       sequence,
@@ -11995,6 +12101,7 @@ func parseFastaQuerySequenceInput(input string) (*model.QuerySequenceSource, boo
 		source.BlastSourceGeneID = parsed.BlastSourceGeneID
 		source.PhgoRowNumber = parsed.RowNumber
 		source.PhgoHasRowNumber = parsed.HasRowPart
+		source.PhgoBlastQuerySource = parsed.IsBlastQuerySource
 	}
 
 	return source, true

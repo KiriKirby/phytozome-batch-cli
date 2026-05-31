@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -30,9 +31,28 @@ import (
 	"github.com/KiriKirby/phytozome-go/internal/report"
 	"github.com/KiriKirby/phytozome-go/internal/sessionsnapshot"
 	"github.com/KiriKirby/phytozome-go/internal/source"
+	"github.com/KiriKirby/phytozome-go/internal/tair"
 	"github.com/KiriKirby/phytozome-go/internal/tui"
 	"github.com/KiriKirby/phytozome-go/internal/uniprot"
 )
+
+func TestParseBlastQueryItemsIgnoresPhgoNoteHeader(t *testing.T) {
+	items, err := parseBlastQueryItems(strings.Join([]string{
+		">phgo://note",
+		"MNOTE",
+		">phgo://Sp7498/PAL1/AT2G37040\\1",
+		"MPEPTIDE",
+	}, "\n"))
+	if err != nil {
+		t.Fatalf("parseBlastQueryItems returned error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("parseBlastQueryItems returned %d items, want 1", len(items))
+	}
+	if items[0].Sequence != "MPEPTIDE" {
+		t.Fatalf("unexpected remaining item: %#v", items[0])
+	}
+}
 
 func TestNormalizeGeneReportURL(t *testing.T) {
 	tests := []struct {
@@ -2486,6 +2506,70 @@ func TestAutoIdentifyLemnaKeywordLabelsFallsBackToLocalAliases(t *testing.T) {
 	}
 }
 
+func TestAutoIdentifyTAIRKeywordLabelsPrefersBatchedPhytozomeCandidates(t *testing.T) {
+	lookupSource := &countingKeywordMapSource{
+		keywordMapSource: keywordMapSource{
+			name: "phytozome",
+			candidates: []model.SpeciesCandidate{
+				{ProteomeID: 167, JBrowseName: "Athaliana_TAIR10", GenomeLabel: "Arabidopsis thaliana TAIR10"},
+			},
+			rowsByKeyword: map[string][]model.KeywordResultRow{
+				"AT2G30490.1": {{SourceDatabase: "phytozome", TranscriptID: "AT2G30490.1", Synonyms: "C4H; CYP73A5", Symbols: "LOCAL_SHOULD_NOT_WIN"}},
+			},
+		},
+	}
+	w := &BlastWizard{
+		source:               tair.NewClient(nil),
+		keywordTermRowsCache: make(map[string][]model.KeywordResultRow),
+		speciesCandidatesCache: map[string][]model.SpeciesCandidate{
+			"phytozome": {
+				{ProteomeID: 167, JBrowseName: "Athaliana_TAIR10", GenomeLabel: "Arabidopsis thaliana TAIR10"},
+			},
+		},
+	}
+	groups := []model.KeywordSearchGroup{{
+		SearchTerm: "AT2G30490.1",
+		Rows: []model.KeywordResultRow{
+			{SourceDatabase: "tair", ProteinID: "AT2G30490.1", TranscriptID: "AT2G30490.1", Synonyms: "LOCAL_SHOULD_NOT_WIN"},
+			{SourceDatabase: "tair", ProteinID: "AT2G30490.1", TranscriptID: "AT2G30490.1", Synonyms: "LOCAL_SHOULD_NOT_WIN"},
+		},
+	}}
+
+	got := w.autoIdentifyTAIRKeywordLabelsWithLookup(context.Background(), groups, lookupSource)
+	if len(got) != 1 || len(got[0].Aliases) == 0 {
+		t.Fatalf("expected TAIR keyword aliases: %#v", got)
+	}
+	if got[0].Aliases[0] != "CYP73A5" || got[0].SourceType != "phytozome synonyms" {
+		t.Fatalf("label aliases/type = %#v/%q, want ranked phytozome synonyms", got[0].Aliases, got[0].SourceType)
+	}
+	lookupSource.mu.Lock()
+	defer lookupSource.mu.Unlock()
+	if lookupSource.fetchCount["AT2G30490.1"] != 1 {
+		t.Fatalf("phytozome lookup count = %d, want 1 deduplicated lookup", lookupSource.fetchCount["AT2G30490.1"])
+	}
+}
+
+func TestAutoIdentifyTAIRKeywordLabelsFallsBackToOtherNames(t *testing.T) {
+	w := &BlastWizard{source: tair.NewClient(nil)}
+	groups := []model.KeywordSearchGroup{{
+		SearchTerm: "AT2G30490.1",
+		Rows: []model.KeywordResultRow{{
+			SourceDatabase: "tair",
+			ProteinID:      "AT2G30490.1",
+			TranscriptID:   "AT2G30490.1",
+			Synonyms:       "C4H; CYP73A5",
+		}},
+	}}
+
+	got := w.autoIdentifyTAIRKeywordLabelsWithLookup(context.Background(), groups, nil)
+	if len(got) != 1 || len(got[0].Aliases) == 0 || got[0].Aliases[0] != "CYP73A5" {
+		t.Fatalf("expected TAIR other_names fallback: %#v", got)
+	}
+	if got[0].SourceType != "tair other_names" {
+		t.Fatalf("SourceType = %q, want tair other_names", got[0].SourceType)
+	}
+}
+
 func TestAutoIdentifyLemnaKeywordLabelsDeduplicatesPhytozomeLookups(t *testing.T) {
 	lookupSource := &countingKeywordMapSource{
 		keywordMapSource: keywordMapSource{
@@ -3095,6 +3179,12 @@ func TestParseFastaQuerySequenceInputPlainSequence(t *testing.T) {
 	}
 }
 
+func TestParseFastaQuerySequenceInputIgnoresPhgoNoteHeader(t *testing.T) {
+	if source, ok := parseFastaQuerySequenceInput(">phgo://note\nMNOTE\n"); ok || source != nil {
+		t.Fatalf("phgo note header should be ignored")
+	}
+}
+
 func TestBuildQuerySequenceHeaderID(t *testing.T) {
 	source := &model.QuerySequenceSource{
 		OrganismShort: "A.thaliana",
@@ -3193,6 +3283,7 @@ func TestBlastRowToBlastQueryItemUsesHitFASTAAndLabelMetadata(t *testing.T) {
 type fakeSource struct {
 	name           string
 	query          *model.QuerySequenceSource
+	species        []model.SpeciesCandidate
 	keywordRows    []model.KeywordResultRow
 	sequences      map[string]string
 	nucleotideSeqs map[string]string
@@ -3211,7 +3302,7 @@ func (f fakeSource) Name() string {
 	return "fake"
 }
 func (f fakeSource) FetchSpeciesCandidates(ctx context.Context) ([]model.SpeciesCandidate, error) {
-	return nil, nil
+	return append([]model.SpeciesCandidate(nil), f.species...), nil
 }
 func (f fakeSource) SubmitBlast(ctx context.Context, req model.BlastRequest) (model.BlastJob, error) {
 	return model.BlastJob{}, nil
@@ -5092,7 +5183,7 @@ func TestCanvasItemFromBlastRowsUsesNumericTitleAndSequentialRowNumbers(t *testi
 	item := canvasItemFromBlastRows("ignored", "PAL1", []model.BlastResultRow{
 		{LabelName: "PAL1", Protein: "AT2G37040.1"},
 		{LabelName: "PAL2", Protein: "AT3G53260.1"},
-	}, nil)
+	}, nil, nil)
 	if item.Title != "ignored" {
 		t.Fatalf("canvas item title = %q, want preserved title", item.Title)
 	}
@@ -5101,6 +5192,134 @@ func TestCanvasItemFromBlastRowsUsesNumericTitleAndSequentialRowNumbers(t *testi
 	}
 	if item.Rows[0].RowNumber != 1 || item.Rows[1].RowNumber != 2 {
 		t.Fatalf("canvas row numbers = %#v", item.Rows)
+	}
+}
+
+func TestCanvasItemFromBlastRowsWithSourcePrependsNegativeSourceRow(t *testing.T) {
+	item := canvasItemFromBlastRowsWithSource("PAL1", blastQueryItem{
+		LabelName: "PAL1",
+		Sequence:  "MPEPTIDE",
+		QuerySource: &model.QuerySequenceSource{
+			Sequence:            "MPEPTIDE",
+			ProteinSequence:     "MPEPTIDE",
+			SequenceKind:        model.SequenceProtein,
+			LabelName:           "PAL1",
+			GeneID:              "AT2G37040",
+			SourceGenomeLabel:   "Athaliana_TAIR10",
+			PreferredSequenceID: "AT2G37040.1",
+		},
+	}, []model.BlastResultRow{
+		{LabelName: "C4H", BlastLabelName: "PAL1", BlastGeneID: "AT2G37040", Protein: "Sp7498_C4H_001"},
+	}, nil, nil)
+	if len(item.Rows) != 2 {
+		t.Fatalf("canvas row count = %d, want source + hit", len(item.Rows))
+	}
+	if item.Rows[0].RowNumber != -1 || item.Rows[1].RowNumber != 1 {
+		t.Fatalf("canvas source row numbers = %#v, want -1 then 1", item.Rows)
+	}
+	if item.Rows[0].FASTA == nil || item.Rows[0].FASTA.Sequence != "MPEPTIDE" || !item.Rows[0].FASTA.PhgoBlastQuerySource {
+		t.Fatalf("source row not preserved for tree selection: %#v", item.Rows[0])
+	}
+}
+
+func TestCanvasItemFromBlastRowsWithSourcePrependsAllFamilySourceRows(t *testing.T) {
+	item := canvasItemFromBlastRowsWithSource("family", blastQueryItem{
+		LabelName: "family",
+		Sequence:  "MPEPTIDE",
+		FamilySources: []*model.QuerySequenceSource{
+			{
+				Sequence:            "AAA",
+				ProteinSequence:     "AAA",
+				SequenceKind:        model.SequenceProtein,
+				LabelName:           "PAL1",
+				GeneID:              "AT2G37040",
+				PreferredSequenceID: "AT2G37040.1",
+			},
+			{
+				Sequence:            "BBB",
+				ProteinSequence:     "BBB",
+				SequenceKind:        model.SequenceProtein,
+				LabelName:           "PAL2",
+				GeneID:              "AT3G53260",
+				PreferredSequenceID: "AT3G53260.1",
+			},
+		},
+		QuerySource: &model.QuerySequenceSource{
+			Sequence:            "AAA",
+			ProteinSequence:     "AAA",
+			SequenceKind:        model.SequenceProtein,
+			LabelName:           "PAL1",
+			GeneID:              "AT2G37040",
+			PreferredSequenceID: "AT2G37040.1",
+		},
+	}, []model.BlastResultRow{
+		{LabelName: "C4H", BlastLabelName: "PAL1", BlastGeneID: "AT2G37040", Protein: "Sp7498_C4H_001"},
+	}, nil, nil)
+	if len(item.Rows) != 3 {
+		t.Fatalf("canvas row count = %d, want 2 sources + hit", len(item.Rows))
+	}
+	if item.Rows[0].RowNumber != -2 || item.Rows[1].RowNumber != -1 || item.Rows[2].RowNumber != 1 {
+		t.Fatalf("canvas row numbers = %#v, want -2, -1, 1", item.Rows)
+	}
+	if item.Rows[0].FASTA == nil || item.Rows[0].FASTA.LabelName != "PAL1" {
+		t.Fatalf("first source row missing or wrong: %#v", item.Rows[0])
+	}
+	if item.Rows[1].FASTA == nil || item.Rows[1].FASTA.LabelName != "PAL2" {
+		t.Fatalf("second source row missing or wrong: %#v", item.Rows[1])
+	}
+}
+
+func TestCanvasItemsFromBlastSnapshotSingleRunPrependsNegativeSourceRow(t *testing.T) {
+	items := canvasItemsFromBlastSnapshot(&sessionsnapshot.BlastResultV1{
+		Runs: []sessionsnapshot.BlastRunV1{{
+			Index: 1,
+			Item: sessionsnapshot.BlastQueryItemV1{
+				LabelName: "PAL1",
+				Sequence:  "MPEPTIDE",
+				QuerySource: &model.QuerySequenceSource{
+					LabelName:           "PAL1",
+					GeneID:              "AT2G37040",
+					Sequence:            "MPEPTIDE",
+					ProteinSequence:     "MPEPTIDE",
+					SequenceKind:        model.SequenceProtein,
+					PreferredSequenceID: "AT2G37040.1",
+				},
+				FamilySources: []*model.QuerySequenceSource{
+					{
+						LabelName:           "PAL1",
+						GeneID:              "AT2G37040",
+						Sequence:            "MPEPTIDE",
+						ProteinSequence:     "MPEPTIDE",
+						SequenceKind:        model.SequenceProtein,
+						PreferredSequenceID: "AT2G37040.1",
+					},
+					{
+						LabelName:           "PAL2",
+						GeneID:              "AT3G53260",
+						Sequence:            "MPEPTIDER",
+						ProteinSequence:     "MPEPTIDER",
+						SequenceKind:        model.SequenceProtein,
+						PreferredSequenceID: "AT3G53260.1",
+					},
+				},
+			},
+			Results: model.BlastResult{Rows: []model.BlastResultRow{
+				{LabelName: "C4H", BlastLabelName: "PAL1", BlastGeneID: "AT2G37040", Protein: "Sp7498_C4H_001"},
+			}},
+		}},
+		SelectedByRun: [][]bool{{true}},
+	})
+	if len(items) != 1 {
+		t.Fatalf("canvas item count = %d, want 1", len(items))
+	}
+	if len(items[0].Rows) != 3 {
+		t.Fatalf("canvas row count = %d, want 2 sources + hit", len(items[0].Rows))
+	}
+	if items[0].Rows[0].RowNumber != -2 || items[0].Rows[1].RowNumber != -1 || items[0].Rows[2].RowNumber != 1 {
+		t.Fatalf("canvas row numbers = %#v, want -2, -1 then 1", items[0].Rows)
+	}
+	if items[0].Rows[0].FASTA == nil || !items[0].Rows[0].FASTA.PhgoBlastQuerySource {
+		t.Fatalf("source row missing from snapshot import: %#v", items[0].Rows[0])
 	}
 }
 
@@ -5123,15 +5342,35 @@ func TestCanvasItemsFromBlastRunsPreserveRunTitlesAndSelectedRowsOnly(t *testing
 	items := canvasItemsFromBlastRuns(runs, [][]bool{
 		{true, false},
 		{false},
-	})
+	}, nil)
 	if len(items) != 1 {
 		t.Fatalf("canvas item count = %d, want 1", len(items))
 	}
-	if items[0].Title != "group A" {
-		t.Fatalf("canvas title = %q, want preserved run title", items[0].Title)
+	if items[0].Title != "raw A[group A]" {
+		t.Fatalf("canvas title = %q, want preserved sidebar title", items[0].Title)
 	}
 	if len(items[0].Rows) != 1 || items[0].Rows[0].RowNumber != 1 {
 		t.Fatalf("canvas rows = %#v", items[0].Rows)
+	}
+}
+
+func TestCanvasItemsFromBlastRunsUseQuerySourceSidebarTitle(t *testing.T) {
+	runs := []blastQueryRun{{
+		Item: blastQueryItem{
+			LabelName: "PAL1",
+			RawInput:  "raw input",
+			QuerySource: &model.QuerySequenceSource{
+				ProteinID: "AT2G37040.1",
+			},
+		},
+		Results: model.BlastResult{Rows: []model.BlastResultRow{{LabelName: "hit", Protein: "P1"}}},
+	}}
+	items := canvasItemsFromBlastRuns(runs, [][]bool{{true}}, nil)
+	if len(items) != 1 {
+		t.Fatalf("canvas item count = %d, want 1", len(items))
+	}
+	if items[0].Title != "AT2G37040.1[PAL1]" {
+		t.Fatalf("canvas title = %q, want original sidebar title", items[0].Title)
 	}
 }
 
@@ -5152,7 +5391,7 @@ func TestCanvasItemsFromKeywordSelectionKeepsSelectedRowsOnly(t *testing.T) {
 	}}
 	items := canvasItemsFromKeywordSelection(groups, []model.KeywordResultRow{
 		groups[0].Rows[1],
-	}, nil)
+	}, nil, nil)
 	if len(items) != 1 {
 		t.Fatalf("canvas item count = %d, want 1", len(items))
 	}
@@ -5162,9 +5401,12 @@ func TestCanvasItemsFromKeywordSelectionKeepsSelectedRowsOnly(t *testing.T) {
 	if len(items[0].Rows) != 1 || items[0].Rows[0].KeywordRow == nil || items[0].Rows[0].KeywordRow.LabelName != "A2" {
 		t.Fatalf("canvas rows = %#v", items[0].Rows)
 	}
+	if len(items[0].Selected) != 1 || items[0].Selected[0] {
+		t.Fatalf("canvas selected = %#v, want default unselected row", items[0].Selected)
+	}
 }
 
-func TestCanvasItemsFromKeywordSelectionUsesGroupMaskAndSkipsUnselectedGroups(t *testing.T) {
+func TestCanvasItemsFromKeywordSelectionCombinesSelectedRowsIntoOneCanvas(t *testing.T) {
 	groups := []model.KeywordSearchGroup{{
 		SearchTerm: "keyword A",
 		LabelName:  "A",
@@ -5181,18 +5423,22 @@ func TestCanvasItemsFromKeywordSelectionUsesGroupMaskAndSkipsUnselectedGroups(t 
 	}}
 	items := canvasItemsFromKeywordSelection(groups, []model.KeywordResultRow{
 		groups[0].Rows[1],
+		groups[1].Rows[0],
 	}, [][]bool{
 		{false, true},
-		{false},
-	})
+		{true},
+	}, nil)
 	if len(items) != 1 {
 		t.Fatalf("canvas item count = %d, want 1", len(items))
 	}
-	if items[0].Title != "keyword A" {
-		t.Fatalf("canvas title = %q, want selected group title", items[0].Title)
+	if items[0].Title != "1" {
+		t.Fatalf("canvas title = %q, want single combined canvas title", items[0].Title)
 	}
-	if len(items[0].Rows) != 1 || items[0].Rows[0].KeywordRow == nil || items[0].Rows[0].KeywordRow.LabelName != "A2" {
+	if len(items[0].Rows) != 2 || items[0].Rows[0].KeywordRow == nil || items[0].Rows[0].KeywordRow.LabelName != "A2" || items[0].Rows[1].KeywordRow == nil || items[0].Rows[1].KeywordRow.LabelName != "B1" {
 		t.Fatalf("canvas rows = %#v", items[0].Rows)
+	}
+	if got := items[0].Subtitle; got != "0/2 lines" {
+		t.Fatalf("canvas subtitle = %q, want single-line unselected summary", got)
 	}
 }
 
@@ -5206,7 +5452,7 @@ func TestMarkKeywordCanvasSequenceAvailabilityDisablesMissingRows(t *testing.T) 
 	}}, []model.KeywordResultRow{
 		{LabelName: "A1", SequenceID: "ok"},
 		{LabelName: "A2", SequenceID: "missing"},
-	}, [][]bool{{true, true}})
+	}, [][]bool{{true, true}}, nil)
 	markKeywordCanvasSequenceAvailability(items, map[string]sequenceFetchResult{
 		"ok":      {data: model.ProteinSequenceData{Sequence: "MPEPTIDE"}},
 		"missing": {err: fmt.Errorf("empty TAIR FASTA URL")},
@@ -5237,7 +5483,7 @@ func TestMissingProteinSequenceErrorIncludesTAIRFastaURLFailures(t *testing.T) {
 
 func TestCanvasRowsFromFastaInputKeepsPhgoHeadAndSequence(t *testing.T) {
 	w := NewBlastWizard(io.Discard)
-	rows, err := w.canvasRowsFromFastaInput(">phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\7\nMPEPTIDE\n")
+	rows, err := w.canvasRowsFromFastaInput(">phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\7\nMPEPTIDE\n", false)
 	if err != nil {
 		t.Fatalf("canvasRowsFromFastaInput returned error: %v", err)
 	}
@@ -5253,10 +5499,107 @@ func TestCanvasRowsFromFastaInputKeepsPhgoHeadAndSequence(t *testing.T) {
 	}
 }
 
+func TestCanvasRowsFromFastaInputUsesNegativeNumbersForPhgoBlastSources(t *testing.T) {
+	w := NewBlastWizard(io.Discard)
+	rows, err := w.canvasRowsFromFastaInput(strings.Join([]string{
+		">phgo://Athaliana_TAIR10/PAL1/AT2G37040.1\\h",
+		"MPEPTIDE",
+		">phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\1",
+		"GGGTT",
+	}, "\n"), true)
+	if err != nil {
+		t.Fatalf("canvasRowsFromFastaInput returned error: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("canvas rows = %#v, want source and hit", rows)
+	}
+	if rows[0].RowNumber != -1 || rows[1].RowNumber != 1 {
+		t.Fatalf("canvas row numbers = %#v, want -1 then 1", rows)
+	}
+	if rows[0].FASTA == nil || !rows[0].FASTA.PhgoBlastQuerySource {
+		t.Fatalf("source row marker missing: %#v", rows[0])
+	}
+}
+
+func TestCanvasRowsFromFastaInputIgnoresPhgoNoteEntries(t *testing.T) {
+	w := NewBlastWizard(io.Discard)
+	rows, err := w.canvasRowsFromFastaInput(strings.Join([]string{
+		">phgo://note",
+		"xxxxx",
+		"xxxxxx",
+		">query1",
+		"MPEPTIDE",
+	}, "\n"), false)
+	if err != nil {
+		t.Fatalf("canvasRowsFromFastaInput returned error: %v", err)
+	}
+	if len(rows) != 1 || rows[0].FASTA == nil {
+		t.Fatalf("canvas rows = %#v, want one non-note row", rows)
+	}
+	if rows[0].FASTA.Annotation != "query1" || rows[0].FASTA.Sequence != "MPEPTIDE" {
+		t.Fatalf("unexpected surviving FASTA row: %#v", rows[0].FASTA)
+	}
+}
+
+func TestCanvasItemsFromInputPreservesNegativeBlastSourceNumbersForPhgoFasta(t *testing.T) {
+	w := NewBlastWizard(io.Discard)
+	items, err := w.canvasItemsFromInput(context.Background(), strings.Join([]string{
+		">phgo://Athaliana_TAIR10/PAL1/AT2G37040.1\\h",
+		"MPEPTIDE",
+		">phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\1",
+		"GGGTT",
+	}, "\n"), 1, "")
+	if err != nil {
+		t.Fatalf("canvasItemsFromInput returned error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("canvas item count = %d, want 1", len(items))
+	}
+	if len(items[0].Rows) != 2 {
+		t.Fatalf("canvas row count = %d, want 2", len(items[0].Rows))
+	}
+	if items[0].Rows[0].RowNumber != -1 || items[0].Rows[1].RowNumber != 1 {
+		t.Fatalf("canvas row numbers = %#v, want -1 then 1", items[0].Rows)
+	}
+	if items[0].Rows[0].FASTA == nil || !items[0].Rows[0].FASTA.PhgoBlastQuerySource {
+		t.Fatalf("source row marker missing after add canvas: %#v", items[0].Rows[0])
+	}
+}
+
+func TestCanvasItemsFromInputUsesNegativeSequenceForMultipleBlastSources(t *testing.T) {
+	w := NewBlastWizard(io.Discard)
+	items, err := w.canvasItemsFromInput(context.Background(), strings.Join([]string{
+		">phgo://Arabidopsis_thaliana_TAIR10/4CL1/AT1G51680.1\\h",
+		"MPEPTIDE",
+		">phgo://Arabidopsis_thaliana_TAIR10/4CL2/AT3G21240.1\\h",
+		"MPEPTIDER",
+		">phgo://Spirodela_polyrhiza_9509_REF-OXFORD-3.0/024540/Sp9509d012g007020_T001\\4CL1/AT1G51680.1\\1",
+		"AAAA",
+		">phgo://Spirodela_polyrhiza_9509_REF-OXFORD-3.0/P41636/Sp9509d011g001470_T001\\4CL2/AT3G21240.1\\2",
+		"BBBB",
+	}, "\n"), 1, "")
+	if err != nil {
+		t.Fatalf("canvasItemsFromInput returned error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("canvas item count = %d, want 1", len(items))
+	}
+	got := []int{
+		items[0].Rows[0].RowNumber,
+		items[0].Rows[1].RowNumber,
+		items[0].Rows[2].RowNumber,
+		items[0].Rows[3].RowNumber,
+	}
+	want := []int{-2, -1, 1, 2}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("canvas row numbers = %#v, want %#v", got, want)
+	}
+}
+
 func TestCanvasItemsFromInputUsesFastaFilenameTitle(t *testing.T) {
 	w := NewBlastWizard(io.Discard)
 	dir := t.TempDir()
-	path := filepath.Join(dir, "queries.fasta")
+	path := filepath.Join(dir, "Transcriptional Factors for Lignin_Cell Wall Biosynthesis.fasta")
 	if err := os.WriteFile(path, []byte(">query1\nMPEPTIDE\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
@@ -5267,8 +5610,776 @@ func TestCanvasItemsFromInputUsesFastaFilenameTitle(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("canvas item count = %d, want 1", len(items))
 	}
-	if items[0].Title != "queries.fasta" {
-		t.Fatalf("canvas title = %q, want filename", items[0].Title)
+	if items[0].Title != "Transcription~50" {
+		t.Fatalf("canvas title = %q, want shortened import filename", items[0].Title)
+	}
+}
+
+func TestCanvasItemsFromInputUsesNumericTitleWhenSourcePathBlank(t *testing.T) {
+	w := NewBlastWizard(io.Discard)
+	items, err := w.canvasItemsFromInput(context.Background(), ">query1\nMPEPTIDE\n", 3, "")
+	if err != nil {
+		t.Fatalf("canvasItemsFromInput returned error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("canvas item count = %d, want 1", len(items))
+	}
+	if items[0].Title != "3" {
+		t.Fatalf("canvas title = %q, want numeric title 3", items[0].Title)
+	}
+}
+
+func TestCanvasItemsFromInputImportsSessionSnapshot(t *testing.T) {
+	w := NewBlastWizard(io.Discard)
+	path := filepath.Join(t.TempDir(), "canvas-session.pgo")
+	if err := os.WriteFile(path, []byte("PK\x03\x04snapshot"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	items, err := w.canvasItemsFromInput(context.Background(), path, 3, path)
+	if err == nil {
+		t.Fatalf("canvasItemsFromInput returned items %#v, want snapshot parse error", items)
+	}
+	if !strings.Contains(err.Error(), "open canvas snapshot") && !strings.Contains(err.Error(), "session snapshot") {
+		t.Fatalf("error = %q, want snapshot import guidance", err.Error())
+	}
+}
+
+func TestCanvasItemsFromSnapshotInputUsesFilenameWhenSnapshotHasNoTitle(t *testing.T) {
+	w := NewBlastWizard(io.Discard)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "keyword_session_without_title.pgo")
+	if err := sessionsnapshot.WriteFile(path, sessionsnapshot.Snapshot{
+		Context: sessionsnapshot.ContextV1{CreatedAt: time.Now(), Mode: "keyword"},
+		Keyword: &sessionsnapshot.KeywordResultV1{
+			SelectedSpecies: model.SpeciesCandidate{JBrowseName: "TAIR12", GenomeLabel: "TAIR12"},
+			Groups: []model.KeywordSearchGroup{{
+				SearchTerm: "PAL",
+				Rows: []model.KeywordResultRow{{
+					SourceDatabase: "tair",
+					LabelName:      "PAL1",
+					ProteinID:      "AT2G37040.1",
+					SequenceID:     "AT2G37040.1",
+				}},
+			}},
+			Selected: []bool{true},
+		},
+	}); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	items, err := w.canvasItemsFromSnapshotInput(path, path)
+	if err != nil {
+		t.Fatalf("canvasItemsFromSnapshotInput returned error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("canvas item count = %d, want 1", len(items))
+	}
+	if items[0].Title != "keyword_sessi~20" {
+		t.Fatalf("canvas title = %q, want shortened filename fallback", items[0].Title)
+	}
+}
+
+func TestCanvasItemsFromCanvasSnapshotInputPreservesSidebarTitles(t *testing.T) {
+	w := NewBlastWizard(io.Discard)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "canvas_sidebar_titles.pgo")
+	if err := sessionsnapshot.WriteFile(path, sessionsnapshot.Snapshot{
+		Context: sessionsnapshot.ContextV1{CreatedAt: time.Now(), Mode: "canvas"},
+		Canvas: &sessionsnapshot.CanvasResultV1{
+			Items: []sessionsnapshot.CanvasItemV1{{
+				Title:    "A-thaliana",
+				Selected: []bool{true},
+				Rows: []sessionsnapshot.CanvasRowV1{{
+					Kind:  model.CanvasKindFasta,
+					FASTA: &model.QuerySequenceSource{LabelName: "PAL1", Sequence: "MPEPTIDE", SequenceKind: model.SequenceProtein},
+				}},
+			}, {
+				Title:    "o-sativa",
+				Selected: []bool{true},
+				Rows: []sessionsnapshot.CanvasRowV1{{
+					Kind:  model.CanvasKindFasta,
+					FASTA: &model.QuerySequenceSource{LabelName: "PAL2", Sequence: "MSECOND", SequenceKind: model.SequenceProtein},
+				}},
+			}},
+		},
+	}); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	items, err := w.canvasItemsFromSnapshotInput(path, path)
+	if err != nil {
+		t.Fatalf("canvasItemsFromSnapshotInput returned error: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("canvas item count = %d, want 2", len(items))
+	}
+	if items[0].Title != "A-thaliana" || items[1].Title != "o-sativa" {
+		t.Fatalf("canvas titles = %q/%q, want restored sidebar titles", items[0].Title, items[1].Title)
+	}
+}
+
+func TestCanvasItemsFromCanvasSnapshotInputUsesFilenameForGeneratedTitles(t *testing.T) {
+	w := NewBlastWizard(io.Discard)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "numeric_canvas_snapshot.pgo")
+	if err := sessionsnapshot.WriteFile(path, sessionsnapshot.Snapshot{
+		Context: sessionsnapshot.ContextV1{CreatedAt: time.Now(), Mode: "canvas"},
+		Canvas: &sessionsnapshot.CanvasResultV1{
+			Items: []sessionsnapshot.CanvasItemV1{{
+				Title:    "1",
+				Selected: []bool{true},
+				Rows: []sessionsnapshot.CanvasRowV1{{
+					Kind:  model.CanvasKindFasta,
+					FASTA: &model.QuerySequenceSource{LabelName: "PAL1", Sequence: "MPEPTIDE", SequenceKind: model.SequenceProtein},
+				}},
+			}},
+		},
+	}); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	items, err := w.canvasItemsFromSnapshotInput(path, path)
+	if err != nil {
+		t.Fatalf("canvasItemsFromSnapshotInput returned error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("canvas item count = %d, want 1", len(items))
+	}
+	if items[0].Title != "numeric_canva~14" {
+		t.Fatalf("canvas title = %q, want shortened filename for generated title", items[0].Title)
+	}
+}
+
+func TestCanvasItemsFromKeywordSnapshotInputAlwaysUseFilenameTitle(t *testing.T) {
+	w := NewBlastWizard(io.Discard)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "keyword_named_snapshot.pgo")
+	if err := sessionsnapshot.WriteFile(path, sessionsnapshot.Snapshot{
+		Context: sessionsnapshot.ContextV1{CreatedAt: time.Now(), Mode: "keyword"},
+		Keyword: &sessionsnapshot.KeywordResultV1{
+			SelectedSpecies: model.SpeciesCandidate{JBrowseName: "TAIR12", GenomeLabel: "TAIR12"},
+			Groups: []model.KeywordSearchGroup{{
+				SearchTerm: "PAL",
+				LabelName:  "PAL group",
+				Rows: []model.KeywordResultRow{{
+					SourceDatabase: "tair",
+					LabelName:      "PAL1",
+					ProteinID:      "AT2G37040.1",
+					SequenceID:     "AT2G37040.1",
+				}},
+			}},
+			Selected: []bool{true},
+		},
+	}); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	items, err := w.canvasItemsFromSnapshotInput(path, path)
+	if err != nil {
+		t.Fatalf("canvasItemsFromSnapshotInput returned error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("canvas item count = %d, want 1", len(items))
+	}
+	if items[0].Title != "keyword_named~13" {
+		t.Fatalf("canvas title = %q, want filename title for keyword snapshot", items[0].Title)
+	}
+}
+
+func TestCanvasItemsFromFamilyBlastSnapshotInputUseFilenameTitle(t *testing.T) {
+	w := NewBlastWizard(io.Discard)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "family_blast_snapshot.pgo")
+	if err := sessionsnapshot.WriteFile(path, sessionsnapshot.Snapshot{
+		Context: sessionsnapshot.ContextV1{CreatedAt: time.Now(), Mode: "blast"},
+		Blast: &sessionsnapshot.BlastResultV1{
+			Prepared: []sessionsnapshot.BlastQueryItemV1{{
+				LabelName:  "PAL1",
+				Sequence:   "MPEPTIDE",
+				FamilyName: "PAL",
+				FamilySources: []*model.QuerySequenceSource{{
+					LabelName:           "PAL1",
+					Sequence:            "MPEPTIDE",
+					ProteinSequence:     "MPEPTIDE",
+					SequenceKind:        model.SequenceProtein,
+					PreferredSequenceID: "AT2G37040.1",
+				}},
+			}},
+			Runs: []sessionsnapshot.BlastRunV1{{
+				Index: 1,
+				Item: sessionsnapshot.BlastQueryItemV1{
+					LabelName:  "PAL1",
+					Sequence:   "MPEPTIDE",
+					FamilyName: "PAL",
+					FamilySources: []*model.QuerySequenceSource{{
+						LabelName:           "PAL1",
+						Sequence:            "MPEPTIDE",
+						ProteinSequence:     "MPEPTIDE",
+						SequenceKind:        model.SequenceProtein,
+						PreferredSequenceID: "AT2G37040.1",
+					}},
+				},
+				Results: model.BlastResult{
+					Rows: []model.BlastResultRow{{
+						SourceDatabase: "phytozome",
+						LabelName:      "PALHIT",
+						Protein:        "AT3G53260.1",
+						SequenceID:     "AT3G53260.1",
+					}},
+				},
+			}},
+			SelectedByRun: [][]bool{{true}},
+		},
+	}); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	items, err := w.canvasItemsFromSnapshotInput(path, path)
+	if err != nil {
+		t.Fatalf("canvasItemsFromSnapshotInput returned error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("canvas item count = %d, want 1", len(items))
+	}
+	if items[0].Title != "family_blast_~12" {
+		t.Fatalf("canvas title = %q, want filename title for family snapshot", items[0].Title)
+	}
+}
+
+func TestCanvasItemsFromMultiRunFamilyBlastSnapshotInputUseFilenameTitle(t *testing.T) {
+	w := NewBlastWizard(io.Discard)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "family_multi_run_snapshot.pgo")
+	familyItem := func(label, sequence string) sessionsnapshot.BlastQueryItemV1 {
+		return sessionsnapshot.BlastQueryItemV1{
+			LabelName:  label,
+			Sequence:   sequence,
+			FamilyName: "PAL",
+			FamilySources: []*model.QuerySequenceSource{{
+				LabelName:           label,
+				Sequence:            sequence,
+				ProteinSequence:     sequence,
+				SequenceKind:        model.SequenceProtein,
+				PreferredSequenceID: label + ".1",
+			}},
+		}
+	}
+	if err := sessionsnapshot.WriteFile(path, sessionsnapshot.Snapshot{
+		Context: sessionsnapshot.ContextV1{CreatedAt: time.Now(), Mode: string(ModeFamily)},
+		Blast: &sessionsnapshot.BlastResultV1{
+			Runs: []sessionsnapshot.BlastRunV1{{
+				Index: 1,
+				Item:  familyItem("PAL1", "MPEPTIDE"),
+				Results: model.BlastResult{Rows: []model.BlastResultRow{{
+					SourceDatabase: "phytozome",
+					LabelName:      "PALHIT1",
+					Protein:        "AT3G53260.1",
+					SequenceID:     "AT3G53260.1",
+					FamilyName:     "PAL",
+				}}},
+			}, {
+				Index: 2,
+				Item:  familyItem("PAL2", "MPEPTIDER"),
+				Results: model.BlastResult{Rows: []model.BlastResultRow{{
+					SourceDatabase: "phytozome",
+					LabelName:      "PALHIT2",
+					Protein:        "AT5G04230.1",
+					SequenceID:     "AT5G04230.1",
+					FamilyName:     "PAL",
+				}}},
+			}},
+			SelectedByRun: [][]bool{{true}, {true}},
+		},
+	}); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	items, err := w.canvasItemsFromSnapshotInput(path, path)
+	if err != nil {
+		t.Fatalf("canvasItemsFromSnapshotInput returned error: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("canvas item count = %d, want separate no-sidebar snapshot items", len(items))
+	}
+	for i, item := range items {
+		if item.Title != "family_multi_~16" {
+			t.Fatalf("canvas item %d title = %q, want filename title for no-sidebar family snapshot", i, item.Title)
+		}
+		if len(item.Rows) != 2 || item.Rows[0].RowNumber != -1 || item.Rows[1].RowNumber != 1 {
+			t.Fatalf("canvas item %d rows = %#v, want source row then hit row", i, item.Rows)
+		}
+	}
+}
+
+func TestCanvasItemsFromMultiFileBlastFamilySnapshotInputPreservesSidebarTitle(t *testing.T) {
+	w := NewBlastWizard(io.Discard)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "family_multi_file_blast_snapshot.pgo")
+	familyItem := func(mainTitle, member, sequence string) sessionsnapshot.BlastQueryItemV1 {
+		return sessionsnapshot.BlastQueryItemV1{
+			LabelName:  member,
+			Sequence:   sequence,
+			FamilyName: "PAL",
+			QuerySource: &model.QuerySequenceSource{
+				GeneID:          mainTitle,
+				Sequence:        sequence,
+				ProteinSequence: sequence,
+				SequenceKind:    model.SequenceProtein,
+				LabelName:       member,
+			},
+			FamilySources: []*model.QuerySequenceSource{{
+				LabelName:           member,
+				GeneID:              mainTitle,
+				Sequence:            sequence,
+				ProteinSequence:     sequence,
+				SequenceKind:        model.SequenceProtein,
+				PreferredSequenceID: mainTitle,
+			}},
+		}
+	}
+	if err := sessionsnapshot.WriteFile(path, sessionsnapshot.Snapshot{
+		Context: sessionsnapshot.ContextV1{CreatedAt: time.Now(), Mode: string(ModeBlast)},
+		Blast: &sessionsnapshot.BlastResultV1{
+			OriginalRunCount: 2,
+			Runs: []sessionsnapshot.BlastRunV1{{
+				Index: 1,
+				Item:  familyItem("AT2G37040.1", "PAL1", "MPEPTIDE"),
+				Results: model.BlastResult{Rows: []model.BlastResultRow{{
+					SourceDatabase: "phytozome",
+					LabelName:      "PALHIT1",
+					Protein:        "AT3G53260.1",
+					SequenceID:     "AT3G53260.1",
+					FamilyName:     "PAL",
+				}}},
+			}, {
+				Index: 2,
+				Item:  familyItem("AT1G51680.1", "4CL1", "MPEPTIDER"),
+				Results: model.BlastResult{Rows: []model.BlastResultRow{{
+					SourceDatabase: "phytozome",
+					LabelName:      "PALHIT2",
+					Protein:        "AT5G04230.1",
+					SequenceID:     "AT5G04230.1",
+					FamilyName:     "PAL",
+				}}},
+			}},
+			SelectedByRun: [][]bool{{true}, {true}},
+		},
+	}); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	items, err := w.canvasItemsFromSnapshotInput(path, path)
+	if err != nil {
+		t.Fatalf("canvasItemsFromSnapshotInput returned error: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("canvas item count = %d, want 2", len(items))
+	}
+	if items[0].Title != "AT2G37040.1[PAL]" || items[1].Title != "AT1G51680.1[PAL]" {
+		t.Fatalf("canvas titles = %q, %q; want original sidebar main title plus family subtitle", items[0].Title, items[1].Title)
+	}
+}
+
+func TestCanvasItemsFromMergedMultiFileBlastSnapshotInputPreservesSidebarTitle(t *testing.T) {
+	w := NewBlastWizard(io.Discard)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "merged_multi_file_blast_snapshot.pgo")
+	if err := sessionsnapshot.WriteFile(path, sessionsnapshot.Snapshot{
+		Context: sessionsnapshot.ContextV1{CreatedAt: time.Now(), Mode: string(ModeBlast)},
+		Blast: &sessionsnapshot.BlastResultV1{
+			OriginalRunCount: 2,
+			Runs: []sessionsnapshot.BlastRunV1{{
+				Index: 1,
+				Item: sessionsnapshot.BlastQueryItemV1{
+					LabelName:  "PAL1",
+					Sequence:   "MPEPTIDE",
+					FamilyName: "PAL",
+					QuerySource: &model.QuerySequenceSource{
+						GeneID:          "AT2G37040.1",
+						Sequence:        "MPEPTIDE",
+						ProteinSequence: "MPEPTIDE",
+						SequenceKind:    model.SequenceProtein,
+						LabelName:       "PAL1",
+					},
+					FamilySources: []*model.QuerySequenceSource{{
+						LabelName:           "PAL1",
+						GeneID:              "AT2G37040.1",
+						Sequence:            "MPEPTIDE",
+						ProteinSequence:     "MPEPTIDE",
+						SequenceKind:        model.SequenceProtein,
+						PreferredSequenceID: "AT2G37040.1",
+					}},
+				},
+				Results: model.BlastResult{Rows: []model.BlastResultRow{{
+					SourceDatabase: "phytozome",
+					LabelName:      "PALHIT1",
+					Protein:        "AT3G53260.1",
+					SequenceID:     "AT3G53260.1",
+					FamilyName:     "PAL",
+				}}},
+			}},
+			SelectedByRun: [][]bool{{true}},
+		},
+	}); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	items, err := w.canvasItemsFromSnapshotInput(path, path)
+	if err != nil {
+		t.Fatalf("canvasItemsFromSnapshotInput returned error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("canvas item count = %d, want 1", len(items))
+	}
+	if items[0].Title != "AT2G37040.1[PAL]" {
+		t.Fatalf("canvas title = %q; want original multi-file sidebar title after merge", items[0].Title)
+	}
+}
+
+func TestCanvasRowsFromFastaInputRejectsSessionSnapshot(t *testing.T) {
+	w := NewBlastWizard(io.Discard)
+	path := filepath.Join(t.TempDir(), "canvas-session.pgo")
+	if err := os.WriteFile(path, []byte("PK\x03\x04snapshot"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	rows, err := w.canvasRowsFromFastaInput(path, false)
+	if err == nil {
+		t.Fatalf("canvasRowsFromFastaInput returned rows %#v, want .pgo rejection", rows)
+	}
+	if !strings.Contains(err.Error(), "Open session") {
+		t.Fatalf("error = %q, want Open session guidance", err.Error())
+	}
+}
+
+func TestCanvasImportedFileShortNameShortensOnlyLongImportNames(t *testing.T) {
+	got := canvasImportedFileShortName("Monolignol Polymerization.fasta")
+	if got != "Monolignol Po~18" {
+		t.Fatalf("canvasImportedFileShortName = %q, want Monolignol Po~18", got)
+	}
+	short := canvasImportedFileShortName("queries.fasta")
+	if short != "queries.fasta" {
+		t.Fatalf("short filename = %q, want unchanged filename", short)
+	}
+}
+
+func TestSelectedCanvasRowsInOrderKeepsCanvasAndRowOrder(t *testing.T) {
+	rows := selectedCanvasRowsInOrder([]model.CanvasItem{
+		{
+			Title: "2",
+			Rows: []model.CanvasRow{
+				{RowNumber: 2, Kind: model.CanvasKindFasta, FASTA: &model.QuerySequenceSource{Annotation: "h2", Sequence: "BBB"}},
+				{RowNumber: 1, Kind: model.CanvasKindFasta, FASTA: &model.QuerySequenceSource{Annotation: "h1", Sequence: "AAA"}},
+			},
+			Selected: []bool{true, false},
+		},
+		{
+			Title: "3",
+			Rows: []model.CanvasRow{
+				{RowNumber: 3, Kind: model.CanvasKindFasta, FASTA: &model.QuerySequenceSource{Annotation: "h3", Sequence: "CCC"}},
+			},
+			Selected: []bool{true},
+		},
+	})
+	if len(rows) != 2 {
+		t.Fatalf("selected canvas rows = %d, want 2", len(rows))
+	}
+	if rows[0].ItemTitle != "2" || rows[0].Row.RowNumber != 2 || rows[1].ItemTitle != "3" || rows[1].Row.RowNumber != 3 {
+		t.Fatalf("selected canvas rows order = %#v", rows)
+	}
+}
+
+func TestSelectedCanvasRowsInVisibleOrderUsesCanvasSortState(t *testing.T) {
+	rows := selectedCanvasRowsInVisibleOrder([]model.CanvasItem{{
+		Title: "canvas 1",
+		Rows: []model.CanvasRow{
+			{RowNumber: 7, Kind: model.CanvasKindFasta, FASTA: &model.QuerySequenceSource{Annotation: "beta", Sequence: "BBB"}},
+			{RowNumber: 3, Kind: model.CanvasKindFasta, FASTA: &model.QuerySequenceSource{Annotation: "alpha", Sequence: "AAA"}},
+		},
+		Selected: []bool{true, true},
+	}}, tui.BlastRunSelectionState{
+		Valid: true,
+		Sort:  tui.TableSort{Column: 1, Direction: tui.SortAscending},
+	})
+	if len(rows) != 2 {
+		t.Fatalf("selected visible rows = %d, want 2", len(rows))
+	}
+	if rows[0].Row.RowNumber != 3 || rows[1].Row.RowNumber != 7 {
+		t.Fatalf("selected visible row order = %#v, want row numbers 3 then 7", rows)
+	}
+}
+
+func TestApplyCanvasHeaderModePhgoFallsBackToOriginalHeaderWhenUnavailable(t *testing.T) {
+	selected := []canvasSelectedRow{{
+		ItemTitle: "1",
+		Row: model.CanvasRow{
+			RowNumber: 4,
+			Kind:      model.CanvasKindFasta,
+			FASTA: &model.QuerySequenceSource{
+				Annotation: "plain original header",
+				Sequence:   "MPEPTIDE",
+			},
+		},
+	}}
+	records := []model.ProteinSequenceRecord{{
+		Header:         ">temporary",
+		OriginalHeader: ">plain original header",
+		Sequence:       "MPEPTIDE",
+	}}
+	got := applyCanvasHeaderMode(records, selected, model.FastaHeaderModePhgo)
+	if len(got) != 1 || got[0].Header != ">plain original header" {
+		t.Fatalf("phgo fallback header = %#v, want original header", got)
+	}
+}
+
+func TestApplyCanvasHeaderModePhgoUsesStoredPhgoHeaderWhenPresent(t *testing.T) {
+	selected := []canvasSelectedRow{{
+		ItemTitle: "1",
+		Row: model.CanvasRow{
+			RowNumber: 7,
+			Kind:      model.CanvasKindFasta,
+			FASTA: &model.QuerySequenceSource{
+				Annotation: "phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\7",
+				Sequence:   "MPEPTIDE",
+			},
+		},
+	}}
+	records := []model.ProteinSequenceRecord{{
+		Header:         ">temporary",
+		OriginalHeader: ">plain original header",
+		Sequence:       "MPEPTIDE",
+	}}
+	got := applyCanvasHeaderMode(records, selected, model.FastaHeaderModePhgo)
+	if len(got) != 1 || got[0].Header != ">phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\7" {
+		t.Fatalf("phgo canvas header = %#v", got)
+	}
+}
+
+func TestApplyCanvasHeaderModeMinimalUsesAvailableIDs(t *testing.T) {
+	selected := []canvasSelectedRow{{
+		ItemTitle: "1",
+		Row: model.CanvasRow{
+			RowNumber: 5,
+			Kind:      model.CanvasKindFasta,
+			FASTA: &model.QuerySequenceSource{
+				TranscriptID: "AT2G37040.1",
+				Sequence:     "MPEPTIDE",
+			},
+		},
+	}}
+	records := []model.ProteinSequenceRecord{{
+		Header:         ">temporary",
+		OriginalHeader: ">original",
+		Sequence:       "MPEPTIDE",
+	}}
+	got := applyCanvasHeaderMode(records, selected, model.FastaHeaderModeMinimal)
+	if len(got) != 1 || got[0].Header != ">AT2G37040.1" {
+		t.Fatalf("minimal canvas header = %#v", got)
+	}
+}
+
+func TestExportCanvasSelectionsWritesMixedCanvasRowsAsOnePhgoFasta(t *testing.T) {
+	outputDir := t.TempDir()
+
+	w := NewBlastWizard(io.Discard)
+	w.source = fakeSource{
+		name: "phytozome",
+		sequences: map[string]string{
+			"AT2G37040.1": "MKWAA",
+			"PAC:123456":  "GGGTT",
+		},
+		headers: map[string]string{
+			"AT2G37040.1": ">orig_keyword_header",
+			"PAC:123456":  ">orig_blast_header",
+		},
+	}
+	w.proteinSequenceCache = make(map[string]model.ProteinSequenceData)
+	w.proteinSequenceMiss = make(map[string]error)
+	w.lastKeywordSpecies = model.SpeciesCandidate{ProteomeID: 123, GenomeLabel: "Arabidopsis thaliana TAIR10"}
+
+	state := canvasLaunchState{
+		Items: []model.CanvasItem{
+			{
+				Title: "2",
+				Rows: []model.CanvasRow{
+					{
+						RowNumber: 2,
+						Kind:      model.CanvasKindFasta,
+						FASTA: &model.QuerySequenceSource{
+							Annotation: "phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\2",
+							Sequence:   "MPEPTIDE",
+						},
+					},
+					{
+						RowNumber: 3,
+						Kind:      model.CanvasKindKeyword,
+						KeywordRow: &model.KeywordResultRow{
+							SourceDatabase:      "phytozome",
+							SequenceHeaderLabel: "Athaliana_TAIR10",
+							LabelName:           "CESA4",
+							TranscriptID:        "AT2G37040.1",
+							SequenceID:          "AT2G37040.1",
+							GeneIdentifier:      "AT2G37040",
+						},
+					},
+				},
+				Selected: []bool{true, true},
+			},
+			{
+				Title: "3",
+				Rows: []model.CanvasRow{
+					{
+						RowNumber: 7,
+						Kind:      model.CanvasKindBlast,
+						BlastRow: &model.BlastResultRow{
+							SourceDatabase: "phytozome",
+							Species:        "Sp7498",
+							LabelName:      "C4H",
+							BlastLabelName: "PAL1",
+							BlastGeneID:    "AT2G37040",
+							Protein:        "Sp7498_C4H_001",
+							SequenceID:     "PAC:123456",
+							SubjectID:      "PAC:123456",
+							TargetID:       456,
+						},
+					},
+				},
+				Selected: []bool{true},
+			},
+		},
+	}
+
+	err := w.exportCanvasSelections(context.Background(), state, exportSettings{
+		BaseName:        "canvas_mixed",
+		OutputDir:       outputDir,
+		WriteText:       true,
+		FastaHeaderMode: model.FastaHeaderModePhgo,
+		UsePhgoHeader:   true,
+	})
+	if err != nil {
+		t.Fatalf("exportCanvasSelections returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(outputDir, "canvas_mixed.fasta"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	got := strings.ReplaceAll(strings.TrimSpace(string(data)), "\r\n", "\n")
+	want := strings.Join([]string{
+		">phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\2",
+		"MPEPTIDE",
+		"",
+		">phgo://Athaliana_TAIR10/CESA4/AT2G37040.1\\3",
+		"MKWAA",
+		"",
+		">phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\7",
+		"GGGTT",
+	}, "\n")
+	if got != want {
+		t.Fatalf("mixed canvas FASTA = %q\nwant %q", got, want)
+	}
+}
+
+func TestExportCanvasSelectionsOriginalHeaderFallsBackPerRow(t *testing.T) {
+	outputDir := t.TempDir()
+
+	w := NewBlastWizard(io.Discard)
+	w.source = fakeSource{
+		name: "phytozome",
+		sequences: map[string]string{
+			"AT2G37040.1": "MKWAA",
+		},
+		headers: map[string]string{
+			"AT2G37040.1": ">orig_keyword_header",
+		},
+	}
+	w.proteinSequenceCache = make(map[string]model.ProteinSequenceData)
+	w.proteinSequenceMiss = make(map[string]error)
+	w.lastKeywordSpecies = model.SpeciesCandidate{ProteomeID: 123, GenomeLabel: "Arabidopsis thaliana TAIR10"}
+
+	state := canvasLaunchState{
+		Items: []model.CanvasItem{
+			{
+				Title: "1",
+				Rows: []model.CanvasRow{
+					{
+						RowNumber: 1,
+						Kind:      model.CanvasKindFasta,
+						FASTA: &model.QuerySequenceSource{
+							Annotation: "plain fasta header",
+							Sequence:   "MPEPTIDE",
+						},
+					},
+					{
+						RowNumber: 2,
+						Kind:      model.CanvasKindKeyword,
+						KeywordRow: &model.KeywordResultRow{
+							SourceDatabase:      "phytozome",
+							SequenceHeaderLabel: "Athaliana_TAIR10",
+							LabelName:           "CESA4",
+							TranscriptID:        "AT2G37040.1",
+							SequenceID:          "AT2G37040.1",
+							GeneIdentifier:      "AT2G37040",
+						},
+					},
+				},
+				Selected: []bool{true, true},
+			},
+		},
+	}
+
+	err := w.exportCanvasSelections(context.Background(), state, exportSettings{
+		BaseName:        "canvas_original",
+		OutputDir:       outputDir,
+		WriteText:       true,
+		FastaHeaderMode: model.FastaHeaderModeOriginal,
+		UsePhgoHeader:   false,
+	})
+	if err != nil {
+		t.Fatalf("exportCanvasSelections returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(outputDir, "canvas_original.fasta"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	got := strings.ReplaceAll(strings.TrimSpace(string(data)), "\r\n", "\n")
+	want := strings.Join([]string{
+		">plain fasta header",
+		"MPEPTIDE",
+		"",
+		">orig_keyword_header",
+		"MKWAA",
+	}, "\n")
+	if got != want {
+		t.Fatalf("original-header canvas FASTA = %q\nwant %q", got, want)
+	}
+}
+
+func TestExportCanvasSelectionsUsesAllFASTASequenceFields(t *testing.T) {
+	outputDir := t.TempDir()
+	w := NewBlastWizard(io.Discard)
+	state := canvasLaunchState{
+		Items: []model.CanvasItem{{
+			Title:    "1",
+			Selected: []bool{true},
+			Rows: []model.CanvasRow{{
+				RowNumber: 1,
+				Kind:      model.CanvasKindFasta,
+				FASTA: &model.QuerySequenceSource{
+					Annotation:      ">row1",
+					ProteinSequence: "MPEPTIDE",
+				},
+			}},
+		}},
+	}
+	err := w.exportCanvasSelections(context.Background(), state, exportSettings{
+		BaseName:        "canvas_allseq",
+		OutputDir:       outputDir,
+		WriteText:       true,
+		FastaHeaderMode: model.FastaHeaderModeOriginal,
+		UsePhgoHeader:   false,
+	})
+	if err != nil {
+		t.Fatalf("exportCanvasSelections returned error: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(outputDir, "canvas_allseq.fasta"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !strings.Contains(string(data), "MPEPTIDE") {
+		t.Fatalf("FASTA export should include protein-sequence fallback: %q", string(data))
 	}
 }
 
@@ -5286,6 +6397,17 @@ func TestAssignCanvasRowNumbersContinuesFromExistingMaximum(t *testing.T) {
 	}
 }
 
+func TestAssignCanvasRowNumbersSupportsNegativeSequenceWithoutZero(t *testing.T) {
+	rows := assignCanvasRowNumbers([]model.CanvasRow{
+		{Kind: model.CanvasKindFasta},
+		{Kind: model.CanvasKindFasta},
+		{Kind: model.CanvasKindFasta},
+	}, -3)
+	if rows[0].RowNumber != -3 || rows[1].RowNumber != -2 || rows[2].RowNumber != -1 {
+		t.Fatalf("assigned negative row numbers = %#v, want -3, -2, -1", rows)
+	}
+}
+
 func TestHydrateSnapshotArtifactsReportsMissingPayload(t *testing.T) {
 	err := hydrateSnapshotArtifacts(sessionsnapshot.Snapshot{
 		Artifacts: &sessionsnapshot.ArtifactManifestV2{
@@ -5299,6 +6421,43 @@ func TestHydrateSnapshotArtifactsReportsMissingPayload(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "missing packed payload") {
 		t.Fatalf("expected missing payload error, got %v", err)
+	}
+}
+
+func TestHydrateSnapshotArtifactsRemapsLegacyOutputTreeRestorePathToCache(t *testing.T) {
+	outputDir, err := appfs.OutputDir()
+	if err != nil {
+		t.Fatalf("OutputDir returned error: %v", err)
+	}
+	legacyPath := filepath.Join(outputDir, "tree", "legacy-session", "run1", "tree.nwk")
+	cachePath := filepath.Join(mustCanvasTreeArtifactDir("legacy-session", "run1"), "tree.nwk")
+	_ = os.Remove(cachePath)
+	t.Cleanup(func() { _ = os.Remove(cachePath) })
+
+	err = hydrateSnapshotArtifacts(sessionsnapshot.Snapshot{
+		Artifacts: &sessionsnapshot.ArtifactManifestV2{
+			Entries: []sessionsnapshot.ArtifactEntryV2{{
+				ID:          "tree/tree.nwk",
+				Path:        "artifacts/tree/legacy-session/run1/tree.nwk",
+				RestorePath: legacyPath,
+			}},
+		},
+		ArtifactPayloads: map[string][]byte{
+			"artifacts/tree/legacy-session/run1/tree.nwk": []byte("(PHGOT000001);"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("hydrateSnapshotArtifacts returned error: %v", err)
+	}
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatalf("expected remapped cache artifact at %s: %v", cachePath, err)
+	}
+	if strings.TrimSpace(string(data)) != "(PHGOT000001);" {
+		t.Fatalf("restored cache artifact = %q", string(data))
+	}
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Fatalf("legacy output tree path should stay absent, stat err=%v", err)
 	}
 }
 

@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/KiriKirby/phytozome-go/internal/appfs"
+	"github.com/KiriKirby/phytozome-go/internal/fastautil"
 	"github.com/KiriKirby/phytozome-go/internal/model"
 	phygoboost "github.com/KiriKirby/phytozome-go/internal/phygoboost"
 	"github.com/KiriKirby/phytozome-go/internal/searchengine/lemnakeyword"
@@ -2224,10 +2225,12 @@ func (c *Client) loadProteinReleaseSequences(ctx context.Context, release releas
 	sequences := make(map[string]string)
 	var header string
 	var seq strings.Builder
+	skipCurrent := false
 	flush := func() {
 		header = strings.TrimSpace(header)
 		sequence := strings.TrimSpace(seq.String())
-		if header == "" || sequence == "" {
+		if header == "" || sequence == "" || skipCurrent {
+			skipCurrent = false
 			return
 		}
 		token := header
@@ -2254,7 +2257,17 @@ func (c *Client) loadProteinReleaseSequences(ctx context.Context, release releas
 		if strings.HasPrefix(line, ">") {
 			flush()
 			header = strings.TrimPrefix(line, ">")
+			if fastautil.IsIgnoredPHGONoteHeader(header) {
+				header = ""
+				skipCurrent = true
+				seq.Reset()
+				continue
+			}
+			skipCurrent = false
 			seq.Reset()
+			continue
+		}
+		if skipCurrent {
 			continue
 		}
 		seq.WriteString(line)
@@ -2282,10 +2295,12 @@ func (c *Client) loadNucleotideReleaseSequences(ctx context.Context, release rel
 	sequences := make(map[string]string)
 	var header string
 	var seq strings.Builder
+	skipCurrent := false
 	flush := func() {
 		header = strings.TrimSpace(header)
 		sequence := strings.TrimSpace(seq.String())
-		if header == "" || sequence == "" {
+		if header == "" || sequence == "" || skipCurrent {
+			skipCurrent = false
 			return
 		}
 		token := header
@@ -2312,7 +2327,17 @@ func (c *Client) loadNucleotideReleaseSequences(ctx context.Context, release rel
 		if strings.HasPrefix(line, ">") {
 			flush()
 			header = strings.TrimPrefix(line, ">")
+			if fastautil.IsIgnoredPHGONoteHeader(header) {
+				header = ""
+				skipCurrent = true
+				seq.Reset()
+				continue
+			}
+			skipCurrent = false
 			seq.Reset()
+			continue
+		}
+		if skipCurrent {
 			continue
 		}
 		seq.WriteString(line)

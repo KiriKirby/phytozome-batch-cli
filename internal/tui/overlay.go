@@ -8,7 +8,10 @@
 package tui
 
 import (
+	"reflect"
+	"strings"
 	"sync"
+	"unsafe"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -79,7 +82,41 @@ func currentBackground(fallback tview.Primitive) tview.Primitive {
 
 func setPageRoot(app *tview.Application, root tview.Primitive) {
 	rememberBackground(root)
+	if app == nil {
+		return
+	}
 	app.SetRoot(root, true)
+	resetApplicationMouseState(app)
+}
+
+func resetApplicationMouseState(app *tview.Application) {
+	if app == nil {
+		return
+	}
+	app.Lock()
+	defer app.Unlock()
+	resetApplicationPrivateField(app, "mouseCapturingPrimitive")
+	resetApplicationPrivateField(app, "lastMouseButtons")
+	resetApplicationPrivateField(app, "mouseDownX")
+	resetApplicationPrivateField(app, "mouseDownY")
+	resetApplicationPrivateField(app, "lastMouseX")
+	resetApplicationPrivateField(app, "lastMouseY")
+	resetApplicationPrivateField(app, "lastMouseClick")
+}
+
+func resetApplicationPrivateField(app *tview.Application, name string) {
+	if app == nil || strings.TrimSpace(name) == "" {
+		return
+	}
+	value := reflect.ValueOf(app)
+	if !value.IsValid() || value.Kind() != reflect.Pointer || value.IsNil() {
+		return
+	}
+	field := value.Elem().FieldByName(name)
+	if !field.IsValid() || !field.CanAddr() {
+		return
+	}
+	reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Set(reflect.Zero(field.Type()))
 }
 
 type modalOverlay struct {

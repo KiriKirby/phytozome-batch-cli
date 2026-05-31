@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/KiriKirby/phytozome-go/internal/fastautil"
 )
 
 var (
@@ -512,7 +514,11 @@ func firstFastaHeaderLine(input string) string {
 			continue
 		}
 		if strings.HasPrefix(line, ">") {
-			return strings.TrimSpace(strings.TrimPrefix(line, ">"))
+			header := strings.TrimSpace(strings.TrimPrefix(line, ">"))
+			if fastautil.IsIgnoredPHGONoteHeader(header) {
+				continue
+			}
+			return header
 		}
 		return ""
 	}

@@ -38,6 +38,7 @@ type updateAssetSpec struct {
 	ArchiveKind         string
 	StripPrefix         string
 	RelaunchRelative    string
+	OutputRelative      string
 	InstallRootFromExec func(string) (string, error)
 }
 
@@ -234,6 +235,7 @@ func updateAssetSpecFor(goos string, goarch string) (updateAssetSpec, error) {
 			AssetName:        "phytozome-go_windows_amd64_wezterm.zip",
 			ArchiveKind:      "zip",
 			RelaunchRelative: "phytozome-go.exe",
+			OutputRelative:   "output",
 			InstallRootFromExec: func(cleanerPath string) (string, error) {
 				return filepath.Dir(strings.TrimSpace(cleanerPath)), nil
 			},
@@ -247,6 +249,7 @@ func updateAssetSpecFor(goos string, goarch string) (updateAssetSpec, error) {
 			ArchiveKind:      "tar.gz",
 			StripPrefix:      "phytozome-go_linux_amd64_wezterm",
 			RelaunchRelative: "phytozome-go",
+			OutputRelative:   "output",
 			InstallRootFromExec: func(cleanerPath string) (string, error) {
 				return filepath.Dir(strings.TrimSpace(cleanerPath)), nil
 			},
@@ -262,6 +265,7 @@ func updateAssetSpecFor(goos string, goarch string) (updateAssetSpec, error) {
 			ArchiveKind:      "tar.gz",
 			StripPrefix:      "phytozome GO.app",
 			RelaunchRelative: "Contents/MacOS/phytozome-go",
+			OutputRelative:   "Contents/MacOS/output",
 			InstallRootFromExec: func(cleanerPath string) (string, error) {
 				cleanerPath = filepath.Clean(strings.TrimSpace(cleanerPath))
 				if cleanerPath == "" {
@@ -584,6 +588,7 @@ $TargetDir = %s
 $StageDir = %s
 $Launcher = %s
 $WorkingDir = %s
+$OutputRelative = %s
 $LogPath = [Environment]::GetEnvironmentVariable(%s)
 
 function Write-UpdateLog {
@@ -614,6 +619,34 @@ function Invoke-RobocopyMirror {
     }
 }
 
+function Copy-PreservedOutputToStage {
+    param(
+        [string]$CurrentRoot,
+        [string]$StageRoot,
+        [string]$RelativePath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RelativePath)) {
+        return
+    }
+
+    $Source = Join-Path $CurrentRoot $RelativePath
+    if (-not (Test-Path -LiteralPath $Source)) {
+        Write-UpdateLog ("preserved output missing: " + $Source)
+        return
+    }
+
+    $Destination = Join-Path $StageRoot $RelativePath
+    Write-UpdateLog ("preserve output start: " + $Source + " -> " + $Destination)
+    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+    & robocopy $Source $Destination /E /COPY:DAT /DCOPY:DAT /R:20 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+    $code = $LASTEXITCODE
+    Write-UpdateLog ("preserve output robocopy exit code: " + $code)
+    if ($code -gt 7) {
+        throw "preserve output failed with exit code $code"
+    }
+}
+
 Write-UpdateLog ("updater start; parent pid=" + $ParentPid)
 while (Get-Process -Id $ParentPid -ErrorAction SilentlyContinue) {
     Start-Sleep -Milliseconds 200
@@ -623,6 +656,7 @@ Write-UpdateLog "parent exited"
 for ($i = 0; $i -lt 120; $i++) {
     try {
         Write-UpdateLog ("update attempt " + ($i + 1))
+        Copy-PreservedOutputToStage -CurrentRoot $TargetDir -StageRoot $StageDir -RelativePath $OutputRelative
         Invoke-RobocopyMirror -Source $StageDir -Destination $TargetDir
         Remove-Item -LiteralPath $StageDir -Recurse -Force -ErrorAction SilentlyContinue
         Write-UpdateLog "stage directory removed"
@@ -638,7 +672,7 @@ $env:%s = '1'
 Write-UpdateLog ("launching: " + $Launcher)
 %s
 Write-UpdateLog "launch command returned"
-`, os.Getpid(), psQuote(plan.InstallRoot), psQuote(plan.StageDir), psQuote(plan.RelaunchPath), psQuote(filepath.Dir(plan.RelaunchPath)), psQuote(updateDebugLogEnv), skipBundlePreflightEnv, startProcessLine)
+`, os.Getpid(), psQuote(plan.InstallRoot), psQuote(plan.StageDir), psQuote(plan.RelaunchPath), psQuote(filepath.Dir(plan.RelaunchPath)), psQuote(plan.Spec.OutputRelative), psQuote(updateDebugLogEnv), skipBundlePreflightEnv, startProcessLine)
 }
 
 func writeShellUpdater(plan stagedUpdatePlan, args []string) (string, error) {
@@ -665,11 +699,26 @@ STAGE_DIR=%s
 BACKUP_DIR=%s
 LAUNCHER=%s
 WORKING_DIR=%s
+OUTPUT_REL=%s
+
+preserve_output() {
+  if [ -z "$OUTPUT_REL" ]; then
+    return
+  fi
+  SOURCE="$TARGET_DIR/$OUTPUT_REL"
+  if [ ! -d "$SOURCE" ]; then
+    return
+  fi
+  DEST="$STAGE_DIR/$OUTPUT_REL"
+  mkdir -p "$DEST"
+  cp -a "$SOURCE"/. "$DEST"/
+}
 
 while kill -0 "$PARENT_PID" 2>/dev/null; do
   sleep 1
 done
 
+preserve_output
 rm -rf "$BACKUP_DIR"
 if [ -e "$TARGET_DIR" ]; then
   mv "$TARGET_DIR" "$BACKUP_DIR"
@@ -679,7 +728,7 @@ rm -rf "$BACKUP_DIR"
 
 cd "$WORKING_DIR"
 env %s=1 "$LAUNCHER"%s >/dev/null 2>&1 &
-`, os.Getpid(), shQuote(plan.InstallRoot), shQuote(plan.StageDir), shQuote(plan.BackupDir), shQuote(plan.RelaunchPath), shQuote(filepath.Dir(plan.RelaunchPath)), skipBundlePreflightEnv, argsSuffix)
+`, os.Getpid(), shQuote(plan.InstallRoot), shQuote(plan.StageDir), shQuote(plan.BackupDir), shQuote(plan.RelaunchPath), shQuote(filepath.Dir(plan.RelaunchPath)), shQuote(plan.Spec.OutputRelative), skipBundlePreflightEnv, argsSuffix)
 
 	if _, err := scriptFile.WriteString(script); err != nil {
 		return "", fmt.Errorf("write updater script %s: %w", scriptFile.Name(), err)

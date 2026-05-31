@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -64,6 +65,30 @@ func TestBlastRunSelectionShowsExportScopeFromOriginalQueryCount(t *testing.T) {
 	}
 	if !blastRunSelectionShowsExportScope(BlastRunSelectionPage{Items: []BlastRunItem{{}}, ForceExportScope: true}) {
 		t.Fatal("original multi-query context must show export scope even after merging to one visible table")
+	}
+}
+
+func TestCanvasExportSettingsPageCanHideExcelAndRawOptions(t *testing.T) {
+	page := ExportSettingsPage{
+		Title:               "Canvas export settings",
+		FileInitial:         "canvas",
+		SessionInitial:      true,
+		WriteText:           true,
+		WriteExcel:          false,
+		WriteRawExcel:       false,
+		ShowWriteText:       true,
+		ShowWriteExcel:      false,
+		ShowWriteRawExcel:   false,
+		ShowFastaHeaderMode: true,
+	}
+	if !page.ShowWriteText {
+		t.Fatal("canvas export page should show FASTA toggle")
+	}
+	if page.ShowWriteExcel || page.ShowWriteRawExcel {
+		t.Fatalf("canvas export page should hide excel/raw toggles: %#v", page)
+	}
+	if !page.ShowFastaHeaderMode {
+		t.Fatal("canvas export page should show FASTA header control")
 	}
 }
 
@@ -137,6 +162,7 @@ func TestBlastSettingsModalLabelsUseReadableText(t *testing.T) {
 		"Add UniProt annotation columns",
 		"Add InterPro domain-evidence columns",
 		"Group related queries as one family result",
+		"Merge duplicate target rows",
 		"Reject rows below the identity cutoff",
 		"InterPro rule: use conserved-region status",
 	} {
@@ -281,6 +307,427 @@ func TestLeftPrimaryButtonUsesNormalStyle(t *testing.T) {
 	}
 	if !strings.Contains(positions[0].label, "Add canvas") {
 		t.Fatalf("left primary button not rendered in left group: %#v", positions)
+	}
+}
+
+func TestButtonFlexInvalidateLayoutRecomputesWrappedButtonRows(t *testing.T) {
+	body := newButtonFlex()
+	row := buttonRow(
+		buttonSpec{Label: ButtonBack, Shortcut: ShortcutBack, Visible: true},
+		buttonSpec{Label: ButtonHome, Shortcut: ShortcutHome, Visible: true},
+		buttonSpec{Label: ButtonCopy, Shortcut: ShortcutCopy, Visible: true},
+		buttonSpec{Label: "Rename selected current row", Shortcut: "F4", Visible: false, LeftPrimary: true},
+		buttonSpec{Label: ButtonExport, Shortcut: ShortcutExport, Visible: true, Primary: true},
+		buttonSpec{Label: ButtonView, Shortcut: ShortcutConfirm, Visible: true, Primary: true},
+	)
+	addButtonRow(body, row)
+
+	screen := tcell.NewSimulationScreen("")
+	if err := screen.Init(); err != nil {
+		t.Fatalf("screen init failed: %v", err)
+	}
+	screen.SetSize(72, 6)
+	body.SetRect(0, 0, 72, 6)
+	body.Draw(screen)
+
+	if containsText(screenLine(screen, 1, 72), "Rename selected current row") {
+		t.Fatalf("rename button should not be drawn before it becomes visible: %q", screenLine(screen, 1, 72))
+	}
+
+	row.buttons[3].Visible = true
+	body.invalidateLayout()
+	body.Draw(screen)
+
+	if !containsText(screenLine(screen, 1, 72), "Rename selected current row") {
+		t.Fatalf("rename button should be drawn on the wrapped second line after layout invalidation: %q", screenLine(screen, 1, 72))
+	}
+}
+
+func TestBlastRunSelectionControlModeForTableClickTreatsBlankAreaAsTableMode(t *testing.T) {
+	if got := blastRunSelectionControlModeForTableClick(-1, 3); got != 0 {
+		t.Fatalf("blank table click mode = %d, want table mode 0", got)
+	}
+	if got := blastRunSelectionControlModeForTableClick(0, 3); got != 1 {
+		t.Fatalf("header click mode = %d, want header mode 1", got)
+	}
+	if got := blastRunSelectionControlModeForTableClick(3, 3); got != 0 {
+		t.Fatalf("data click mode = %d, want table mode 0", got)
+	}
+}
+
+func TestTreeFocusShortcutOnlyOverridesCopyWhenTreePanelExpanded(t *testing.T) {
+	event := tcell.NewEventKey(tcell.KeyCtrlY, 0, tcell.ModCtrl)
+	if !treeFocusShortcutActive(event, true) {
+		t.Fatal("Ctrl+Y should switch focus when the tree panel is expanded")
+	}
+	if treeFocusShortcutActive(event, false) {
+		t.Fatal("Ctrl+Y should remain available for copy when the tree panel is collapsed")
+	}
+}
+
+func TestCanvasTreePanelCanOpenWithoutMinimumWidthGate(t *testing.T) {
+	if !canvasTreePanelCanOpen(1) {
+		t.Fatal("tree panel should open even at narrow widths after removing the minimum-width gate")
+	}
+	minimum := canvasTreePanelWidth + canvasTreeMinimumLeftWidth
+	message := canvasTreePanelWidthMessage(minimum - 1)
+	if !strings.Contains(message, strconv.Itoa(minimum)) || !strings.Contains(message, strconv.Itoa(canvasTreePanelWidth)) {
+		t.Fatalf("width message should still mention minimum and panel width: %q", message)
+	}
+}
+
+func TestCanvasEditButtonRowRecognizesF2RenameSlot(t *testing.T) {
+	extras := []Action{
+		{Value: "add_item", ListOnly: true, Shortcut: "Ctrl+D"},
+		{Value: "rename_row", TableOnly: true, Shortcut: "F2"},
+	}
+	if !canvasEditButtonRow(extras) {
+		t.Fatal("canvasEditButtonRow should recognize the F2 rename slot")
+	}
+}
+
+func TestTableHeaderStyleHighlightsDisplayNameColumns(t *testing.T) {
+	style := tableHeaderStyle(TableColumn{ID: "display_name"})
+	got, _, _ := style.Decompose()
+	if got != colorTreeAction {
+		t.Fatalf("display_name header foreground = %v, want %v", got, colorTreeAction)
+	}
+}
+
+func TestCanvasTreePanelBuildsAlignPageFields(t *testing.T) {
+	panel := CanvasTreePanel{
+		State: CanvasTreePanelState{
+			Focused:           true,
+			CurrentControl:    1,
+			DisplayNameSource: "label_name",
+			AlignmentMethod:   "clustalw",
+			TreeMethod:        "neighbor_joining",
+			AlignmentParams:   map[string]string{},
+			TreeParams:        map[string]string{},
+		},
+		DisplayNameSources: []Choice{{Value: "label_name", Label: "label_name"}},
+		AlignmentMethods: []CanvasTreeMethod{{
+			ID:    "clustalw",
+			Label: "ClustalW",
+			Parameters: []CanvasTreeParameter{
+				{Label: "Pairwise Alignment", Section: true, ReadOnly: true},
+				{ID: "gap_open", Label: "Gap Opening Penalty", Kind: "float", Default: "10.00"},
+			},
+		}},
+		TreeMethods: []CanvasTreeMethod{{
+			ID:    "neighbor_joining",
+			Label: "Neighbor-Joining",
+			Parameters: []CanvasTreeParameter{
+				{Label: "Phylogeny Test", Section: true, ReadOnly: true},
+				{ID: "bootstrap", Label: "No. of Bootstrap Replications", Kind: "integer", Default: "500"},
+			},
+		}},
+	}
+	primitive := newCanvasTreePanelPrimitive(panel, nil, nil, nil, nil, nil)
+	primitive.rebuildUI()
+	if got := primitive.currentPage(); got != 1 {
+		t.Fatalf("align page = %d, want 1", got)
+	}
+	if len(primitive.fieldsByPage) != 3 {
+		t.Fatalf("page count = %d, want 3", len(primitive.fieldsByPage))
+	}
+	if len(primitive.fieldsByPage[1]) < 2 {
+		t.Fatalf("align page fields = %d, want at least 2", len(primitive.fieldsByPage[1]))
+	}
+	if _, ok := primitive.fieldsByPage[1][0].primitive.(*tview.DropDown); !ok {
+		t.Fatal("first align control should be a dropdown")
+	}
+	if input := primitive.fieldsByPage[1][1].input; input == nil || !strings.Contains(input.GetLabel(), "Gap Opening Penalty") {
+		t.Fatal("align page should build the parameter input with the expected label")
+	}
+}
+
+func TestCanvasTreePanelBuildsConversionPageFirst(t *testing.T) {
+	panel := CanvasTreePanel{
+		State: CanvasTreePanelState{
+			Focused:           true,
+			DisplayNameSource: "label_name",
+			AlignmentMethod:   "clustalw",
+			TreeMethod:        "neighbor_joining",
+			AlignmentParams:   map[string]string{},
+			TreeParams:        map[string]string{},
+		},
+		DisplayNameSources: []Choice{{Value: "label_name", Label: "label_name"}},
+		AlignmentMethods:   []CanvasTreeMethod{{ID: "clustalw", Label: "ClustalW"}},
+		TreeMethods:        []CanvasTreeMethod{{ID: "neighbor_joining", Label: "Neighbor-Joining"}},
+	}
+	primitive := newCanvasTreePanelPrimitive(panel, nil, nil, nil, nil, nil)
+	primitive.rebuildUI()
+	if got := primitive.currentPage(); got != 0 {
+		t.Fatalf("default page = %d, want conversion page 0", got)
+	}
+	if len(primitive.fieldsByPage[0]) < 5 {
+		t.Fatalf("conversion page fields = %d, want target/action/cleanup controls", len(primitive.fieldsByPage[0]))
+	}
+	if _, ok := primitive.fieldsByPage[0][0].primitive.(*checkboxModule); !ok {
+		t.Fatal("first conversion control should be a protein-mode radio checkbox")
+	}
+}
+
+func TestCanvasTreePanelConversionTargetControlsAlignMethods(t *testing.T) {
+	panel := CanvasTreePanel{
+		State: CanvasTreePanelState{
+			ConversionTarget: canvasTreeTargetProtein,
+			AlignmentMethod:  "clustalw_protein",
+			TreeMethod:       "neighbor_joining",
+			AlignmentParams:  map[string]string{},
+			TreeParams:       map[string]string{},
+		},
+		AlignmentMethods: []CanvasTreeMethod{{ID: "clustalw_protein", Label: "ClustalW"}, {ID: "muscle_protein", Label: "MUSCLE"}},
+		TreeMethods:      []CanvasTreeMethod{{ID: "neighbor_joining", Label: "Neighbor-Joining"}},
+		AlignmentByTarget: map[string][]CanvasTreeMethod{
+			canvasTreeTargetProtein: {{ID: "clustalw_protein", Label: "ClustalW"}, {ID: "muscle_protein", Label: "MUSCLE"}},
+			canvasTreeTargetDNA:     {{ID: "clustalw", Label: "ClustalW (DNA)"}, {ID: "muscle", Label: "MUSCLE (DNA)"}, {ID: "clustalw_codons", Label: "ClustalW (Codons)"}, {ID: "muscle_codons", Label: "MUSCLE (Codons)"}},
+		},
+		TreeByTarget: map[string][]CanvasTreeMethod{
+			canvasTreeTargetProtein: {{ID: "neighbor_joining", Label: "Neighbor-Joining"}},
+			canvasTreeTargetDNA:     {{ID: "neighbor_joining", Label: "Neighbor-Joining"}},
+		},
+	}
+	primitive := newCanvasTreePanelPrimitive(panel, nil, nil, nil, nil, nil)
+	state := panel.State
+	state.ConversionTarget = canvasTreeTargetDNA
+	primitive.applyConversionTarget(&state)
+	if state.AlignmentMethod != "clustalw" {
+		t.Fatalf("DNA target alignment method = %q, want clustalw", state.AlignmentMethod)
+	}
+	if len(primitive.panel.AlignmentMethods) != 4 || primitive.panel.AlignmentMethods[2].ID != "clustalw_codons" {
+		t.Fatalf("DNA target should expose four DNA/codon methods: %#v", primitive.panel.AlignmentMethods)
+	}
+	state.ConversionTarget = canvasTreeTargetProtein
+	primitive.applyConversionTarget(&state)
+	if state.AlignmentMethod != "clustalw_protein" {
+		t.Fatalf("Protein target alignment method = %q, want clustalw_protein", state.AlignmentMethod)
+	}
+	if len(primitive.panel.AlignmentMethods) != 2 || primitive.panel.AlignmentMethods[1].ID != "muscle_protein" {
+		t.Fatalf("Protein target should expose two protein methods: %#v", primitive.panel.AlignmentMethods)
+	}
+}
+
+func TestCanvasTreePanelBuildsTreePageFields(t *testing.T) {
+	panel := CanvasTreePanel{
+		State: CanvasTreePanelState{
+			Focused:           true,
+			CurrentControl:    2,
+			DisplayNameSource: "label_name",
+			AlignmentMethod:   "clustalw",
+			TreeMethod:        "neighbor_joining",
+			AlignmentParams:   map[string]string{},
+			TreeParams:        map[string]string{},
+		},
+		DisplayNameSources: []Choice{{Value: "label_name", Label: "label_name"}},
+		AlignmentMethods: []CanvasTreeMethod{{
+			ID:    "clustalw",
+			Label: "ClustalW",
+			Parameters: []CanvasTreeParameter{
+				{Label: "Pairwise Alignment", Section: true, ReadOnly: true},
+				{ID: "gap_open", Label: "Gap Opening Penalty", Kind: "float", Default: "10.00"},
+			},
+		}},
+		TreeMethods: []CanvasTreeMethod{{
+			ID:    "neighbor_joining",
+			Label: "Neighbor-Joining",
+			Parameters: []CanvasTreeParameter{
+				{Label: "Phylogeny Test", Section: true, ReadOnly: true},
+				{ID: "bootstrap", Label: "No. of Bootstrap Replications", Kind: "integer", Default: "500"},
+			},
+		}},
+	}
+	primitive := newCanvasTreePanelPrimitive(panel, nil, nil, nil, nil, nil)
+	primitive.rebuildUI()
+	if got := primitive.currentPage(); got != 2 {
+		t.Fatalf("current page = %d, want 2", got)
+	}
+	if len(primitive.fieldsByPage[2]) < 3 {
+		t.Fatalf("tree page fields = %d, want at least 3", len(primitive.fieldsByPage[2]))
+	}
+	if _, ok := primitive.fieldsByPage[2][0].primitive.(*tview.DropDown); !ok {
+		t.Fatal("first tree-page control should be display-column dropdown")
+	}
+	if _, ok := primitive.fieldsByPage[2][1].primitive.(*tview.DropDown); !ok {
+		t.Fatal("second tree-page control should be tree-method dropdown")
+	}
+}
+
+func TestCanvasTreePanelPagesSwitchWithPageDown(t *testing.T) {
+	panel := CanvasTreePanel{
+		State: CanvasTreePanelState{
+			Focused:           true,
+			DisplayNameSource: "label_name",
+			AlignmentMethod:   "clustalw",
+			TreeMethod:        "neighbor_joining",
+			AlignmentParams:   map[string]string{},
+			TreeParams:        map[string]string{},
+		},
+		DisplayNameSources: []Choice{{Value: "label_name", Label: "label_name"}},
+		AlignmentMethods: []CanvasTreeMethod{{
+			ID:         "clustalw",
+			Label:      "ClustalW",
+			Parameters: []CanvasTreeParameter{{ID: "gap_open", Label: "Gap Opening Penalty", Kind: "float", Default: "10.00"}},
+		}},
+		TreeMethods: []CanvasTreeMethod{{
+			ID:         "neighbor_joining",
+			Label:      "Neighbor-Joining",
+			Parameters: []CanvasTreeParameter{{ID: "bootstrap", Label: "No. of Bootstrap Replications", Kind: "integer", Default: "500"}},
+		}},
+	}
+	primitive := newCanvasTreePanelPrimitive(panel, nil, nil, nil, nil, nil)
+	primitive.rebuildUI()
+	if !primitive.handleKey(tcell.NewEventKey(tcell.KeyPgDn, 0, 0)) {
+		t.Fatal("PgDn should be consumed by tree panel")
+	}
+	if got := primitive.currentPage(); got != 1 {
+		t.Fatalf("PgDn should switch to second page, got page %d", got)
+	}
+}
+
+func TestCanvasTreePanelDropdownSpaceOpensAndEnterConfirms(t *testing.T) {
+	panel := CanvasTreePanel{
+		State: CanvasTreePanelState{
+			Focused:           true,
+			CurrentControl:    1,
+			DisplayNameSource: "label_name",
+			AlignmentMethod:   "clustalw",
+			TreeMethod:        "neighbor_joining",
+			AlignmentParams:   map[string]string{},
+			TreeParams:        map[string]string{},
+		},
+		DisplayNameSources: []Choice{{Value: "label_name", Label: "label_name"}, {Value: "head", Label: "head"}},
+		AlignmentMethods: []CanvasTreeMethod{{
+			ID:         "clustalw",
+			Label:      "ClustalW",
+			Parameters: []CanvasTreeParameter{{ID: "gap_open", Label: "Gap Opening Penalty", Kind: "float", Default: "10.00"}},
+		}},
+		TreeMethods: []CanvasTreeMethod{{
+			ID:         "neighbor_joining",
+			Label:      "Neighbor-Joining",
+			Parameters: []CanvasTreeParameter{{ID: "bootstrap", Label: "No. of Bootstrap Replications", Kind: "integer", Default: "500"}},
+		}},
+	}
+	primitive := newCanvasTreePanelPrimitive(panel, nil, nil, nil, nil, nil)
+	primitive.rebuildUI()
+	if !primitive.handleKey(tcell.NewEventKey(tcell.KeyRune, ' ', 0)) {
+		t.Fatal("Space should be consumed when opening a dropdown")
+	}
+	current, dropDown, _ := primitive.currentField()
+	if current == nil || dropDown == nil || !dropDown.IsOpen() {
+		t.Fatal("Space should open the dropdown")
+	}
+	if !primitive.handleKey(tcell.NewEventKey(tcell.KeyEnter, 0, 0)) {
+		t.Fatal("Enter should be consumed when confirming dropdown")
+	}
+	if got := primitive.currentPage(); got != 1 {
+		t.Fatalf("confirming the align dropdown should stay on page 1, got %d", got)
+	}
+}
+
+func TestCanvasTreePanelFocusCallbackCanMarkFocused(t *testing.T) {
+	panel := CanvasTreePanel{
+		State: CanvasTreePanelState{
+			Focused:           false,
+			DisplayNameSource: "label_name",
+			AlignmentMethod:   "clustalw",
+			TreeMethod:        "neighbor_joining",
+			AlignmentParams:   map[string]string{},
+			TreeParams:        map[string]string{},
+		},
+		DisplayNameSources: []Choice{{Value: "label_name", Label: "label_name"}},
+		AlignmentMethods: []CanvasTreeMethod{{
+			ID:         "clustalw",
+			Label:      "ClustalW",
+			Parameters: []CanvasTreeParameter{{ID: "gap_open", Label: "Gap Opening Penalty", Kind: "float", Default: "10.00"}},
+		}},
+		TreeMethods: []CanvasTreeMethod{{
+			ID:         "neighbor_joining",
+			Label:      "Neighbor-Joining",
+			Parameters: []CanvasTreeParameter{{ID: "bootstrap", Label: "No. of Bootstrap Replications", Kind: "integer", Default: "500"}},
+		}},
+	}
+	var primitiveState CanvasTreePanelState
+	var primitive *canvasTreePanelPrimitive
+	primitive = newCanvasTreePanelPrimitive(panel, nil, func(state CanvasTreePanelState) {
+		primitiveState = state
+	}, func() {
+		state := primitive.currentState()
+		state.Focused = true
+		primitive.applyState(state)
+	}, nil, nil)
+	primitive.rebuildUI()
+	if primitive.onFocus == nil {
+		t.Fatal("tree panel should keep focus callback")
+	}
+	primitive.onFocus()
+	if !primitive.currentState().Focused && !primitiveState.Focused {
+		t.Fatal("focus callback should be able to mark tree panel focused")
+	}
+}
+
+func TestCanvasLeftSidebarModeHidesViewButton(t *testing.T) {
+	buttons := []buttonSpec{
+		{Label: conciseActionLabel("Save snapshot", ButtonExport), Shortcut: ShortcutExport, Visible: true, Primary: true},
+		{Label: conciseActionLabel(ButtonView, ButtonView), Shortcut: ShortcutConfirm, Visible: true, Primary: true},
+	}
+	controlMode := 2
+	for i := range buttons {
+		button := &buttons[i]
+		if strings.EqualFold(button.Label, conciseActionLabel(ButtonView, ButtonView)) && strings.EqualFold(button.Shortcut, ShortcutConfirm) {
+			button.Visible = controlMode != 2
+		}
+	}
+	if buttons[1].Visible {
+		t.Fatal("View button should be hidden while the canvas list is active")
+	}
+}
+
+func TestInfoPageEscapeClosesWithoutBackNavigation(t *testing.T) {
+	withTestApp(t, 120, 32, func(app *tview.Application, screen tcell.SimulationScreen) error {
+		capture := app.GetInputCapture()
+		if capture == nil {
+			t.Fatal("expected info page input capture")
+		}
+		capture(tcell.NewEventKey(tcell.KeyEscape, 0, 0))
+		return nil
+	})
+	result, err := RunInfoPage(InfoPage{
+		Title:       "System tree",
+		Message:     "download failed",
+		AllowBack:   true,
+		AllowHome:   true,
+		ConfirmText: ButtonOK,
+	})
+	if err != nil {
+		t.Fatalf("RunInfoPage returned error: %v", err)
+	}
+	if result.Nav != NavNone {
+		t.Fatalf("Esc on info page should only close the dialog, got nav %q", result.Nav)
+	}
+}
+
+func TestBlastRunContentLayoutRebuildsLeftAndRightPanes(t *testing.T) {
+	content := tview.NewFlex().SetDirection(tview.FlexColumn)
+	left := tview.NewTextView().SetText("Canvas list")
+	right := tview.NewTextView().SetText("Canvas table")
+	tree := tview.NewTextView().SetText("System tree")
+
+	rebuildBlastRunContentLayout(content, left, right, tree, 24, false, false, false)
+	if got := content.GetItemCount(); got != 2 {
+		t.Fatalf("collapsed content item count = %d, want left+right panes", got)
+	}
+	if content.GetItem(0) != left || content.GetItem(1) != right {
+		t.Fatalf("collapsed content panes not preserved")
+	}
+
+	rebuildBlastRunContentLayout(content, left, right, tree, 24, true, true, false)
+	if got := content.GetItemCount(); got != 3 {
+		t.Fatalf("expanded content item count = %d, want left+right+tree panes", got)
+	}
+	if content.GetItem(0) != left || content.GetItem(1) != right || content.GetItem(2) != tree {
+		t.Fatalf("expanded content panes not preserved")
 	}
 }
 
@@ -814,14 +1261,11 @@ func TestLocalizedHelpModalAddsExplicitCloseButton(t *testing.T) {
 	}}, func() {})
 
 	buttons := modal.helpButtons.buttons
-	if len(buttons) < 3 {
-		t.Fatalf("help modal button count = %d, want at least 3", len(buttons))
+	if len(buttons) != 4 {
+		t.Fatalf("help modal button count = %d, want 4", len(buttons))
 	}
-	if buttons[len(buttons)-2].Label != ButtonClose || buttons[len(buttons)-2].Shortcut != ShortcutBack {
-		t.Fatalf("help modal close button = %#v, want Close (Esc)", buttons[len(buttons)-2])
-	}
-	if buttons[len(buttons)-1].Label != ButtonOK || buttons[len(buttons)-1].Shortcut != ShortcutConfirm {
-		t.Fatalf("help modal confirm button = %#v, want OK (Enter)", buttons[len(buttons)-1])
+	if buttons[len(buttons)-1].Label != ButtonClose || buttons[len(buttons)-1].Shortcut != ShortcutBack {
+		t.Fatalf("help modal close button = %#v, want Close (Esc)", buttons[len(buttons)-1])
 	}
 }
 
@@ -940,6 +1384,44 @@ func TestBlastRunSidebarDrawsSecondaryAsTwoPhysicalLines(t *testing.T) {
 	}
 	if !containsText(screenLine(screen, 3, 24), "5 lines") {
 		t.Fatalf("lines line missing: %q", screenLine(screen, 3, 24))
+	}
+}
+
+func TestBlastRunSidebarWithoutSecondaryUsesSingleTitleAndLines(t *testing.T) {
+	sidebar := newBlastRunSidebar()
+	sidebar.SetItems([]blastRunSidebarItem{{
+		Primary: "canvas title",
+		Lines:   "2/5 lines",
+	}})
+	sidebar.SetCurrentItem(0)
+
+	screen := tcell.NewSimulationScreen("")
+	if err := screen.Init(); err != nil {
+		t.Fatalf("screen init failed: %v", err)
+	}
+	screen.SetSize(28, 6)
+	sidebar.SetRect(0, 0, 28, 6)
+	sidebar.Draw(screen)
+
+	if !containsText(screenLine(screen, 1, 28), "canvas title") {
+		t.Fatalf("primary line missing: %q", screenLine(screen, 1, 28))
+	}
+	if !containsText(screenLine(screen, 2, 28), "2/5 lines") {
+		t.Fatalf("lines line missing: %q", screenLine(screen, 2, 28))
+	}
+	if containsText(screenLine(screen, 3, 28), "canvas title") {
+		t.Fatalf("title should not repeat on a third line: %q", screenLine(screen, 3, 28))
+	}
+}
+
+func TestBlastRunSidebarLineCountIgnoresStaleDescription(t *testing.T) {
+	items := []BlastRunItem{{
+		Description: "5 lines (4 selected)",
+		Rows:        make([]TableRow, 5),
+	}}
+	selectedByRun := [][]bool{{true, false, true, false, false}}
+	if got := blastRunSidebarLineCountLabel(selectedByRun, items, 0); got != "2/5 lines" {
+		t.Fatalf("sidebar line count = %q, want live selection count", got)
 	}
 }
 
@@ -1301,29 +1783,34 @@ func TestFamilyBlastCustomizeModalChooseGroupOverlayLeavesExtraRows(t *testing.T
 }
 
 func TestFamilyBlastCustomizeModalCtrlEnterAppliesFromListFocus(t *testing.T) {
-	app := newApp()
-	var result FamilyBlastResult
-	modal := buildFamilyBlastCustomizeModal(FamilyBlastCustomizePage{
-		Title: "Customize Family BLAST groups",
-		Groups: []FamilyBlastCustomGroup{
-			{Name: "PAL", Labels: []string{"PAL1", "PAL2"}},
-		},
-		Ungrouped: []string{"X1"},
-		AllowBack: true,
-	}, app, &result)
+	for _, event := range []*tcell.EventKey{
+		tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModCtrl),
+		tcell.NewEventKey(tcell.KeyCtrlJ, 0, 0),
+	} {
+		app := newApp()
+		var result FamilyBlastResult
+		modal := buildFamilyBlastCustomizeModal(FamilyBlastCustomizePage{
+			Title: "Customize Family BLAST groups",
+			Groups: []FamilyBlastCustomGroup{
+				{Name: "PAL", Labels: []string{"PAL1", "PAL2"}},
+			},
+			Ungrouped: []string{"X1"},
+			AllowBack: true,
+		}, app, &result)
 
-	capture := app.GetInputCapture()
-	capture(tcell.NewEventKey(tcell.KeyTab, 0, 0))
-	if app.GetFocus() != modal.rightList {
-		t.Fatalf("focus before apply = %T, want right list", app.GetFocus())
-	}
-	capture(tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModCtrl))
+		capture := app.GetInputCapture()
+		capture(tcell.NewEventKey(tcell.KeyTab, 0, 0))
+		if app.GetFocus() != modal.rightList {
+			t.Fatalf("focus before apply = %T, want right list", app.GetFocus())
+		}
+		capture(event)
 
-	if len(result.CustomGroups) != 1 || result.CustomGroups[0].Name != "PAL" {
-		t.Fatalf("Ctrl+Enter should apply custom groups, got %#v", result.CustomGroups)
-	}
-	if result.Nav != "" {
-		t.Fatalf("Ctrl+Enter should apply without navigation, got nav %q", result.Nav)
+		if len(result.CustomGroups) != 1 || result.CustomGroups[0].Name != "PAL" {
+			t.Fatalf("Ctrl+Enter event %v should apply custom groups, got %#v", event.Key(), result.CustomGroups)
+		}
+		if result.Nav != "" {
+			t.Fatalf("Ctrl+Enter event %v should apply without navigation, got nav %q", event.Key(), result.Nav)
+		}
 	}
 }
 
@@ -1396,11 +1883,14 @@ func TestCtrlEnterShortcutRequiresCtrlModifiedEnter(t *testing.T) {
 	if !shortcutMatchesEvent("Ctrl+Enter", tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModCtrl)) {
 		t.Fatal("Ctrl+Enter should match KeyEnter with Ctrl modifier")
 	}
+	if !shortcutMatchesEvent("Ctrl+Enter", tcell.NewEventKey(tcell.KeyCtrlJ, 0, 0)) {
+		t.Fatal("Ctrl+Enter should match KeyCtrlJ fallback")
+	}
 	if shortcutMatchesEvent("Ctrl+Enter", tcell.NewEventKey(tcell.KeyEnter, 0, 0)) {
 		t.Fatal("Ctrl+Enter should not match plain Enter")
 	}
-	if isCtrlEnter(tcell.NewEventKey(tcell.KeyCtrlJ, 0, 0)) {
-		t.Fatal("KeyCtrlJ should not be treated as Ctrl+Enter")
+	if !isCtrlEnter(tcell.NewEventKey(tcell.KeyCtrlJ, 0, 0)) {
+		t.Fatal("KeyCtrlJ should be treated as Ctrl+Enter fallback")
 	}
 }
 
@@ -1426,6 +1916,54 @@ func screenLine(screen tcell.SimulationScreen, y int, width int) string {
 		runes = append(runes, main)
 	}
 	return string(runes)
+}
+
+func screenContains(screen tcell.SimulationScreen, width int, height int, text string) bool {
+	return strings.Contains(screenDump(screen, width, height), text)
+}
+
+func screenDump(screen tcell.SimulationScreen, width int, height int) string {
+	lines := make([]string, 0, height)
+	for y := 0; y < height; y++ {
+		lines = append(lines, screenLine(screen, y, width))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func withTestApp(t *testing.T, width int, height int, beforeStop func(*tview.Application, tcell.SimulationScreen) error) {
+	t.Helper()
+	oldNewApp := newApp
+	oldRunApp := runApp
+	var appRef *tview.Application
+	var screenRef tcell.SimulationScreen
+	newApp = func() *tview.Application {
+		configStyles()
+		app := tview.NewApplication().EnableMouse(true).EnablePaste(true)
+		screen := tcell.NewSimulationScreen("UTF-8")
+		if err := screen.Init(); err != nil {
+			t.Fatalf("screen init failed: %v", err)
+		}
+		screen.SetSize(width, height)
+		app.SetScreen(screen)
+		appRef = app
+		screenRef = screen
+		return app
+	}
+	runApp = func(app *tview.Application) error {
+		if beforeStop != nil {
+			if err := beforeStop(app, screenRef); err != nil {
+				return err
+			}
+		}
+		app.Stop()
+		return nil
+	}
+	t.Cleanup(func() {
+		_ = appRef
+		_ = screenRef
+		newApp = oldNewApp
+		runApp = oldRunApp
+	})
 }
 
 func containsText(value string, text string) bool {

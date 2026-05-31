@@ -706,6 +706,28 @@ func TestLocalBlastQueryFASTANormalizesPhgoMultiEntryHeaders(t *testing.T) {
 	}
 }
 
+func TestLocalBlastQueryFASTAIgnoresPhgoNoteEntry(t *testing.T) {
+	input := strings.Join([]string{
+		">phgo://note",
+		"MNOTE",
+		">phgo://Oryza sativa v7.0/4CL1/LOC_Os08g14760.1\\1",
+		"MAAA*",
+	}, "\n")
+	fasta, lengths, total, err := localBlastQueryFASTA(input)
+	if err != nil {
+		t.Fatalf("localBlastQueryFASTA: %v", err)
+	}
+	if strings.Contains(fasta, "note") || strings.Contains(fasta, "MNOTE") {
+		t.Fatalf("note entry was not ignored:\n%s", fasta)
+	}
+	if len(lengths) != 1 || lengths["LOC_Os08g14760.1"] != 5 {
+		t.Fatalf("unexpected query lengths: %#v", lengths)
+	}
+	if total != 5 {
+		t.Fatalf("total length = %d, want 5", total)
+	}
+}
+
 func TestBlastDBCompleteRequiresCoreFilesByType(t *testing.T) {
 	tmpDir := t.TempDir()
 	protPrefix := filepath.Join(tmpDir, "prot_db")

@@ -130,6 +130,10 @@ func (p *Prompter) SnapshotCanvasReviewState(key string) tui.BlastRunSelectionSt
 	return p.blastRunStates[strings.TrimSpace(key)]
 }
 
+func (p *Prompter) SnapshotCanvasTreePanelState(key string) tui.CanvasTreePanelState {
+	return p.canvasTreeStates[strings.TrimSpace(key)]
+}
+
 func (p *Prompter) RestoreCanvasReviewState(key string, state tui.BlastRunSelectionState) {
 	key = strings.TrimSpace(key)
 	if key == "" {
@@ -140,4 +144,22 @@ func (p *Prompter) RestoreCanvasReviewState(key string, state tui.BlastRunSelect
 		return
 	}
 	delete(p.blastRunStates, key)
+}
+
+func (p *Prompter) RestoreCanvasTreePanelState(key string, state tui.CanvasTreePanelState) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return
+	}
+	if state.AlignmentParams == nil {
+		state.AlignmentParams = map[string]string{}
+	}
+	if state.TreeParams == nil {
+		state.TreeParams = map[string]string{}
+	}
+	if state.EnabledEver || state.Expanded || state.Focused || state.CurrentControl != 0 || strings.TrimSpace(state.DisplayNameSource) != "" || strings.TrimSpace(state.ConversionTarget) != "" || strings.TrimSpace(state.ConversionAction) != "" || state.ConversionSkipUnselect || strings.TrimSpace(state.AlignmentMethod) != "" || strings.TrimSpace(state.TreeMethod) != "" || len(state.AlignmentParams) > 0 || len(state.TreeParams) > 0 {
+		p.canvasTreeStates[key] = state
+		return
+	}
+	delete(p.canvasTreeStates, key)
 }

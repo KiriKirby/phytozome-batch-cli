@@ -10,11 +10,14 @@ package prompt
 import (
 	"fmt"
 	"io"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/KiriKirby/phytozome-go/internal/model"
+	"github.com/KiriKirby/phytozome-go/internal/phylo"
+	"github.com/KiriKirby/phytozome-go/internal/tui"
 )
 
 func TestIdentityRowOrder(t *testing.T) {
@@ -118,14 +121,14 @@ func TestBuildCanvasSelectionTableForFastaUsesFixedCanvasColumns(t *testing.T) {
 	for _, column := range columns {
 		gotIDs = append(gotIDs, column.ID)
 	}
-	wantIDs := []string{"source_type", "head", "species", "label_name", "gene_id", "source_label_name", "source_gene_id", "source_row"}
+	wantIDs := []string{"source_type", "head", "species", "label_name", "gene_id", "source_label_name", "source_gene_id", "display_name"}
 	if strings.Join(gotIDs, "|") != strings.Join(wantIDs, "|") {
 		t.Fatalf("canvas FASTA columns = %#v, want %v", gotIDs, wantIDs)
 	}
 	if len(rows) != 1 || len(rows[0].Cells) != len(wantIDs) {
 		t.Fatalf("canvas FASTA rows = %#v, want one fixed-column row", rows)
 	}
-	if rows[0].Cells[1] != "seq1 some header" || rows[0].Cells[2] != "Athaliana" || rows[0].Cells[3] != "PAL1" || rows[0].Cells[4] != "" || rows[0].Cells[5] != "" || rows[0].Cells[6] != "" || rows[0].Cells[7] != "" {
+	if rows[0].Cells[1] != "seq1 some header" || rows[0].Cells[2] != "Athaliana" || rows[0].Cells[3] != "PAL1" || rows[0].Cells[4] != "" || rows[0].Cells[5] != "" || rows[0].Cells[6] != "" || rows[0].Cells[7] != "PAL1" {
 		t.Fatalf("canvas FASTA row cells = %#v", rows[0].Cells)
 	}
 	if !rows[0].SelectableSet || !rows[0].Selectable {
@@ -156,9 +159,203 @@ func TestBuildCanvasSelectionTableForPhgoFastaKeepsHeadAndMetadata(t *testing.T)
 	if len(rows) != 1 {
 		t.Fatalf("canvas rows = %#v", rows)
 	}
-	want := []string{"fasta", "phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\7", "Sp7498", "C4H", "Sp7498_C4H_001", "PAL1", "AT2G37040", "7"}
+	want := []string{"fasta", "phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\7", "Sp7498", "C4H", "Sp7498_C4H_001", "PAL1", "AT2G37040", "C4H"}
 	if strings.Join(rows[0].Cells, "|") != strings.Join(want, "|") {
 		t.Fatalf("phgo canvas cells = %#v, want %#v", rows[0].Cells, want)
+	}
+}
+
+func TestCanvasItemRowNumbersPreservesNegativeValues(t *testing.T) {
+	item := model.CanvasItem{
+		Rows: []model.CanvasRow{
+			{RowNumber: -2},
+			{RowNumber: -1},
+			{RowNumber: 1},
+			{RowNumber: 2},
+		},
+	}
+	got := canvasItemRowNumbers(item)
+	want := []int{-2, -1, 1, 2}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("canvasItemRowNumbers = %#v, want %#v", got, want)
+	}
+}
+
+func TestCanvasDisplayNameSourceExcludesDisplayNameAndRemovedSourceRow(t *testing.T) {
+	item := model.CanvasItem{
+		Kind: model.CanvasKindFasta,
+		Rows: []model.CanvasRow{{
+			Kind: model.CanvasKindFasta,
+			FASTA: &model.QuerySequenceSource{
+				Annotation:    "seq1 some header",
+				Sequence:      "MPEPTIDE",
+				LabelName:     "PAL1",
+				GeneID:        "AT2G37040",
+				OrganismShort: "Athaliana",
+			},
+		}},
+	}
+	columns, _ := buildCanvasSelectionTable(item)
+	got := canvasDisplayNameSourceColumnIDs(columns)
+	if slices.Contains(got, "display_name") || slices.Contains(got, "source_row") {
+		t.Fatalf("display-name source choices include forbidden columns: %v", got)
+	}
+	if !slices.Contains(got, "label_name") {
+		t.Fatalf("display-name source choices should include label_name: %v", got)
+	}
+}
+
+func TestApplyCanvasDisplayNameSourceFallsBackToOriginalHead(t *testing.T) {
+	item := model.CanvasItem{
+		Title: "fallback",
+		Rows: []model.CanvasRow{
+			{
+				Kind:       model.CanvasKindKeyword,
+				KeywordRow: &model.KeywordResultRow{LabelName: "PAL1", SequenceHeaderLabel: "ATPAL1.1"},
+			},
+			{
+				Kind:  model.CanvasKindFasta,
+				FASTA: &model.QuerySequenceSource{Annotation: ">seq2 original head", Sequence: "MPEPTIDE"},
+			},
+		},
+	}
+	applyCanvasDisplayNameSource(&item, "label_name")
+	if got := item.Rows[0].DisplayName; got != "PAL1" {
+		t.Fatalf("keyword display name = %q, want PAL1", got)
+	}
+	if got := item.Rows[1].DisplayName; got != "seq2 original head" {
+		t.Fatalf("FASTA display name fallback = %q, want original head", got)
+	}
+}
+
+func TestApplyCanvasDisplayNameSourceSkipsLockedRows(t *testing.T) {
+	item := model.CanvasItem{
+		Title: "fallback",
+		Rows: []model.CanvasRow{
+			{
+				Kind:              model.CanvasKindKeyword,
+				DisplayName:       "Locked Name",
+				DisplayNameLocked: true,
+				KeywordRow:        &model.KeywordResultRow{LabelName: "PAL1", SequenceHeaderLabel: "ATPAL1.1"},
+			},
+			{
+				Kind:       model.CanvasKindKeyword,
+				KeywordRow: &model.KeywordResultRow{LabelName: "PAL2", SequenceHeaderLabel: "ATPAL2.1"},
+			},
+		},
+	}
+	applyCanvasDisplayNameSource(&item, "label_name")
+	if got := item.Rows[0].DisplayName; got != "Locked Name" {
+		t.Fatalf("locked display name = %q, want Locked Name", got)
+	}
+	if got := item.Rows[1].DisplayName; got != "PAL2" {
+		t.Fatalf("unlocked display name = %q, want PAL2", got)
+	}
+}
+
+func TestBuildCanvasTreePanelFiltersCodonMethodsByConversionTarget(t *testing.T) {
+	proteinItem := model.CanvasItem{
+		Title:    "protein",
+		Kind:     model.CanvasKindFasta,
+		Selected: []bool{true},
+		Rows: []model.CanvasRow{{
+			Kind:  model.CanvasKindFasta,
+			FASTA: &model.QuerySequenceSource{Sequence: "MPEPTIDE"},
+		}},
+	}
+	proteinViewColumns, proteinViewRows := buildCanvasSelectionTable(proteinItem)
+	proteinPanel := buildCanvasTreePanel([]tui.BlastRunItem{{
+		Columns:  proteinViewColumns,
+		Rows:     proteinViewRows,
+		Selected: []bool{true},
+	}}, []model.CanvasItem{proteinItem}, phylo.DefaultTreeSettings(), tui.CanvasTreePanelState{})
+	for _, method := range proteinPanel.AlignmentMethods {
+		if strings.Contains(method.ID, "codons") {
+			t.Fatalf("protein panel should hide codon method: %#v", proteinPanel.AlignmentMethods)
+		}
+	}
+	foundProteinClustal := false
+	foundProteinMuscle := false
+	for _, method := range proteinPanel.AlignmentMethods {
+		if method.ID == "clustalw_protein" {
+			foundProteinClustal = true
+		}
+		if method.ID == "muscle_protein" {
+			foundProteinMuscle = true
+		}
+	}
+	if !foundProteinClustal || !foundProteinMuscle {
+		t.Fatalf("protein panel should expose protein-specific methods: %#v", proteinPanel.AlignmentMethods)
+	}
+	if got := len(proteinPanel.AlignmentMethods); got != 2 {
+		t.Fatalf("protein mode alignment method count = %d, want 2: %#v", got, proteinPanel.AlignmentMethods)
+	}
+
+	nucleotideItem := model.CanvasItem{
+		Title:    "nucleotide",
+		Kind:     model.CanvasKindFasta,
+		Selected: []bool{true},
+		Rows: []model.CanvasRow{{
+			Kind:  model.CanvasKindFasta,
+			FASTA: &model.QuerySequenceSource{Sequence: "ATGGCCATGGCC"},
+		}},
+	}
+	nucViewColumns, nucViewRows := buildCanvasSelectionTable(nucleotideItem)
+	nucleotidePanel := buildCanvasTreePanel([]tui.BlastRunItem{{
+		Columns:  nucViewColumns,
+		Rows:     nucViewRows,
+		Selected: []bool{true},
+	}}, []model.CanvasItem{nucleotideItem}, phylo.DefaultTreeSettings(), tui.CanvasTreePanelState{})
+	for _, method := range nucleotidePanel.AlignmentMethods {
+		if strings.Contains(method.ID, "codons") {
+			t.Fatalf("default protein conversion target should hide codon method: %#v", nucleotidePanel.AlignmentMethods)
+		}
+	}
+
+	dnaPanel := buildCanvasTreePanel([]tui.BlastRunItem{{
+		Columns:  nucViewColumns,
+		Rows:     nucViewRows,
+		Selected: []bool{true},
+	}}, []model.CanvasItem{nucleotideItem}, phylo.DefaultTreeSettings(), tui.CanvasTreePanelState{ConversionTarget: string(phylo.ConversionTargetDNA), ConversionAction: string(phylo.ConversionActionConvert)})
+	hasCodon := false
+	hasNucleotideClustal := false
+	hasNucleotideMuscle := false
+	for _, method := range dnaPanel.AlignmentMethods {
+		if strings.Contains(method.ID, "codons") {
+			hasCodon = true
+		}
+		if method.ID == "clustalw" {
+			hasNucleotideClustal = true
+		}
+		if method.ID == "muscle" {
+			hasNucleotideMuscle = true
+		}
+	}
+	if !hasCodon {
+		t.Fatalf("DNA mode panel should expose codon-capable methods: %#v", dnaPanel.AlignmentMethods)
+	}
+	if !hasNucleotideClustal || !hasNucleotideMuscle {
+		t.Fatalf("DNA mode panel should expose nucleotide-specific methods: %#v", dnaPanel.AlignmentMethods)
+	}
+	if got := len(dnaPanel.AlignmentMethods); got != 4 {
+		t.Fatalf("DNA mode alignment method count = %d, want 4: %#v", got, dnaPanel.AlignmentMethods)
+	}
+}
+
+func TestCanvasRowWithDisplayNameDoesNotChangeLabelName(t *testing.T) {
+	row := model.CanvasRow{
+		Kind:       model.CanvasKindKeyword,
+		KeywordRow: &model.KeywordResultRow{LabelName: "PAL1"},
+	}
+	row = canvasRowWithDisplayName(row, "Tree PAL")
+	if row.DisplayName != "Tree PAL" {
+		t.Fatalf("display name = %q, want Tree PAL", row.DisplayName)
+	}
+	if row.KeywordRow == nil || row.KeywordRow.LabelName != "PAL1" {
+		t.Fatalf("display-name edit should not rewrite label_name: %#v", row.KeywordRow)
+	}
+	if !row.DisplayNameLocked {
+		t.Fatal("manual display-name edit should lock the row")
 	}
 }
 
@@ -198,16 +395,18 @@ func TestCloneCanvasItemsPreservesMetadata(t *testing.T) {
 	ready := false
 	items := []model.CanvasItem{{
 		Title:        "group 1",
-		Subtitle:     "1/1 lines",
+		Subtitle:     "0/1 lines",
 		Kind:         model.CanvasKindKeyword,
 		Selected:     []bool{true},
 		SourceLabel:  "PAL1",
 		ImportedFrom: "snapshot",
 		Rows: []model.CanvasRow{{
-			RowNumber:     9,
-			Kind:          model.CanvasKindKeyword,
-			KeywordRow:    &model.KeywordResultRow{LabelName: "PAL1"},
-			SequenceReady: &ready,
+			RowNumber:         9,
+			Kind:              model.CanvasKindKeyword,
+			DisplayName:       "PAL display",
+			DisplayNameLocked: true,
+			KeywordRow:        &model.KeywordResultRow{LabelName: "PAL1"},
+			SequenceReady:     &ready,
 		}},
 	}}
 	cloned := cloneCanvasItems(items)
@@ -216,6 +415,12 @@ func TestCloneCanvasItemsPreservesMetadata(t *testing.T) {
 	}
 	if len(cloned[0].Rows) != 1 || cloned[0].Rows[0].RowNumber != 9 {
 		t.Fatalf("clone did not preserve row number: %#v", cloned[0].Rows)
+	}
+	if cloned[0].Rows[0].DisplayName != "PAL display" {
+		t.Fatalf("clone did not preserve display name: %#v", cloned[0].Rows[0])
+	}
+	if !cloned[0].Rows[0].DisplayNameLocked {
+		t.Fatalf("clone did not preserve display-name lock: %#v", cloned[0].Rows[0])
 	}
 	if cloned[0].Rows[0].SequenceReady == nil || *cloned[0].Rows[0].SequenceReady {
 		t.Fatalf("clone did not preserve sequence availability: %#v", cloned[0].Rows[0])
@@ -229,6 +434,36 @@ func TestCanvasSelectionStructKeepsSaveFields(t *testing.T) {
 	}
 	if got.SaveBaseName != "canvas1" || !got.WriteSession {
 		t.Fatalf("canvas save fields not preserved: %#v", got)
+	}
+}
+
+func TestCanvasSaveSettingsStructKeepsFastaExportFields(t *testing.T) {
+	got := CanvasSaveSettings{
+		BaseName:        "canvas1",
+		WriteSession:    true,
+		WriteText:       true,
+		FastaHeaderMode: model.FastaHeaderModePhgo,
+		UsePhgoHeader:   true,
+	}
+	if got.BaseName != "canvas1" || !got.WriteSession || !got.WriteText || got.FastaHeaderMode != model.FastaHeaderModePhgo || !got.UsePhgoHeader {
+		t.Fatalf("canvas save settings fields not preserved: %#v", got)
+	}
+}
+
+func TestCanvasDefaultFixedColumnsUseDisplaynameHeader(t *testing.T) {
+	columns := canvasDefaultFixedColumns()
+	found := false
+	for _, column := range columns {
+		if column.ID != "display_name" {
+			continue
+		}
+		found = true
+		if column.Header != "displayname" {
+			t.Fatalf("display_name header = %q, want displayname", column.Header)
+		}
+	}
+	if !found {
+		t.Fatal("display_name column missing from canvas defaults")
 	}
 }
 

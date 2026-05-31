@@ -134,6 +134,7 @@ type QuerySequenceSource struct {
 	BlastSourceGeneID    string
 	PhgoRowNumber        int
 	PhgoHasRowNumber     bool
+	PhgoBlastQuerySource bool
 }
 
 type CanvasKind string
@@ -145,20 +146,29 @@ const (
 )
 
 type CanvasRow struct {
-	RowNumber     int                  `json:"row_number"`
-	Kind          CanvasKind           `json:"kind"`
-	KeywordRow    *KeywordResultRow    `json:"keyword_row,omitempty"`
-	BlastRow      *BlastResultRow      `json:"blast_row,omitempty"`
-	FASTA         *QuerySequenceSource `json:"fasta,omitempty"`
-	SequenceReady *bool                `json:"sequence_ready,omitempty"`
+	RowNumber         int                  `json:"row_number"`
+	Kind              CanvasKind           `json:"kind"`
+	DisplayName       string               `json:"display_name,omitempty"`
+	DisplayNameLocked bool                 `json:"display_name_locked,omitempty"`
+	KeywordRow        *KeywordResultRow    `json:"keyword_row,omitempty"`
+	BlastRow          *BlastResultRow      `json:"blast_row,omitempty"`
+	FASTA             *QuerySequenceSource `json:"fasta,omitempty"`
+	SequenceData      *ProteinSequenceData `json:"sequence_data,omitempty"`
+	SequenceReady     *bool                `json:"sequence_ready,omitempty"`
+}
+
+type CanvasColumn struct {
+	ID     string `json:"id"`
+	Header string `json:"header"`
 }
 
 type CanvasItem struct {
-	Title        string      `json:"title"`
-	Subtitle     string      `json:"subtitle"`
-	Kind         CanvasKind  `json:"kind"`
-	Rows         []CanvasRow `json:"rows"`
-	Selected     []bool      `json:"selected,omitempty"`
-	SourceLabel  string      `json:"source_label,omitempty"`
-	ImportedFrom string      `json:"imported_from,omitempty"`
+	Title         string         `json:"title"`
+	Subtitle      string         `json:"subtitle"`
+	Kind          CanvasKind     `json:"kind"`
+	Rows          []CanvasRow    `json:"rows"`
+	Selected      []bool         `json:"selected,omitempty"`
+	SourceLabel   string         `json:"source_label,omitempty"`
+	ImportedFrom  string         `json:"imported_from,omitempty"`
+	ActiveColumns []CanvasColumn `json:"active_columns,omitempty"`
 }
