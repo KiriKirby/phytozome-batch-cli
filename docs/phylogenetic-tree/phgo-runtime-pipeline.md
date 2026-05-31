@@ -44,11 +44,11 @@ The executable must come from the application-local folder:
 <application-dir>/mega-phgo-runtime/mega-phgo-runtime(.exe)
 ```
 
-PHgo does not search `PATH`, does not use `C:\Program Files\MEGA12`, does not use `C:\Program Files\MEGA12cc`, and does not reuse any other installed MEGA runtime. The folder itself is the installation contract. When it is missing, expanding the Canvas tree tool panel or refreshing the tree prompts to download the exact PHgo runtime asset configured in `internal/megaphgo/runtime-release.json`, then extracts it directly into the application-local `mega-phgo-runtime` folder.
+PHgo does not search `PATH`, does not use `C:\Program Files\MEGA12`, does not use `C:\Program Files\MEGA12cc`, and does not reuse any other installed MEGA runtime. The folder itself is the installation contract. Windows `amd64` release bundles must already contain the exact `mega-phgo-runtime` folder at the application root. If that bundled folder is missing or invalid, the package is incomplete or corrupted and the user should reinstall the full bundle instead of downloading runtime pieces separately.
 
-Managed PHgo runtime packages are currently published only for Windows amd64. Linux and macOS builds are not published yet, so those platforms should report the managed runtime package as unsupported instead of attempting to download a non-existent asset.
+Managed PHgo runtime support currently exists only in the bundled Windows `amd64` release. Linux and macOS builds do not ship the runtime yet, so those platforms should report system-tree unsupported instead of attempting any runtime download.
 
-Runtime freshness is not tracked by a marker file inside `mega-phgo-runtime`. The source-controlled manifest's release tag, exact asset filename, and resulting download URL are the version contract. A local folder is accepted only after the PHgo probe and runtime-owned MUSCLE checks pass; when the runtime changes, the manifest tag/filename changes and the installer downloads that new asset. Do not add a separate release marker or version sentinel.
+Runtime freshness is not tracked by a marker file inside `mega-phgo-runtime`. The bundled folder is accepted only after the PHgo probe and runtime-owned MUSCLE checks pass. Do not add a separate release marker or version sentinel.
 
 The runtime folder must also contain the runtime-owned MUSCLE binary used by `mega-phgo-runtime`:
 
@@ -61,10 +61,10 @@ macOS:   mega-phgo-runtime/muscledarwin64
 Current packaging status:
 
 - Windows runtime is built and verified from the MEGA 12.1 PHgo runtime project.
-- Linux and macOS runtime packages are intentionally not built or published for current releases.
-- On Linux and macOS, managed runtime install must directly report unsupported instead of searching for placeholders or attempting a package download.
+- Linux and macOS runtime packages are intentionally not bundled for current releases.
+- On Linux and macOS, runtime checks must directly report unsupported instead of searching for placeholders or attempting a package download.
 - Do not fill Linux/macOS runtime folders with MUSCLE-only files, MEGA-CC binaries, installed MEGA files, renamed placeholders, or partial archives.
-- `scripts/package-mega-phgo-runtime.ps1` packages the Windows runtime when present. Linux/macOS runtime packaging is reserved for a future explicit support decision and must remain out of the normal release path.
+- Windows release packaging copies `assets/mega-phgo-runtime/windows-amd64/runtime/` into the bundle root as `mega-phgo-runtime/`.
 - If future Linux/macOS runtime support is intentionally re-enabled, those runtime release folders must contain real `mega-phgo-runtime` executables built on matching platforms or with a configured Lazarus/FPC cross toolchain, plus the runtime-owned MUSCLE binary, and they must pass the same probe checks before packaging.
 - For current local verification and release packaging, pass `-Platform windows-amd64`.
 
@@ -72,7 +72,7 @@ These files are bundled as part of the PHgo runtime package. The runtime never s
 
 Expanding the Canvas tree panel and refreshing a tree both run the same strict availability check: the application-local executable must exist, must respond to `--phgo-runtime-probe` with the PHgo runtime token, and the runtime-owned MUSCLE binary must exist in the same folder. A same-named installed MEGA/MEGA-CC binary, renamed placeholder, nested executable, or `PATH` executable is not accepted.
 
-Runtime release downloads deliberately use no HTTP timeout, matching the BLAST+ installer behavior, because users may be on very slow networks. The local runtime probe is not a download; it only verifies that the executable responds to `--phgo-runtime-probe`, and it allows up to 60 seconds to avoid false failures from slow disks or antivirus scanning.
+The local runtime probe is not a download; it only verifies that the executable responds to `--phgo-runtime-probe`, and it allows up to 60 seconds to avoid false failures from slow disks or antivirus scanning.
 
 The runtime reads the request, performs alignment and tree inference, and writes:
 
@@ -234,7 +234,7 @@ Implemented Canvas refresh progress uses the existing cancellable TUI task modal
 - 5/6 preparing/updating Reactree metadata and payload
 - 6/6 Reactree viewer updated
 
-The same progress context is passed into the runtime installation/download path and runtime execution path, so cancellation can stop before or during long-running work.
+The same progress context is passed into the runtime validation path and runtime execution path, so cancellation can stop before or during long-running work.
 
 ## Error Handling
 

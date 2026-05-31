@@ -108,7 +108,7 @@ func TestRunPlanWithRuntimeDefaultsToMegaPHGORuntimeStub(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected source runtime stub error")
 	}
-	if !strings.Contains(err.Error(), "application-local mega-phgo-runtime folder") {
+	if !strings.Contains(err.Error(), "mega-phgo-runtime folder") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if result.ArtifactDir == "" {

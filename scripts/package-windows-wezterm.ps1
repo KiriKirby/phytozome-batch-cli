@@ -21,15 +21,19 @@ $preparedDir = Get-PreparedWindowsWezTermDir $repoRoot $release.Tag
 $bundleDir = Join-Path $repoRoot "bin\phytozome-go_windows_amd64_wezterm"
 $appPath = Join-Path $bundleDir "phytozome-go.bin"
 $zipPath = Join-Path $repoRoot "bin\phytozome-go_windows_amd64_wezterm.zip"
+$runtimeSourceDir = Join-Path $repoRoot "assets\mega-phgo-runtime\windows-amd64\runtime"
+$runtimeBundleDir = Join-Path $bundleDir "mega-phgo-runtime"
 
 if ($Prepare -or -not (Test-Path -LiteralPath (Join-Path $preparedDir "wezterm.bin") -PathType Leaf) -or -not (Test-Path -LiteralPath (Join-Path $preparedDir "phytozome-go.exe") -PathType Leaf)) {
     & (Join-Path $PSScriptRoot "prepare-windows-wezterm.ps1") -Version $release.Tag
 }
+& (Join-Path $PSScriptRoot "prepare-mega-phgo-runtime.ps1")
 
 Remove-Item -LiteralPath $bundleDir -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $bundleDir | Out-Null
 
 Copy-Item -Path (Join-Path $preparedDir "*") -Destination $bundleDir -Recurse -Force
+Copy-Item -LiteralPath $runtimeSourceDir -Destination $runtimeBundleDir -Recurse -Force
 Write-PhytozomeWezTermConfig -Path (Join-Path $bundleDir "wezterm.lua") -Version $BuildVersion
 Remove-Item -LiteralPath (Join-Path $bundleDir "phytozome-go-window-icon.png") -Force -ErrorAction SilentlyContinue
 & (Join-Path $PSScriptRoot "update-windows-icon.ps1") -Source "docs\logo2.png"

@@ -57,14 +57,14 @@ func (e *MissingToolsError) Error() string {
 	}
 	if len(e.Tools) == 0 {
 		if dir == "" {
-			return "PHgo tree runtime is missing; the application-local mega-phgo-runtime folder is required"
+			return "PHgo tree runtime is missing; this Windows release requires the bundled application-local mega-phgo-runtime folder"
 		}
-		return fmt.Sprintf("PHgo tree runtime is missing; expected the application-local mega-phgo-runtime folder at %s", dir)
+		return fmt.Sprintf("PHgo tree runtime is missing; expected the bundled application-local mega-phgo-runtime folder at %s", dir)
 	}
 	if dir == "" {
-		return fmt.Sprintf("%s not found; PHgo tree runtime must be installed in the application-local mega-phgo-runtime folder", strings.Join(e.Tools, ", "))
+		return fmt.Sprintf("%s not found; re-extract or reinstall the Windows bundle so the bundled mega-phgo-runtime folder is restored", strings.Join(e.Tools, ", "))
 	}
-	return fmt.Sprintf("%s not found in %s; PHgo tree runtime must be installed in the application-local mega-phgo-runtime folder", strings.Join(e.Tools, ", "), dir)
+	return fmt.Sprintf("%s not found in %s; re-extract or reinstall the Windows bundle so the bundled mega-phgo-runtime folder is restored", strings.Join(e.Tools, ", "), dir)
 }
 
 func IsMissingToolsError(err error) bool {
@@ -84,7 +84,17 @@ func ToolsDir() (string, error) {
 	return filepath.Join(base, "mega-phgo-runtime"), nil
 }
 
+func bundledRuntimeSupportError() error {
+	if runtime.GOOS == "windows" && runtime.GOARCH == "amd64" {
+		return nil
+	}
+	return fmt.Errorf("PHgo system-tree is currently supported only in the Windows amd64 release because mega-phgo-runtime is bundled only there; %s/%s is not supported", runtime.GOOS, runtime.GOARCH)
+}
+
 func EnsureRuntimeAvailable(required ...string) error {
+	if err := bundledRuntimeSupportError(); err != nil {
+		return err
+	}
 	if len(required) == 0 {
 		toolsDir, err := ToolsDir()
 		if err != nil {
@@ -125,6 +135,9 @@ func EnsureRuntimeAvailable(required ...string) error {
 }
 
 func ManagedExecutable() (string, bool, error) {
+	if err := bundledRuntimeSupportError(); err != nil {
+		return "", false, err
+	}
 	toolsDir, err := ToolsDir()
 	if err != nil {
 		return "", false, err
@@ -165,48 +178,15 @@ func probeExecutable(path string) error {
 }
 
 func InstallManaged(ctx context.Context, httpClient *http.Client) (string, error) {
-	if httpClient == nil {
-		httpClient = defaultHTTPClient()
+	if err := bundledRuntimeSupportError(); err != nil {
+		return "", err
 	}
 	toolsDir, err := ToolsDir()
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(toolsDir, 0o755); err != nil {
-		return "", fmt.Errorf("create PHgo tree runtime dir: %w", err)
-	}
-	if exe, found, err := ManagedExecutable(); err == nil && found {
-		return filepath.Dir(exe), nil
-	} else if err != nil {
-		return "", err
-	}
-	asset, err := ResolveDownload()
-	if err != nil {
-		return "", err
-	}
-	archivePath := filepath.Join(toolsDir, sanitizeArchiveName(currentRuntimeReleaseManifest.ReleaseTag+"-"+asset.FileName))
-	if installed, err := installLocalRuntimeDir(ctx, asset.URL, toolsDir); installed {
-		if err != nil {
-			return "", err
-		}
-		if err := EnsureRuntimeAvailable(RuntimeExecutable, MuscleExecutable); err != nil {
-			return "", err
-		}
-		exe, found, err := ManagedExecutable()
-		if err != nil {
-			return "", err
-		}
-		if !found {
-			return "", &MissingToolsError{Tools: []string{RuntimeExecutable, MuscleExecutable}, RuntimeDir: toolsDir}
-		}
-		return filepath.Dir(exe), nil
-	}
-	if err := downloadArchive(ctx, httpClient, asset.URL, archivePath); err != nil {
-		return "", err
-	}
-	if err := extractArchive(ctx, archivePath, toolsDir); err != nil {
-		return "", err
-	}
+	_ = ctx
+	_ = httpClient
 	if err := EnsureRuntimeAvailable(RuntimeExecutable, MuscleExecutable); err != nil {
 		return "", err
 	}

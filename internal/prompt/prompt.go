@@ -6812,16 +6812,16 @@ func (p *Prompter) BlastPlusInstallAction(description string) (string, error) {
 
 // TreeRuntimeInstallAction prompts the user when the phylogenetic tree tools need the app-local PHgo runtime folder.
 // It returns:
-//   - "install" : download and populate the app-local mega-phgo-runtime folder
+//   - "install" : recheck the bundled app-local mega-phgo-runtime folder after the user fixes the package
 func (p *Prompter) TreeRuntimeInstallAction(description string) (string, error) {
 	result, err := tui.RunActionModalPage(tui.ActionModalPage{
 		Path:    p.tuiPath("Startup", "Canvas", "Tree tools"),
 		Title:   p.t("PHgo runtime required"),
-		Message: "The PHgo tree runtime is required for phylogenetic tree alignment and tree inference.\n\n" + strings.TrimSpace(description) + "\n\nDownload and populate the application-local mega-phgo-runtime folder now, then continue opening the tree tools?",
+		Message: "The PHgo tree runtime is required for phylogenetic tree alignment and tree inference.\n\n" + strings.TrimSpace(description) + "\n\nAfter you restore the bundled application-local mega-phgo-runtime folder, continue opening the tree tools?",
 		Actions: []tui.Action{
 			{Value: "close", Label: tui.ButtonClose},
 		},
-		ConfirmText:  tui.ButtonInstall,
+		ConfirmText:  "Retry",
 		ConfirmValue: "install",
 	})
 	if err != nil {

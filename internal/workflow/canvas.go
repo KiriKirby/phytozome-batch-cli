@@ -317,47 +317,7 @@ func (w *BlastWizard) ensureCanvasTreeRuntimeInteractive(ctx context.Context) er
 	if w.ensureCanvasTreeRuntime != nil {
 		return w.ensureCanvasTreeRuntime(ctx)
 	}
-	if err := megaphgo.EnsureRuntimeAvailable(); err == nil {
-		return nil
-	} else if !megaphgo.IsMissingToolsError(err) {
-		return err
-	} else {
-		action, actionErr := w.prompt.TreeRuntimeInstallAction(err.Error())
-		if actionErr != nil {
-			if errors.Is(actionErr, prompt.ErrDialogClosed) {
-				return err
-			}
-			return actionErr
-		}
-		if action != "install" {
-			return err
-		}
-		if w.suppressTaskModals {
-			if _, _, installErr := installTreeRuntimeManaged(ctx); installErr != nil {
-				return installErr
-			}
-		} else if _, installErr := tui.RunProgressTaskValueContext(tui.TaskPage{
-			Path:        w.tuiPath("Startup", "Explore", "Canvas", "Tree tools", "Install runtime"),
-			Title:       "Installing PHgo tree runtime",
-			Description: "Downloading and extracting the app-local mega-phgo-runtime package. Slow networks are expected; the download does not use a timeout.",
-			Initial:     "Preparing PHgo tree runtime install...",
-			Total:       100,
-			CancelError: prompt.ErrBackToRowSelection,
-		}, func(taskCtx context.Context, update func(current int, message string)) (string, error) {
-			progress := safeProgress(update)
-			progress(0, "Resolving PHgo tree runtime package...")
-			progressCtx := progressctx.WithProgress(mergeContexts(ctx, taskCtx), progress)
-			binDir, _, err := installTreeRuntimeManaged(progressCtx)
-			if err != nil {
-				return "", err
-			}
-			progress(100, "PHgo tree runtime installed.")
-			return binDir, nil
-		}); installErr != nil {
-			return installErr
-		}
-		return megaphgo.EnsureRuntimeAvailable()
-	}
+	return megaphgo.EnsureRuntimeAvailable()
 }
 
 func (w *BlastWizard) refreshCanvasTree(ctx context.Context, state canvasLaunchState, settings phylo.TreeSettings) error {

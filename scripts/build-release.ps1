@@ -48,37 +48,15 @@ function Restore-EnvValue {
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent $scriptDir
-. (Join-Path $scriptDir "mega-phgo-runtime-release.ps1")
 $binDir = Join-Path $repoRoot "bin"
 $zipPath = Join-Path $binDir "phytozome-go_windows_amd64_wezterm.zip"
 $linuxArchivePath = Join-Path $binDir "phytozome-go_linux_amd64_wezterm.tar.gz"
 $macIntelArchivePath = Join-Path $binDir "phytozome-go_macos_amd64_wezterm.tar.gz"
 $macArmArchivePath = Join-Path $binDir "phytozome-go_macos_arm64_wezterm.tar.gz"
-$megaPHGORuntimeRoot = Join-Path $repoRoot "assets\mega-phgo-runtime"
-$megaPHGOWindowsRuntime = Join-Path $megaPHGORuntimeRoot "windows-amd64\runtime"
-$megaPHGOLinuxRuntime = Join-Path $megaPHGORuntimeRoot "linux-amd64\runtime"
-$megaPHGOMacRuntime = Join-Path $megaPHGORuntimeRoot "macos-amd64\runtime"
-$megaPHGORuntimeManifest = Get-MegaPHGORuntimeReleaseManifest -RepoRoot $repoRoot
-
-function Get-OptionalMegaPHGORuntimeArchivePath {
-    param(
-        [string]$Platform
-    )
-
-    $assetName = $megaPHGORuntimeManifest.assets.$Platform
-    if ([string]::IsNullOrWhiteSpace($assetName)) {
-        return ""
-    }
-    return Join-Path $binDir ([string]$assetName)
-}
 
 if ([string]::IsNullOrWhiteSpace($BuildVersion)) {
     $BuildVersion = "v" + (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
 }
-
-$megaPHGOWindowsArchivePath = Get-OptionalMegaPHGORuntimeArchivePath -Platform "windows-amd64"
-$megaPHGOLinuxArchivePath = Get-OptionalMegaPHGORuntimeArchivePath -Platform "linux-amd64"
-$megaPHGOMacArchivePath = Get-OptionalMegaPHGORuntimeArchivePath -Platform "macos-amd64"
 
 Push-Location $repoRoot
 try {
@@ -118,15 +96,9 @@ try {
     Invoke-Checked "macOS Apple Silicon WezTerm package" {
         powershell -NoProfile -ExecutionPolicy Bypass -File scripts\package-macos-wezterm.ps1 -Version $WezTermVersion -BuildVersion $BuildVersion -GOARCH arm64
     }
-    Invoke-Checked "mega-phgo-runtime preparation" {
-        powershell -NoProfile -ExecutionPolicy Bypass -File scripts\prepare-mega-phgo-runtime.ps1
-    }
-    Invoke-Checked "mega-phgo-runtime assets" {
-        powershell -NoProfile -ExecutionPolicy Bypass -File scripts\package-mega-phgo-runtime.ps1
-    }
 
     $entries = @(tar -tf $zipPath)
-    foreach ($required in @("phytozome-go.exe", "phytozome-go.bin", "phytozome-go-cleancache.bin", "wezterm.bin", "wezterm-cli.bin", "wezterm.lua")) {
+    foreach ($required in @("phytozome-go.exe", "phytozome-go.bin", "phytozome-go-cleancache.bin", "wezterm.bin", "wezterm-cli.bin", "wezterm.lua", "mega-phgo-runtime/mega-phgo-runtime.exe", "mega-phgo-runtime/muscleWin64.exe")) {
         if (-not ($entries -contains $required)) {
             throw "Windows zip is missing required file: $required"
         }
@@ -202,12 +174,6 @@ try {
         "bin\phytozome-go_macos_amd64_wezterm.tar.gz",
         "bin\phytozome-go_macos_arm64_wezterm.tar.gz"
     )
-    $runtimeAssets = @($megaPHGOWindowsArchivePath, $megaPHGOLinuxArchivePath, $megaPHGOMacArchivePath) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-    foreach ($runtimeAsset in $runtimeAssets) {
-        if (Test-Path -LiteralPath $runtimeAsset -PathType Leaf) {
-            $assets += $runtimeAsset
-        }
-    }
     $hashLines = foreach ($asset in $assets) {
         $item = Get-Item -LiteralPath $asset
         $hash = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -243,12 +209,6 @@ try {
             $ReleaseTitle = "phytozome GO $BuildVersion"
         }
         if ([string]::IsNullOrWhiteSpace($ReleaseNotes)) {
-            $runtimeReleaseAssets = @()
-            foreach ($runtimeAsset in $runtimeAssets) {
-                if (Test-Path -LiteralPath $runtimeAsset -PathType Leaf) {
-                    $runtimeReleaseAssets += [System.IO.Path]::GetFileName($runtimeAsset)
-                }
-            }
             $ReleaseNotes = @"
 Release $BuildVersion
 
@@ -265,9 +225,6 @@ Assets:
 - phytozome-go_macos_arm64_wezterm.tar.gz
 - SHA256SUMS.txt
 "@
-            if ($runtimeReleaseAssets.Count -gt 0) {
-                $ReleaseNotes += (($runtimeReleaseAssets | ForEach-Object { "- $_" }) -join [Environment]::NewLine) + [Environment]::NewLine
-            }
         }
 
         Invoke-Checked "GitHub release $BuildVersion" {
@@ -278,11 +235,6 @@ Assets:
                 "bin\phytozome-go_macos_arm64_wezterm.tar.gz",
                 "bin\SHA256SUMS.txt"
             )
-            foreach ($runtimeAsset in $runtimeAssets) {
-                if (Test-Path -LiteralPath $runtimeAsset -PathType Leaf) {
-                    $releaseAssets += $runtimeAsset
-                }
-            }
             gh release create $BuildVersion `
                 @releaseAssets `
                 --title $ReleaseTitle `

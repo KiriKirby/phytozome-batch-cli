@@ -71,7 +71,7 @@ macOS Apple Silicon:
 Open `phytozome GO.app` from `phytozome-go_macos_arm64_wezterm.tar.gz`
 ```
 
-All release bundles now ship with a bundled `WezTerm` runtime. Opening the packaged app starts a short cache-clean startup CLI in the first tab, then that cleaner opens the wizard in a fresh tab in the same window and exits. That startup preflight only clears `.cache/`. If it installs a newer release, it preserves `output/` and replaces the rest of the bundle so managed tool folders such as `blastplus/` and `mega-phgo-runtime/` are recreated by the new version when needed. New tabs opened from inside `WezTerm` launch the wizard directly without running the cache cleaner again. You do not need to pass subcommands.
+All release bundles now ship with a bundled `WezTerm` runtime. The Windows `amd64` bundle also ships with a bundled `mega-phgo-runtime` folder at the app root, so Canvas system-tree analysis works without any extra runtime download step. Linux and macOS releases do not bundle `mega-phgo-runtime` yet, and system-tree on those platforms reports unsupported. Opening the packaged app starts a short cache-clean startup CLI in the first tab, then that cleaner opens the wizard in a fresh tab in the same window and exits. That startup preflight only clears `.cache/`. If it installs a newer release, it preserves `output/` and replaces the rest of the bundle so bundled folders such as `mega-phgo-runtime/` and managed folders such as `blastplus/` are refreshed by the new version. New tabs opened from inside `WezTerm` launch the wizard directly without running the cache cleaner again. You do not need to pass subcommands.
 
 ## License
 
@@ -130,9 +130,13 @@ The program keeps all runtime artifacts next to the executable so nothing is sca
   - lemna release caches
   - local BLAST databases and downloaded FASTA
   - Canvas tree runtime artifacts and restored tree snapshot files under `.cache/tree/`
-- `blastplus/` and `mega-phgo-runtime/`
-  - managed tool folders created on demand
-  - not preserved across self-update; the updated bundle recreates them when needed
+- `blastplus/`
+  - managed BLAST+ tool folder created on demand
+  - not preserved across self-update; the updated bundle recreates it when needed
+- `mega-phgo-runtime/`
+  - bundled directly in the Windows `amd64` release package
+  - required for Canvas system-tree on Windows; if the folder is missing, the bundle was extracted incompletely or modified
+  - Linux and macOS releases currently do not include this folder because system-tree is not yet supported there
 
 If you choose an extra folder name during batch BLAST export, that folder is created inside `output/`.
 
@@ -649,7 +653,7 @@ Current release assets are built for:
 - macOS `amd64` app bundle tarball
 - macOS `arm64` app bundle tarball
 
-The managed PHgo tree runtime package used by Canvas system-tree analysis is currently published only for Windows `amd64`. Linux and macOS tree-runtime install attempts report unsupported instead of downloading or using placeholder runtime packages.
+Canvas system-tree analysis currently works only in the Windows `amd64` release bundle, which ships with `mega-phgo-runtime/` already included. Linux and macOS report the tree runtime as unsupported instead of downloading or using placeholder runtime packages.
 
 The repository keeps release binaries in `bin/` during packaging. GitHub Releases is the canonical download point for end users.
 

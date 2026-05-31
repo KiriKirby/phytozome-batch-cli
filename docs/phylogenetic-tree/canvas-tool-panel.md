@@ -18,7 +18,7 @@ The button belongs with the right-side action buttons. It should sit to the left
 
 Opening the panel must preserve any existing Canvas state. Closing and reopening the panel must preserve all tree settings from the previous expanded state.
 
-Each time the panel is opened, Canvas first verifies the strict application-local `mega-phgo-runtime` folder. If the custom runtime executable or runtime-owned MUSCLE binary is missing, Canvas shows the same managed install flow used by the refresh action: download the PHgo runtime release zip, extract it into `<application-dir>/mega-phgo-runtime`, then re-check the folder. Canvas does not search installed MEGA folders or `PATH`.
+Each time the panel is opened, Canvas first verifies the strict application-local `mega-phgo-runtime` folder. In the supported Windows `amd64` release, that folder must already be bundled at `<application-dir>/mega-phgo-runtime`. If the custom runtime executable or runtime-owned MUSCLE binary is missing, Canvas reports that the bundle is incomplete and does not try to download runtime pieces. Canvas does not search installed MEGA folders or `PATH`.
 
 After the runtime check succeeds, Canvas starts or reuses the tree viewer service and opens the browser page. The viewer page remains empty until the first explicit refresh.
 

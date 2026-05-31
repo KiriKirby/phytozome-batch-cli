@@ -34,7 +34,7 @@ func installBlastPlusManaged(ctx context.Context) (string, bool, error) {
 
 func installTreeRuntimeManaged(ctx context.Context) (string, bool, error) {
 	var binDir string
-	err := phygoboost.RunTaskSpec(ctx, phygoboost.TaskSpec{Level: phygoboost.ExecManaged, Description: "install app-local PHgo tree runtime"}, func(runCtx context.Context) error {
+	err := phygoboost.RunTaskSpec(ctx, phygoboost.TaskSpec{Level: phygoboost.ExecManaged, Description: "validate bundled PHgo tree runtime"}, func(runCtx context.Context) error {
 		var err error
 		binDir, err = megaphgo.InstallManaged(runCtx, phygoboost.HTTPClient())
 		return err

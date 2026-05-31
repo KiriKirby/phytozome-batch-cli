@@ -1,9 +1,7 @@
 package megaphgo
 
 import (
-	"archive/zip"
 	"context"
-	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -11,17 +9,20 @@ import (
 	"testing"
 )
 
-func TestInstallManagedAcceptsLocalRuntimeDirectory(t *testing.T) {
+func TestInstallManagedUsesBundledRuntimeDirectory(t *testing.T) {
+	requireBundledRuntimePlatform(t)
 	t.Cleanup(withTempApplicationDir(t))
-	runtimeDir := t.TempDir()
-	exe := filepath.Join(runtimeDir, executableName(RuntimeExecutable))
+	toolsDir, err := ToolsDir()
+	if err != nil {
+		t.Fatalf("ToolsDir returned error: %v", err)
+	}
+	exe := filepath.Join(toolsDir, executableName(RuntimeExecutable))
 	if err := writeProbeRuntime(exe); err != nil {
 		t.Fatalf("write fake runtime: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(runtimeDir, executableName(MuscleExecutable)), []byte("fake muscle"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(toolsDir, executableName(MuscleExecutable)), []byte("fake muscle"), 0o755); err != nil {
 		t.Fatalf("write fake muscle: %v", err)
 	}
-	t.Setenv(envDownloadURL, runtimeDir)
 	binDir, err := InstallManaged(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("InstallManaged returned error: %v", err)
@@ -29,7 +30,7 @@ func TestInstallManagedAcceptsLocalRuntimeDirectory(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(binDir, executableName(RuntimeExecutable))); err != nil {
 		t.Fatalf("installed runtime missing: %v", err)
 	}
-	toolsDir, err := ToolsDir()
+	toolsDir, err = ToolsDir()
 	if err != nil {
 		t.Fatalf("ToolsDir returned error: %v", err)
 	}
@@ -38,33 +39,19 @@ func TestInstallManagedAcceptsLocalRuntimeDirectory(t *testing.T) {
 	}
 }
 
-func TestInstallManagedAcceptsLocalRuntimeZip(t *testing.T) {
+func TestInstallManagedUnsupportedPlatform(t *testing.T) {
+	if runtime.GOOS == "windows" && runtime.GOARCH == "amd64" {
+		t.Skip("bundled runtime is supported on windows/amd64")
+	}
 	t.Cleanup(withTempApplicationDir(t))
-	archivePath := filepath.Join(t.TempDir(), "phytozome-go_mega-phgo-runtime_test.zip")
-	if err := writeTestZip(archivePath, map[string]string{
-		executableName(RuntimeExecutable): probeRuntimeScript(),
-		executableName(MuscleExecutable):  "fake muscle",
-	}); err != nil {
-		t.Fatalf("write zip: %v", err)
-	}
-	t.Setenv(envDownloadURL, archivePath)
-	binDir, err := InstallManaged(context.Background(), nil)
-	if err != nil {
-		t.Fatalf("InstallManaged returned error: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(binDir, executableName(RuntimeExecutable))); err != nil {
-		t.Fatalf("installed runtime missing: %v", err)
-	}
-	toolsDir, err := ToolsDir()
-	if err != nil {
-		t.Fatalf("ToolsDir returned error: %v", err)
-	}
-	if binDir != toolsDir {
-		t.Fatalf("binDir = %q, want exact tools dir %q", binDir, toolsDir)
+	_, err := InstallManaged(context.Background(), nil)
+	if err == nil || !strings.Contains(err.Error(), "supported only in the Windows amd64 release") {
+		t.Fatalf("InstallManaged error = %v, want unsupported-platform guidance", err)
 	}
 }
 
 func TestManagedExecutableRequiresExactMegaPHGORuntimeFolder(t *testing.T) {
+	requireBundledRuntimePlatform(t)
 	t.Cleanup(withTempApplicationDir(t))
 	toolsDir, err := ToolsDir()
 	if err != nil {
@@ -92,6 +79,7 @@ func TestManagedExecutableRequiresExactMegaPHGORuntimeFolder(t *testing.T) {
 }
 
 func TestManagedExecutableRequiresRuntimeOwnedMuscle(t *testing.T) {
+	requireBundledRuntimePlatform(t)
 	t.Cleanup(withTempApplicationDir(t))
 	toolsDir, err := ToolsDir()
 	if err != nil {
@@ -106,6 +94,7 @@ func TestManagedExecutableRequiresRuntimeOwnedMuscle(t *testing.T) {
 }
 
 func TestEnsureRuntimeAvailableIgnoresPathRuntime(t *testing.T) {
+	requireBundledRuntimePlatform(t)
 	t.Cleanup(withTempApplicationDir(t))
 	pathDir := t.TempDir()
 	if err := writeProbeRuntime(filepath.Join(pathDir, executableName(RuntimeExecutable))); err != nil {
@@ -119,6 +108,7 @@ func TestEnsureRuntimeAvailableIgnoresPathRuntime(t *testing.T) {
 }
 
 func TestEnsureRuntimeAvailableRequiresProbeAndRuntimeOwnedMuscle(t *testing.T) {
+	requireBundledRuntimePlatform(t)
 	t.Cleanup(withTempApplicationDir(t))
 	toolsDir, err := ToolsDir()
 	if err != nil {
@@ -154,6 +144,7 @@ func TestEnsureRuntimeAvailableRequiresProbeAndRuntimeOwnedMuscle(t *testing.T) 
 }
 
 func TestEnsureRuntimeAvailableRequiredListStillRequiresRuntimeOwnedMuscle(t *testing.T) {
+	requireBundledRuntimePlatform(t)
 	t.Cleanup(withTempApplicationDir(t))
 	toolsDir, err := ToolsDir()
 	if err != nil {
@@ -178,6 +169,7 @@ func TestEnsureRuntimeAvailableRequiredListStillRequiresRuntimeOwnedMuscle(t *te
 }
 
 func TestManagedExecutableRejectsRenamedNonPHGORuntime(t *testing.T) {
+	requireBundledRuntimePlatform(t)
 	t.Cleanup(withTempApplicationDir(t))
 	toolsDir, err := ToolsDir()
 	if err != nil {
@@ -202,46 +194,6 @@ func TestExtractArchiveRejectsNativeInstallPackages(t *testing.T) {
 	err = extractArchive(context.Background(), filepath.Join(t.TempDir(), "runtime.pkg"), t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "unsupported PHgo tree runtime archive format") {
 		t.Fatalf("pkg rejection error = %v", err)
-	}
-}
-
-func TestAssetNameForPlatformUsesRuntimeZipNames(t *testing.T) {
-	name, err := assetNameForPlatform()
-	switch runtime.GOOS {
-	case "windows":
-		if err != nil {
-			t.Fatalf("assetNameForPlatform returned error: %v", err)
-		}
-		if name != currentRuntimeReleaseManifest.Assets["windows-amd64"] {
-			t.Fatalf("asset name = %q", name)
-		}
-	default:
-		if err == nil || !strings.Contains(err.Error(), "published only for Windows amd64") {
-			t.Fatalf("assetNameForPlatform error = %v, want Windows-only unsupported-platform error", err)
-		}
-	}
-}
-
-func TestResolveDownloadUsesConfiguredReleaseAssetURL(t *testing.T) {
-	asset, err := ResolveDownload()
-	if runtime.GOOS != "windows" {
-		if err == nil || !strings.Contains(err.Error(), "published only for Windows amd64") {
-			t.Fatalf("ResolveDownload error = %v, want Windows-only unsupported-platform error", err)
-		}
-		return
-	}
-	if err != nil {
-		t.Fatalf("ResolveDownload returned error: %v", err)
-	}
-	if !strings.Contains(asset.URL, "/releases/download/"+currentRuntimeReleaseManifest.ReleaseTag+"/") {
-		t.Fatalf("asset URL = %q, want configured release path", asset.URL)
-	}
-	expectedName, err := assetNameForPlatform()
-	if err != nil {
-		t.Fatalf("assetNameForPlatform returned error: %v", err)
-	}
-	if asset.FileName != expectedName {
-		t.Fatalf("asset file name = %q, want configured runtime archive name %q", asset.FileName, expectedName)
 	}
 }
 
@@ -279,27 +231,6 @@ func withTempApplicationDir(t *testing.T) func() {
 	}
 }
 
-func writeTestZip(path string, files map[string]string) error {
-	out, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	zw := zip.NewWriter(out)
-	for name, body := range files {
-		entry, err := zw.Create(name)
-		if err != nil {
-			_ = zw.Close()
-			return err
-		}
-		if _, err := entry.Write([]byte(body)); err != nil {
-			_ = zw.Close()
-			return err
-		}
-	}
-	return zw.Close()
-}
-
 func writeProbeRuntime(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -314,8 +245,9 @@ func probeRuntimeScript() string {
 	return "#!/bin/sh\nif [ \"$1\" = \"--phgo-runtime-probe\" ]; then echo mega-phgo-runtime probe ok; exit 0; fi\nexit 1\n"
 }
 
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
-	return f(req)
+func requireBundledRuntimePlatform(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "windows" || runtime.GOARCH != "amd64" {
+		t.Skip("bundled PHgo runtime is supported only on windows/amd64")
+	}
 }

@@ -42,9 +42,9 @@ The current implementation has the main system-tree loop wired end to end:
 
 - Add `mega-phgo-runtime` executable and runtime-owned MUSCLE validation against the application-local `mega-phgo-runtime` folder only.
 - Do not search `PATH` and do not use already installed MEGA/MEGA-CC folders.
-- Add PHgo release asset download/extract installation into the application-local `mega-phgo-runtime` folder, with the exact GitHub release tag and per-platform asset names driven by the source-controlled manifest `internal/megaphgo/runtime-release.json`.
-- Treat the manifest release tag plus exact asset filename/download URL as the only runtime version contract. Do not add runtime marker files or marker-based freshness checks.
-- Keep current managed runtime packaging Windows amd64 only. Linux/macOS must report unsupported until real PHgo runtime builds are explicitly reintroduced.
+- Bundle the full Windows `amd64` `mega-phgo-runtime` folder directly inside the release package root and validate it in place at runtime.
+- Do not add runtime marker files or marker-based freshness checks.
+- Keep current bundled runtime support Windows amd64 only. Linux/macOS must report unsupported until real PHgo runtime builds are explicitly reintroduced.
 - Add runtime parameter registry for alignment and tree settings.
 - Generate `runtime-request.json` from the current panel settings.
 - Write stable-ID FASTA and metadata.
