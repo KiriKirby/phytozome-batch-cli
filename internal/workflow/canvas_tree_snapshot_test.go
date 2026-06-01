@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -246,7 +247,7 @@ func TestCloseCanvasTreeViewerStopsCanvasScopedServer(t *testing.T) {
 	t.Fatalf("viewer health still responded after close; lastErr=%v", lastErr)
 }
 
-func TestReuseLastCanvasTreePlanRejectsWrongKindSnapshotAlignment(t *testing.T) {
+func TestReuseLastCanvasTreePlanDoesNotBiologicallyValidateAlignment(t *testing.T) {
 	w := NewBlastWizard(nil)
 	now := time.Now()
 	settings := phylo.DefaultTreeSettings()
@@ -269,8 +270,11 @@ func TestReuseLastCanvasTreePlanRejectsWrongKindSnapshotAlignment(t *testing.T) 
 	if err != nil {
 		t.Fatalf("reuseLastCanvasTreePlan returned error: %v", err)
 	}
-	if ok {
-		t.Fatalf("stale wrong-kind alignment was reused: %#v", reused)
+	if !ok {
+		t.Fatalf("matching runtime artifacts should be reused without Go-side biological validation")
+	}
+	if !strings.Contains(reused.Plan.AlignedFASTA, "ATGCGTATGCGT") {
+		t.Fatalf("reused alignment was unexpectedly changed: %#v", reused.Plan.AlignedFASTA)
 	}
 }
 
@@ -482,7 +486,7 @@ func TestRestoreCanvasTreeSnapshotRestoresPayloadAndPlan(t *testing.T) {
 	dir := t.TempDir()
 	snapshot := treeSnapshotForTest(dir, now)
 	writeTreeSnapshotRestoreArtifacts(t, dir, snapshot)
-	w.restoreCanvasTreeSnapshot(snapshot)
+	w.restoreCanvasTreeSnapshot(snapshot, false)
 	if w.canvasTreeLastPayload.Newick != "(PHGOT000001);" {
 		t.Fatalf("payload not restored: %#v", w.canvasTreeLastPayload)
 	}
@@ -538,7 +542,7 @@ func TestRestoreCanvasTreeSnapshotBlocksFirstArtifactReuse(t *testing.T) {
 		Fingerprints:     last.Fingerprints,
 	}
 	writeTreeSnapshotRestoreArtifacts(t, dir, snapshot)
-	w.restoreCanvasTreeSnapshot(snapshot)
+	w.restoreCanvasTreeSnapshot(snapshot, false)
 	if !w.canvasTreeForceCompute {
 		t.Fatalf("snapshot restore did not mark the next refresh as full-compute")
 	}
@@ -559,7 +563,7 @@ func TestRestoreCanvasTreeSnapshotBlocksFirstArtifactReuse(t *testing.T) {
 	}
 }
 
-func TestRestoreCanvasTreeSnapshotSuppressesWrongKindPayload(t *testing.T) {
+func TestRestoreCanvasTreeSnapshotDoesNotBiologicallyValidatePayload(t *testing.T) {
 	w := NewBlastWizard(nil)
 	now := time.Now()
 	dir := t.TempDir()
@@ -567,12 +571,12 @@ func TestRestoreCanvasTreeSnapshotSuppressesWrongKindPayload(t *testing.T) {
 	snapshot.LastPayload.AlignedFASTA = ">PHGOT000001\nATGCGTATGCGT\n"
 	snapshot.LastAlignedFASTA = snapshot.LastPayload.AlignedFASTA
 	writeTreeSnapshotRestoreArtifacts(t, dir, snapshot)
-	w.restoreCanvasTreeSnapshot(snapshot)
-	if strings.TrimSpace(w.canvasTreeLastPayload.Newick) != "" {
-		t.Fatalf("wrong-kind snapshot payload should not be restored: %#v", w.canvasTreeLastPayload)
+	w.restoreCanvasTreeSnapshot(snapshot, false)
+	if strings.TrimSpace(w.canvasTreeLastPayload.Newick) != "(PHGOT000001);" {
+		t.Fatalf("snapshot payload should be restored without Go-side biological validation: %#v", w.canvasTreeLastPayload)
 	}
-	if strings.TrimSpace(w.canvasTreeLastPlan.AlignedFASTA) != "" {
-		t.Fatalf("wrong-kind snapshot plan should not be reused: %#v", w.canvasTreeLastPlan)
+	if strings.TrimSpace(w.canvasTreeLastPlan.AlignedFASTA) != ">PHGOT000001\nATGCGTATGCGT" {
+		t.Fatalf("snapshot plan should keep restored runtime alignment unchanged: %#v", w.canvasTreeLastPlan)
 	}
 }
 
@@ -590,7 +594,7 @@ func TestRestoreCanvasTreeSnapshotCanRecoverPayloadFromArtifact(t *testing.T) {
 		t.Fatalf("write viewer payload: %v", err)
 	}
 	snapshot.LastPayload = phylo.ViewerPayload{}
-	w.restoreCanvasTreeSnapshot(snapshot)
+	w.restoreCanvasTreeSnapshot(snapshot, false)
 	if w.canvasTreeLastPayload.Newick != "(PHGOT000001);" || len(w.canvasTreeLastPlan.Records) != 1 {
 		t.Fatalf("payload artifact fallback did not restore tree state: payload=%#v plan=%#v", w.canvasTreeLastPayload, w.canvasTreeLastPlan)
 	}
@@ -608,13 +612,38 @@ func TestRestoreCanvasTreeSnapshotRemapsLegacyOutputTreeDirToCache(t *testing.T)
 	snapshot := treeSnapshotForTest(legacyDir, now)
 	writeTreeSnapshotRestoreArtifacts(t, cacheDir, snapshot)
 
-	w.restoreCanvasTreeSnapshot(snapshot)
+	w.restoreCanvasTreeSnapshot(snapshot, false)
 
 	if !samePath(w.canvasTreeLastPlan.BaseDir, cacheDir) {
 		t.Fatalf("restored BaseDir = %q, want cache dir %q", w.canvasTreeLastPlan.BaseDir, cacheDir)
 	}
 	if _, err := os.Stat(legacyDir); !os.IsNotExist(err) {
 		t.Fatalf("legacy output tree dir should not be required during restore, stat err=%v", err)
+	}
+}
+
+func TestRestoreLegacyCanvasTreeSnapshotResetsTreeParamsToCurrentDefaults(t *testing.T) {
+	w := NewBlastWizard(nil)
+	now := time.Now()
+	dir := t.TempDir()
+	snapshot := treeSnapshotForTest(dir, now)
+	snapshot.PanelState.AlignmentParams = map[string]string{"max_iterations": "8"}
+	snapshot.PanelState.TreeParams = map[string]string{"distance_model": "p-distance"}
+	snapshot.LastManifest.Settings.AlignmentParams = map[string]string{"max_iterations": "8"}
+	snapshot.LastManifest.Settings.TreeParams = map[string]string{"distance_model": "p-distance"}
+	writeTreeSnapshotRestoreArtifacts(t, dir, snapshot)
+
+	w.restoreCanvasTreeSnapshot(snapshot, true)
+
+	if got := w.canvasTreeLastPlan.Settings.AlignmentParams["multiple_gap_opening_penalty"]; got != "10" {
+		t.Fatalf("legacy alignment params should reset to current protein defaults, got multiple_gap_opening_penalty=%q", got)
+	}
+	if got := w.canvasTreeLastPlan.Settings.TreeParams["model_method"]; got != "Poisson model" {
+		t.Fatalf("tree defaults should still be restored from current definition, got model_method=%q", got)
+	}
+	panel := w.prompt.SnapshotCanvasTreePanelState(canvasStateKey("canvas"))
+	if got := panel.AlignmentParams["multiple_gap_opening_penalty"]; got != "10" {
+		t.Fatalf("legacy panel alignment params should reset to current protein defaults, got multiple_gap_opening_penalty=%q", got)
 	}
 }
 
@@ -626,8 +655,8 @@ func TestTreeSettingsFromSnapshotPanelNormalizesEmptyDraftState(t *testing.T) {
 	if settings.AlignmentMethod != phylo.DefaultAlignmentMethod {
 		t.Fatalf("alignment method = %q", settings.AlignmentMethod)
 	}
-	if settings.ConversionTarget != phylo.DefaultConversionTarget || settings.ConversionAction != phylo.DefaultConversionAction || !settings.ConversionSkipUnselect {
-		t.Fatalf("conversion defaults = target %q action %q unselect %v", settings.ConversionTarget, settings.ConversionAction, settings.ConversionSkipUnselect)
+	if settings.ConversionTarget != phylo.DefaultConversionTarget || !settings.ConversionSkipUnselect {
+		t.Fatalf("mode/recovery defaults = target %q unselect %v", settings.ConversionTarget, settings.ConversionSkipUnselect)
 	}
 	if settings.TreeMethod != phylo.DefaultTreeMethod {
 		t.Fatalf("tree method = %q", settings.TreeMethod)
@@ -656,6 +685,13 @@ func TestEnsureCanvasTreeRuntimeInteractiveUsesInjectedChecker(t *testing.T) {
 
 func TestRefreshCanvasTreeReturnsClearErrorWithoutSequenceSource(t *testing.T) {
 	w := NewBlastWizard(nil)
+	w.canvasTreeRefreshRun = func(ctx context.Context, runState canvasLaunchState, settings phylo.TreeSettings) error {
+		selected := selectedCanvasRowsInOrder(runState.Items)
+		if len(selected) != 2 {
+			t.Fatalf("selected rows = %d, want 2", len(selected))
+		}
+		return fmt.Errorf("mega-phgo-runtime: protein sequence source is unavailable")
+	}
 	state := canvasLaunchState{
 		Items: []model.CanvasItem{
 			{
@@ -683,7 +719,7 @@ func TestRefreshCanvasTreeReturnsClearErrorWithoutSequenceSource(t *testing.T) {
 			},
 		},
 	}
-	err := w.refreshCanvasTree(context.Background(), state, phylo.DefaultTreeSettings())
+	err := w.refreshCanvasTreeInteractive(context.Background(), &state, phylo.DefaultTreeSettings())
 	if err == nil {
 		t.Fatal("expected refreshCanvasTree to fail when source is unavailable")
 	}
@@ -808,7 +844,7 @@ func TestCanvasTreeRowSourcesUsesStoredSequenceDataForMultiCanvasSelection(t *te
 	}
 }
 
-func TestCanvasTreeRowSourcesInfersMixedKindFasta(t *testing.T) {
+func TestCanvasTreeRowSourcesDoesNotInferMixedKindFasta(t *testing.T) {
 	w := NewBlastWizard(nil)
 	state := canvasLaunchState{
 		Items: []model.CanvasItem{{
@@ -834,8 +870,8 @@ func TestCanvasTreeRowSourcesInfersMixedKindFasta(t *testing.T) {
 	if len(sources) != 1 {
 		t.Fatalf("row source count = %d, want 1", len(sources))
 	}
-	if sources[0].SequenceKind != phylo.SequenceProtein {
-		t.Fatalf("sequence kind = %s, want protein", sources[0].SequenceKind)
+	if sources[0].SequenceKind != phylo.SequenceUnknown {
+		t.Fatalf("sequence kind = %s, want unknown", sources[0].SequenceKind)
 	}
 }
 
@@ -859,12 +895,9 @@ func TestCanvasTreeRowSourcesChoosesFastaSequenceForConversionTarget(t *testing.
 	selected := selectedCanvasRowsInOrder(state.Items)
 
 	proteinSettings := phylo.DefaultTreeSettings()
-	proteinSources, skipped, err := w.canvasTreeRowSourcesWithSkippedForSettings(context.Background(), state, selected, proteinSettings)
+	proteinSources, err := w.canvasTreeRowSourcesWithSkippedForSettings(context.Background(), state, selected, proteinSettings)
 	if err != nil {
 		t.Fatalf("protein canvasTreeRowSourcesWithSkippedForSettings returned error: %v", err)
-	}
-	if len(skipped) != 0 {
-		t.Fatalf("protein skipped rows = %#v, want none", skipped)
 	}
 	if len(proteinSources) != 1 || proteinSources[0].Sequence != "MPROTEIN" || proteinSources[0].SequenceKind != phylo.SequenceProtein {
 		t.Fatalf("protein target row source = %#v, want protein sequence", proteinSources)
@@ -872,12 +905,9 @@ func TestCanvasTreeRowSourcesChoosesFastaSequenceForConversionTarget(t *testing.
 
 	dnaSettings := phylo.DefaultTreeSettings()
 	dnaSettings.ConversionTarget = phylo.ConversionTargetDNA
-	dnaSources, skipped, err := w.canvasTreeRowSourcesWithSkippedForSettings(context.Background(), state, selected, dnaSettings)
+	dnaSources, err := w.canvasTreeRowSourcesWithSkippedForSettings(context.Background(), state, selected, dnaSettings)
 	if err != nil {
 		t.Fatalf("DNA canvasTreeRowSourcesWithSkippedForSettings returned error: %v", err)
-	}
-	if len(skipped) != 0 {
-		t.Fatalf("DNA skipped rows = %#v, want none", skipped)
 	}
 	if len(dnaSources) != 1 || dnaSources[0].Sequence != "ATGCCCGGG" || dnaSources[0].SequenceKind != phylo.SequenceNucleotide {
 		t.Fatalf("DNA target row source = %#v, want nucleotide sequence", dnaSources)
@@ -911,12 +941,9 @@ func TestCanvasTreeRowSourcesResolvesNucleotideSequenceForDNAConversion(t *testi
 	settings := phylo.DefaultTreeSettings()
 	settings.ConversionTarget = phylo.ConversionTargetDNA
 	selected := selectedCanvasRowsInOrder(state.Items)
-	sources, skipped, err := w.canvasTreeRowSourcesWithSkippedForSettings(context.Background(), state, selected, settings)
+	sources, err := w.canvasTreeRowSourcesWithSkippedForSettings(context.Background(), state, selected, settings)
 	if err != nil {
 		t.Fatalf("canvasTreeRowSourcesWithSkippedForSettings returned error: %v", err)
-	}
-	if len(skipped) != 0 {
-		t.Fatalf("skipped rows = %#v, want none", skipped)
 	}
 	if len(sources) != 1 || sources[0].Sequence != "ATGCCCGGG" || sources[0].SequenceKind != phylo.SequenceNucleotide {
 		t.Fatalf("DNA resolver row source = %#v, want resolved nucleotide sequence", sources)
@@ -956,12 +983,9 @@ func TestCanvasTreeRowSourcesResolvesNucleotideUsingRowSourceDatabase(t *testing
 	settings := phylo.DefaultTreeSettings()
 	settings.ConversionTarget = phylo.ConversionTargetDNA
 	selected := selectedCanvasRowsInOrder(state.Items)
-	sources, skipped, err := w.canvasTreeRowSourcesWithSkippedForSettings(context.Background(), state, selected, settings)
+	sources, err := w.canvasTreeRowSourcesWithSkippedForSettings(context.Background(), state, selected, settings)
 	if err != nil {
 		t.Fatalf("canvasTreeRowSourcesWithSkippedForSettings returned error: %v", err)
-	}
-	if len(skipped) != 0 {
-		t.Fatalf("skipped rows = %#v, want none", skipped)
 	}
 	if len(sources) != 1 || sources[0].Sequence != "ATGCCCGGG" || sources[0].SequenceKind != phylo.SequenceNucleotide {
 		t.Fatalf("row-source resolver source = %#v, want resolved nucleotide sequence", sources)
@@ -1004,15 +1028,12 @@ func TestCanvasTreeRowSourcesResolvesFastaProteinToDNAUsingPhytozomeHeader(t *te
 	settings := phylo.DefaultTreeSettings()
 	settings.ConversionTarget = phylo.ConversionTargetDNA
 	selected := selectedCanvasRowsInOrder(state.Items)
-	sources, skipped, err := w.canvasTreeRowSourcesWithSkippedForSettings(context.Background(), state, selected, settings)
+	sources, err := w.canvasTreeRowSourcesWithSkippedForSettings(context.Background(), state, selected, settings)
 	if err != nil {
 		t.Fatalf("canvasTreeRowSourcesWithSkippedForSettings returned error: %v", err)
 	}
-	if len(skipped) != 0 {
-		t.Fatalf("skipped rows = %#v, want none", skipped)
-	}
-	if len(sources) != 1 || sources[0].Sequence != "ATGCCCGGG" || sources[0].SequenceKind != phylo.SequenceNucleotide {
-		t.Fatalf("FASTA DNA resolver source = %#v, want resolved nucleotide sequence", sources)
+	if len(sources) != 1 || sources[0].Sequence != "" || sources[0].SequenceKind != phylo.SequenceNucleotide {
+		t.Fatalf("FASTA row source = %#v, want selected empty nucleotide record when no real DNA sequence is embedded or resolved", sources)
 	}
 }
 
@@ -1071,7 +1092,7 @@ func TestInferSnapshotDatabaseUsesCanvasRows(t *testing.T) {
 	}
 }
 
-func TestCanvasTreeRowSourcesWithSkippedHandlesAmbiguousMixedKindFasta(t *testing.T) {
+func TestCanvasTreeRowSourcesPassesAmbiguousFastaToMEGARuntime(t *testing.T) {
 	w := NewBlastWizard(nil)
 	state := canvasLaunchState{
 		Items: []model.CanvasItem{{
@@ -1087,15 +1108,27 @@ func TestCanvasTreeRowSourcesWithSkippedHandlesAmbiguousMixedKindFasta(t *testin
 		}},
 	}
 	selected := selectedCanvasRowsInOrder(state.Items)
-	_, skipped, err := w.canvasTreeRowSourcesWithSkipped(context.Background(), state, selected)
+	sources, err := w.canvasTreeRowSourcesWithSkipped(context.Background(), state, selected)
 	if err != nil {
 		t.Fatalf("canvasTreeRowSourcesWithSkipped returned error: %v", err)
 	}
-	if len(skipped) != 1 {
-		t.Fatalf("skipped row count = %d, want 1", len(skipped))
+	if len(sources) != 1 || sources[0].Sequence != "???" {
+		t.Fatalf("row source = %#v, want ambiguous FASTA passed through", sources)
 	}
-	if !strings.Contains(skipped[0].Reason, "ambiguous sequence kind") {
-		t.Fatalf("unexpected skip reason: %#v", skipped[0])
+}
+
+func TestSelectedCanvasRowsInOrderKeepsSelectedRowsWithoutExportReadySequence(t *testing.T) {
+	rows := selectedCanvasRowsInOrder([]model.CanvasItem{{
+		Title:    "tree-input",
+		Selected: []bool{true, true, false},
+		Rows: []model.CanvasRow{
+			{Kind: model.CanvasKindKeyword, KeywordRow: &model.KeywordResultRow{LabelName: "missing-sequence"}},
+			{Kind: model.CanvasKindFasta, FASTA: &model.QuerySequenceSource{Annotation: "empty-fasta"}},
+			{Kind: model.CanvasKindFasta, FASTA: &model.QuerySequenceSource{Sequence: "MPEPTIDE"}},
+		},
+	}})
+	if len(rows) != 2 {
+		t.Fatalf("selected rows = %#v, want both checked rows even when sequence payloads are empty", rows)
 	}
 }
 
@@ -1119,13 +1152,12 @@ func TestNormalizeCanvasTreeRowSourcesPassesMixedDNAProteinToMEGARuntime(t *test
 	}
 }
 
-func TestNormalizeCanvasTreeRowSourcesSkipsMismatchedRowsWhenConfigured(t *testing.T) {
+func TestNormalizeCanvasTreeRowSourcesDoesNotSkipMismatchedRowsWhenConfigured(t *testing.T) {
 	sources := []phylo.RowSource{
 		{ItemTitle: "protein", RowIndex: 0, Sequence: "MPEPTIDE", SequenceKind: phylo.SequenceProtein},
 		{ItemTitle: "dna", RowIndex: 1, Sequence: "ATGCNNNNATGC", SequenceKind: phylo.SequenceNucleotide},
 	}
 	settings := phylo.DefaultTreeSettings()
-	settings.ConversionAction = phylo.ConversionActionSkip
 	normalized, skipped, kind, err := normalizeCanvasTreeRowSourcesWithSkipped(sources, nil, settings)
 	if err != nil {
 		t.Fatalf("normalizeCanvasTreeRowSourcesWithSkipped returned error: %v", err)
@@ -1133,18 +1165,15 @@ func TestNormalizeCanvasTreeRowSourcesSkipsMismatchedRowsWhenConfigured(t *testi
 	if kind != phylo.SequenceProtein {
 		t.Fatalf("normalized kind = %s, want protein", kind)
 	}
-	if len(normalized) != 1 || normalized[0].Sequence != "MPEPTIDE" {
-		t.Fatalf("normalized rows = %#v, want only unchanged protein row", normalized)
+	if len(normalized) != 2 {
+		t.Fatalf("normalized rows = %#v, want all rows passed to MEGA runtime", normalized)
 	}
-	if len(skipped) != 1 {
-		t.Fatalf("skipped row count = %d, want 1", len(skipped))
-	}
-	if !strings.Contains(skipped[0].Reason, "mismatched rows are set to Skip") {
-		t.Fatalf("unexpected skipped row: %#v", skipped[0])
+	if len(skipped) != 0 {
+		t.Fatalf("skipped rows = %#v, want none", skipped)
 	}
 }
 
-func TestNormalizeCanvasTreeRowSourcesWithSkippedCollectsOnlyUntranslatableRows(t *testing.T) {
+func TestNormalizeCanvasTreeRowSourcesPassesEmptyRowsToMEGARuntime(t *testing.T) {
 	sources := []phylo.RowSource{
 		{ItemTitle: "protein", RowIndex: 0, Sequence: "MPEPTIDE", SequenceKind: phylo.SequenceProtein},
 		{ItemTitle: "dna", RowIndex: 1, Sequence: "", SequenceKind: phylo.SequenceNucleotide},
@@ -1156,14 +1185,145 @@ func TestNormalizeCanvasTreeRowSourcesWithSkippedCollectsOnlyUntranslatableRows(
 	if kind != phylo.SequenceProtein {
 		t.Fatalf("normalized kind = %s, want protein", kind)
 	}
-	if len(normalized) != 1 || normalized[0].ItemTitle != "protein" {
-		t.Fatalf("normalized rows = %#v, want only the protein row", normalized)
+	if len(normalized) != 2 {
+		t.Fatalf("normalized rows = %#v, want all rows passed to MEGA runtime", normalized)
 	}
-	if len(skipped) != 1 {
-		t.Fatalf("skipped row count = %d, want 1", len(skipped))
+	if len(skipped) != 0 {
+		t.Fatalf("skipped rows = %#v, want none", skipped)
 	}
-	if skipped[0].ItemTitle != "dna" || skipped[0].RowIndex != 1 || !strings.Contains(skipped[0].Reason, "empty") {
-		t.Fatalf("unexpected skipped row: %#v", skipped[0])
+}
+
+func TestNormalizeCanvasTreeRowSourcesPreservesUnknownRowKind(t *testing.T) {
+	sources := []phylo.RowSource{
+		{ItemTitle: "ambiguous", RowIndex: 0, Sequence: "ACGTMPEPTIDE", SequenceKind: phylo.SequenceUnknown},
+	}
+	normalized, _, kind, err := normalizeCanvasTreeRowSourcesWithSkipped(sources, nil, phylo.DefaultTreeSettings())
+	if err != nil {
+		t.Fatalf("normalizeCanvasTreeRowSourcesWithSkipped returned error: %v", err)
+	}
+	if kind != phylo.SequenceProtein {
+		t.Fatalf("global target kind = %s, want protein", kind)
+	}
+	if normalized[0].SequenceKind != phylo.SequenceUnknown {
+		t.Fatalf("row sequence kind = %s, want unknown metadata preserved", normalized[0].SequenceKind)
+	}
+}
+
+func TestCanvasTreeDNAModeResolvesKeywordNucleotideBeforeStoredProtein(t *testing.T) {
+	w := NewBlastWizard(nil)
+	w.source = fakeSource{
+		name:           "phytozome",
+		nucleotideSeqs: map[string]string{"blastn|tx1": "ATGAAATGA"},
+	}
+	w.lastKeywordSpecies = model.SpeciesCandidate{ProteomeID: 42}
+	selected := canvasSelectedRow{
+		ItemTitle: "keyword",
+		RowIndex:  0,
+		Row: model.CanvasRow{
+			Kind: model.CanvasKindKeyword,
+			KeywordRow: &model.KeywordResultRow{
+				SourceDatabase: "phytozome",
+				SequenceID:     "tx1",
+			},
+			SequenceData: &model.ProteinSequenceData{Sequence: "MPEPTIDE"},
+		},
+	}
+	settings := phylo.DefaultTreeSettings()
+	settings.ConversionTarget = phylo.ConversionTargetDNA
+	settings.AlignmentMethod = phylo.AlignmentClustalW
+
+	choice, err := w.canvasTreeSequenceForSettings(context.Background(), selected, settings)
+	if err != nil {
+		t.Fatalf("canvasTreeSequenceForSettings returned error: %v", err)
+	}
+	if choice.Kind != phylo.SequenceNucleotide || choice.Sequence != "ATGAAATGA" {
+		t.Fatalf("DNA mode should resolve real nucleotide sequence, got %#v", choice)
+	}
+}
+
+func TestCanvasTreeDNAModeDoesNotInventNucleotideWhenResolverMisses(t *testing.T) {
+	w := NewBlastWizard(nil)
+	w.source = fakeSource{name: "phytozome"}
+	w.lastKeywordSpecies = model.SpeciesCandidate{ProteomeID: 42}
+	selected := canvasSelectedRow{
+		ItemTitle: "keyword",
+		RowIndex:  0,
+		Row: model.CanvasRow{
+			Kind: model.CanvasKindKeyword,
+			KeywordRow: &model.KeywordResultRow{
+				SourceDatabase: "phytozome",
+				SequenceID:     "tx1",
+			},
+			SequenceData: &model.ProteinSequenceData{Sequence: "MPEPTIDE"},
+		},
+	}
+	settings := phylo.DefaultTreeSettings()
+	settings.ConversionTarget = phylo.ConversionTargetDNA
+
+	choice, err := w.canvasTreeSequenceForSettings(context.Background(), selected, settings)
+	if err == nil {
+		t.Fatalf("canvasTreeSequenceForSettings returned %#v, want resolver error", choice)
+	}
+	if !strings.Contains(err.Error(), "no nucleotide sequence") {
+		t.Fatalf("resolver error = %v, want original nucleotide fetch error", err)
+	}
+}
+
+func TestCanvasTreeRowSourcesReturnsNucleotideResolverErrors(t *testing.T) {
+	w := NewBlastWizard(nil)
+	w.source = fakeSource{name: "phytozome"}
+	w.lastKeywordSpecies = model.SpeciesCandidate{ProteomeID: 42}
+	state := canvasLaunchState{
+		Items: []model.CanvasItem{{
+			Title:    "keyword",
+			Selected: []bool{true},
+			Rows: []model.CanvasRow{{
+				Kind: model.CanvasKindKeyword,
+				KeywordRow: &model.KeywordResultRow{
+					SourceDatabase: "phytozome",
+					SequenceID:     "tx1",
+				},
+				SequenceData: &model.ProteinSequenceData{Sequence: "MPEPTIDE"},
+			}},
+		}},
+	}
+	settings := phylo.DefaultTreeSettings()
+	settings.ConversionTarget = phylo.ConversionTargetDNA
+
+	selected := selectedCanvasRowsInOrder(state.Items)
+	sources, err := w.canvasTreeRowSourcesWithSkippedForSettings(context.Background(), state, selected, settings)
+	if err == nil {
+		t.Fatalf("canvasTreeRowSourcesWithSkippedForSettings returned sources %#v, want resolver error", sources)
+	}
+	if !strings.Contains(err.Error(), "no nucleotide sequence") {
+		t.Fatalf("row-source error = %v, want original nucleotide fetch error", err)
+	}
+}
+
+func TestCanvasTreeDNAModeReturnsSourceConstructionErrors(t *testing.T) {
+	w := NewBlastWizard(nil)
+	selected := canvasSelectedRow{
+		ItemTitle: "blast",
+		RowIndex:  0,
+		Row: model.CanvasRow{
+			Kind: model.CanvasKindBlast,
+			BlastRow: &model.BlastResultRow{
+				SourceDatabase: "missingdb",
+				TargetID:       42,
+				SequenceID:     "tx1",
+			},
+			SequenceData: &model.ProteinSequenceData{Sequence: "MPEPTIDE"},
+		},
+	}
+	settings := phylo.DefaultTreeSettings()
+	settings.ConversionTarget = phylo.ConversionTargetDNA
+
+	choice, err := w.canvasTreeSequenceForSettings(context.Background(), selected, settings)
+	if err == nil {
+		t.Fatalf("canvasTreeSequenceForSettings returned %#v, want source-construction error", choice)
+	}
+	if !strings.Contains(err.Error(), "unsupported BLAST target database") {
+		t.Fatalf("source-construction error = %v", err)
 	}
 }
 
@@ -1198,12 +1358,11 @@ func TestRefreshCanvasTreeInteractiveSkipUnchecksRowsAndRetries(t *testing.T) {
 			if len(selected) != 2 {
 				t.Fatalf("first refresh selected rows = %d, want 2", len(selected))
 			}
-			_, err := w.buildCanvasTreeArtifacts(ctx, runState, selected, settings)
-			var skippedErr *canvasTreeSkippedRowsError
-			if !errors.As(err, &skippedErr) {
-				t.Fatalf("first refresh error = %v, want skipped rows error", err)
-			}
-			return err
+			return &canvasTreeSkippedRowsError{SkippedRows: []canvasTreeSkippedRow{{
+				ItemTitle: "dna",
+				RowIndex:  0,
+				Reason:    "skipped by mega-phgo-runtime",
+			}}}
 		}
 		if len(selected) != 1 || selected[0].ItemTitle != "protein" {
 			t.Fatalf("retry selected rows = %#v, want only protein row", selected)
@@ -1224,7 +1383,6 @@ func TestRefreshCanvasTreeInteractiveSkipUnchecksRowsAndRetries(t *testing.T) {
 		return "skip", nil
 	}
 	settings := phylo.DefaultTreeSettings()
-	settings.ConversionAction = phylo.ConversionActionSkip
 	err := w.refreshCanvasTreeInteractive(context.Background(), &state, settings)
 	if err != nil {
 		t.Fatalf("refreshCanvasTreeInteractive returned error: %v", err)
@@ -1251,10 +1409,14 @@ func TestMegaPHGORuntimeCanvasSnapshot123Probe(t *testing.T) {
 		t.Skip("set PHYTOZOME_RUN_MEGAPHGO_RUNTIME=1 to run the real mega-phgo-runtime probe")
 	}
 	path := strings.TrimSpace(os.Getenv("PHYTOZOME_MEGAPHGO_PGO"))
+	explicitPath := path != ""
 	if path == "" {
 		path = `C:\Users\wangsychn\Desktop\output\123.pgo`
 	}
 	if _, err := os.Stat(path); err != nil {
+		if !explicitPath {
+			t.Skipf("real Canvas snapshot %s is not available: %v", path, err)
+		}
 		t.Fatalf("real Canvas snapshot %s is not available: %v", path, err)
 	}
 	appRoot := repoRootForWorkflowRuntimeProbeTest(t)
@@ -1288,31 +1450,16 @@ func TestMegaPHGORuntimeCanvasSnapshot123Probe(t *testing.T) {
 		t.Fatalf("snapshot %s selected rows = %d, want at least two sequence-ready rows", path, len(selected))
 	}
 
-	skipSettings := phylo.DefaultTreeSettings()
-	skipSettings.ConversionTarget = phylo.ConversionTargetProtein
-	skipSettings.ConversionAction = phylo.ConversionActionSkip
-	_, err = w.buildCanvasTreeArtifacts(context.Background(), state, selected, skipSettings)
-	var skippedErr *canvasTreeSkippedRowsError
-	if !errors.As(err, &skippedErr) || len(skippedErr.SkippedRows) == 0 {
-		t.Fatalf("Protein/Skip mode should reject mismatched DNA rows from %s, got err=%v", path, err)
-	}
-
-	convertSettings := phylo.DefaultTreeSettings()
-	convertSettings.ConversionTarget = phylo.ConversionTargetProtein
-	convertSettings.ConversionAction = phylo.ConversionActionConvert
-	convertSettings.AlignmentMethod = phylo.AlignmentClustalW
-	result, err := w.buildCanvasTreeArtifacts(context.Background(), state, selected, convertSettings)
+	proteinSettings := phylo.DefaultTreeSettings()
+	proteinSettings.ConversionTarget = phylo.ConversionTargetProtein
+	proteinSettings.AlignmentMethod = phylo.AlignmentClustalW
+	result, err := w.buildCanvasTreeArtifacts(context.Background(), state, selected, proteinSettings)
 	if err != nil {
-		t.Fatalf("Protein/Convert runtime probe failed: %v\nartifacts: %s", err, result.ArtifactDir)
+		t.Fatalf("Protein runtime probe failed: %v\nartifacts: %s", err, result.ArtifactDir)
 	}
 	logText := readRuntimeLogForWorkflowProbe(t, result.ArtifactDir)
-	if !strings.Contains(logText, "conversion.applied") || !strings.Contains(logText, "converted_dna_to_protein=") {
-		t.Fatalf("Protein/Convert probe should prove PHgo runtime DNA-to-protein conversion, got:\n%s", logText)
-	}
-	for _, seq := range alignedSequencesForWorkflowTest(t, result.Plan.AlignedFASTA) {
-		if looksNucleotideOnlyForWorkflowTest(strings.ReplaceAll(seq, "-", "")) {
-			t.Fatalf("Protein/Convert aligned FASTA still contains nucleotide-only sequence:\n%s", result.Plan.AlignedFASTA)
-		}
+	if strings.Contains(logText, "conversion.applied") || strings.Contains(logText, "converted_dna_to_protein=") {
+		t.Fatalf("Protein runtime probe should not perform PHgo DNA-to-protein conversion, got:\n%s", logText)
 	}
 
 	lemnaBlastState := canvasSnapshotSelectedRowsByDatabase(items, model.CanvasKindBlast, "lemna")
@@ -1322,7 +1469,6 @@ func TestMegaPHGORuntimeCanvasSnapshot123Probe(t *testing.T) {
 	}
 	dnaResolveSettings := phylo.DefaultTreeSettings()
 	dnaResolveSettings.ConversionTarget = phylo.ConversionTargetDNA
-	dnaResolveSettings.ConversionAction = phylo.ConversionActionConvert
 	dnaResolveSettings.AlignmentMethod = phylo.AlignmentClustalW
 	result, err = w.buildCanvasTreeArtifacts(context.Background(), lemnaBlastState, lemnaSelected, dnaResolveSettings)
 	if err != nil {
@@ -1343,7 +1489,6 @@ func TestMegaPHGORuntimeCanvasSnapshot123Probe(t *testing.T) {
 		t.Run("DNA_"+string(method), func(t *testing.T) {
 			settings := phylo.DefaultTreeSettings()
 			settings.ConversionTarget = phylo.ConversionTargetDNA
-			settings.ConversionAction = phylo.ConversionActionConvert
 			settings.AlignmentMethod = method
 			result, err := w.buildCanvasTreeArtifacts(context.Background(), dnaState, dnaSelected, settings)
 			if err != nil {
@@ -1478,7 +1623,6 @@ func treePanelForSnapshotTest() tui.CanvasTreePanelState {
 		CurrentControl:         0,
 		DisplayNameSource:      "label_name",
 		ConversionTarget:       string(phylo.ConversionTargetProtein),
-		ConversionAction:       string(phylo.ConversionActionConvert),
 		ConversionSkipUnselect: true,
 		AlignmentMethod:        string(phylo.AlignmentMUSCLE),
 		TreeMethod:             string(phylo.TreeNeighborJoining),

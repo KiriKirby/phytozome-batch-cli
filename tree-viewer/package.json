@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node src/labels.test.mjs",
+    "test": "node src/labels.test.mjs && node src/pgv.test.mjs",
     "patch:reactree": "node scripts/patch-reactree-dpi.mjs",
     "build": "npm run patch:reactree && vite build"
   },

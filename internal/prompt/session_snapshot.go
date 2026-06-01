@@ -157,7 +157,7 @@ func (p *Prompter) RestoreCanvasTreePanelState(key string, state tui.CanvasTreeP
 	if state.TreeParams == nil {
 		state.TreeParams = map[string]string{}
 	}
-	if state.EnabledEver || state.Expanded || state.Focused || state.CurrentControl != 0 || strings.TrimSpace(state.DisplayNameSource) != "" || strings.TrimSpace(state.ConversionTarget) != "" || strings.TrimSpace(state.ConversionAction) != "" || state.ConversionSkipUnselect || strings.TrimSpace(state.AlignmentMethod) != "" || strings.TrimSpace(state.TreeMethod) != "" || len(state.AlignmentParams) > 0 || len(state.TreeParams) > 0 {
+	if state.EnabledEver || state.Expanded || state.Focused || state.CurrentControl != 0 || strings.TrimSpace(state.DisplayNameSource) != "" || strings.TrimSpace(state.ConversionTarget) != "" || state.ConversionSkipUnselect || strings.TrimSpace(state.AlignmentMethod) != "" || strings.TrimSpace(state.TreeMethod) != "" || len(state.AlignmentParams) > 0 || len(state.TreeParams) > 0 {
 		p.canvasTreeStates[key] = state
 		return
 	}

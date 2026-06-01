@@ -8,9 +8,6 @@ func InputFASTA(records []InputRecord) string {
 	var b strings.Builder
 	for _, record := range records {
 		sequence := sanitizeFASTASequence(record.Sequence)
-		if sequence == "" {
-			continue
-		}
 		b.WriteString(">")
 		b.WriteString(record.TaxonID)
 		b.WriteByte('\n')

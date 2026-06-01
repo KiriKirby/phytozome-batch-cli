@@ -541,11 +541,11 @@ func TestCanvasTreePanelBuildsConversionPageFirst(t *testing.T) {
 	if got := primitive.currentPage(); got != 0 {
 		t.Fatalf("default page = %d, want conversion page 0", got)
 	}
-	if len(primitive.fieldsByPage[0]) < 5 {
-		t.Fatalf("conversion page fields = %d, want target/action/cleanup controls", len(primitive.fieldsByPage[0]))
+	if len(primitive.fieldsByPage[0]) != 3 {
+		t.Fatalf("mode page fields = %d, want protein/dna target controls plus runtime cleanup", len(primitive.fieldsByPage[0]))
 	}
 	if _, ok := primitive.fieldsByPage[0][0].primitive.(*checkboxModule); !ok {
-		t.Fatal("first conversion control should be a protein-mode radio checkbox")
+		t.Fatal("first mode control should be a protein-mode checkbox")
 	}
 }
 
@@ -586,6 +586,42 @@ func TestCanvasTreePanelConversionTargetControlsAlignMethods(t *testing.T) {
 	}
 	if len(primitive.panel.AlignmentMethods) != 2 || primitive.panel.AlignmentMethods[1].ID != "muscle_protein" {
 		t.Fatalf("Protein target should expose two protein methods: %#v", primitive.panel.AlignmentMethods)
+	}
+}
+
+func TestCanvasTreePanelTreatsTwoOptionParametersAsCheckboxes(t *testing.T) {
+	panel := CanvasTreePanel{
+		State: CanvasTreePanelState{
+			Focused:           true,
+			DisplayNameSource: "label_name",
+			AlignmentMethod:   "clustalw_protein",
+			TreeMethod:        "neighbor_joining",
+			AlignmentParams: map[string]string{
+				"residue_specific_penalties": "ON",
+			},
+			TreeParams: map[string]string{},
+		},
+		DisplayNameSources: []Choice{{Value: "label_name", Label: "label_name"}},
+		AlignmentMethods: []CanvasTreeMethod{{
+			ID:    "clustalw_protein",
+			Label: "ClustalW",
+			Parameters: []CanvasTreeParameter{
+				{Label: "Global Options", Section: true, ReadOnly: true},
+				{ID: "residue_specific_penalties", Label: "Residue-specific Penalties", Kind: "picklist", Options: []string{"ON", "OFF"}, Default: "ON"},
+			},
+		}},
+		TreeMethods: []CanvasTreeMethod{{
+			ID:    "neighbor_joining",
+			Label: "Neighbor-Joining",
+		}},
+	}
+	primitive := newCanvasTreePanelPrimitive(panel, nil, nil, nil, nil, nil)
+	primitive.rebuildUI()
+	if len(primitive.fieldsByPage) < 2 || len(primitive.fieldsByPage[1]) < 2 {
+		t.Fatalf("align page fields = %#v", primitive.fieldsByPage)
+	}
+	if _, ok := primitive.fieldsByPage[1][1].primitive.(*checkboxModule); !ok {
+		t.Fatal("two-option parameter should render as a checkbox")
 	}
 }
 
@@ -631,6 +667,33 @@ func TestCanvasTreePanelBuildsTreePageFields(t *testing.T) {
 	}
 	if _, ok := primitive.fieldsByPage[2][1].primitive.(*tview.DropDown); !ok {
 		t.Fatal("second tree-page control should be tree-method dropdown")
+	}
+}
+
+func TestCanvasTreeParamVisibleMirrorsMegaMPDynamicRows(t *testing.T) {
+	randomTrees := CanvasTreeParameter{ID: "initial_trees_random_addition", Label: "No. of Initial Trees (random addition)"}
+	searchLevel := CanvasTreeParameter{ID: "mp_search_level", Label: "MP Search Level"}
+	maxTrees := CanvasTreeParameter{ID: "max_trees_to_retain", Label: "Max No. of Trees to Retain"}
+
+	params := map[string]string{"mp_search_method": "Subtree-Pruning-Regrafting (SPR)"}
+	if !canvasTreeParamVisible(randomTrees, params) || !canvasTreeParamVisible(searchLevel, params) || !canvasTreeParamVisible(maxTrees, params) {
+		t.Fatal("SPR should show random-addition trees, search level, and max trees")
+	}
+
+	params["mp_search_method"] = "Min-Mini Heuristic"
+	if canvasTreeParamVisible(randomTrees, params) {
+		t.Fatal("Min-Mini should hide random-addition initial trees")
+	}
+	if !canvasTreeParamVisible(searchLevel, params) || !canvasTreeParamVisible(maxTrees, params) {
+		t.Fatal("Min-Mini should keep the search-level and max-tree rows visible")
+	}
+
+	params["mp_search_method"] = "Max-mini Branch-&-bound"
+	if canvasTreeParamVisible(randomTrees, params) || canvasTreeParamVisible(searchLevel, params) {
+		t.Fatal("Max-mini branch-and-bound should hide random-addition and search-level rows")
+	}
+	if !canvasTreeParamVisible(maxTrees, params) {
+		t.Fatal("Max-mini branch-and-bound should keep max-tree retention visible")
 	}
 }
 

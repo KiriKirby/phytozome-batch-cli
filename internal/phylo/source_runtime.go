@@ -39,8 +39,14 @@ func (r MegaPHGORuntime) Run(ctx context.Context, plan RunPlan) (RunResult, erro
 	} else if reused.Reused {
 		return reused, nil
 	}
+	if err := ctx.Err(); err != nil {
+		return RunResult{Plan: plan, ArtifactDir: plan.BaseDir, ErrorText: err.Error()}, err
+	}
 	if err := plan.ToArtifactSet().Write(); err != nil {
 		return RunResult{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return RunResult{Plan: plan, ArtifactDir: plan.BaseDir, ErrorText: err.Error()}, err
 	}
 	requestPath, err := WriteMegaPHGORuntimeRequest(plan)
 	if err != nil {
@@ -65,9 +71,15 @@ func (r MegaPHGORuntime) Run(ctx context.Context, plan RunPlan) (RunResult, erro
 		return RunResult{Plan: plan, ArtifactDir: plan.BaseDir, ErrorText: err.Error()}, err
 	}
 	defer cleanup()
+	if err := ctx.Err(); err != nil {
+		return RunResult{Plan: plan, ArtifactDir: plan.BaseDir, ErrorText: err.Error()}, err
+	}
 	cmd := exec.CommandContext(ctx, preparedExe, requestPath)
 	cmd.Dir = plan.BaseDir
 	stdoutPath, stderrPath, exitText, runErr := runMegaPHGORuntimeCommand(cmd, plan.BaseDir)
+	if err := ctx.Err(); err != nil {
+		return RunResult{Plan: plan, ArtifactDir: plan.BaseDir, StdoutPath: stdoutPath, StderrPath: stderrPath, ErrorText: err.Error()}, err
+	}
 	responsePath := filepath.Join(plan.BaseDir, RuntimeResponseFile)
 	response, readErr := readMegaPHGORuntimeResponse(responsePath)
 	if readErr != nil {
@@ -83,9 +95,6 @@ func (r MegaPHGORuntime) Run(ctx context.Context, plan RunPlan) (RunResult, erro
 	_, alignedFASTA, err := findAlignedFASTA(plan.BaseDir, filepath.Join(plan.BaseDir, "aligned"))
 	if err != nil {
 		return RunResult{Plan: plan, ArtifactDir: plan.BaseDir, StdoutPath: stdoutPath, StderrPath: stderrPath, ErrorText: err.Error()}, err
-	}
-	if err := validateRuntimeAlignment(plan, alignedFASTA); err != nil {
-		return RunResult{Plan: plan, ArtifactDir: plan.BaseDir, StdoutPath: stdoutPath, StderrPath: stderrPath, ErrorText: err.Error(), SkippedRecords: append([]RuntimeSkippedRecord(nil), response.SkippedRecords...)}, err
 	}
 	newickPath, newick, err := findNewick(plan.BaseDir, filepath.Join(plan.BaseDir, "tree-result"))
 	if err != nil {
@@ -233,12 +242,13 @@ func BuildMegaPHGORuntimeRequest(plan RunPlan) MegaPHGORuntimeRequest {
 
 func normalizeRuntimeTreeSettings(settings TreeSettings, kind SequenceKind) TreeSettings {
 	settings = NormalizeTreeSettingsForKind(settings, kind)
+	settings.ConversionSkipUnselect = false
 	if def, ok := MethodDefinitionForAlignmentKind(settings.AlignmentMethod, kind); ok {
 		if strings.TrimSpace(def.RuntimeMethod) != "" {
 			settings.AlignmentMethod = AlignmentMethod(strings.TrimSpace(def.RuntimeMethod))
 		}
 	}
-	if def, ok := MethodDefinitionForTree(settings.TreeMethod); ok {
+	if def, ok := MethodDefinitionForTreeKind(settings.TreeMethod, kind); ok {
 		if strings.TrimSpace(def.RuntimeMethod) != "" {
 			settings.TreeMethod = TreeMethod(strings.TrimSpace(def.RuntimeMethod))
 		}

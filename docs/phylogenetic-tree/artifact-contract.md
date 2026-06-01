@@ -36,7 +36,7 @@ viewer.payload.json
 
 When PHgo reuses an existing alignment/tree because only preview metadata changed, the new run directory still receives a complete `runtime-request.json` plus a `runtime-response.json` whose `runtime` field is `mega-phgo-runtime/reused`. This keeps snapshots and diagnostics complete without pretending the custom runtime was launched again.
 
-Protein inputs may contain common FASTA terminal stop codons (`*`). The request and `input.fasta` keep the original selected sequences, while `mega-phgo-runtime` sanitizes protein/unknown non-codon sequences only for computation. Any cleanup is recorded in `runtime.log` with a `protein.sanitized` entry, and the aligned FASTA reflects the sanitized computable sequence set.
+The request and `input.fasta` keep the original selected sequences. PHgo does not sanitize, trim, translate, reverse-translate, or repair protein/nucleotide content before runtime execution; the runtime hands the selected data to MEGA-derived alignment/tree components and surfaces their output or error text.
 
 Reactree in-page visual state is persisted through the independent text `.pgv` PHgo Viewer Snapshot format. A `.pgv` stores the current `viewer.payload.json` data plus `viewer_state`, including Reactree layout/edit state and PHgo viewer-only panel state. Canvas `.pgo` snapshots still preserve the computation payload and panel state; browser-owned visual edits are round-tripped by exporting/opening `.pgv`.
 
@@ -101,7 +101,6 @@ Required shape:
   "settings": {
     "display_name_source": "label_name",
     "conversion_target": "protein",
-    "conversion_action": "convert",
     "conversion_skip_unselect": true,
     "alignment_method": "muscle",
     "alignment_params": {},
@@ -130,7 +129,7 @@ Required shape:
 
 The runtime must consume stable taxon IDs and must not reinterpret display labels as biological identifiers.
 
-`conversion_target` is `protein` or `dna`. `conversion_action` is `convert` or `skip`. DNA-to-protein conversion is performed only by `mega-phgo-runtime`; PHgo does not translate sequences locally.
+`conversion_target` is a legacy field name kept for `.pgo` and runtime-request compatibility. Its value is the selected MEGA target data mode, `protein` or `dna`; it does not authorize PHgo-side conversion. PHgo does not translate, reverse-translate, repair, or locally skip biological sequence content. In DNA mode, PHgo may only substitute a row's sequence with a real embedded/resolved nucleotide/CDS sequence; otherwise MEGA runtime is the authority for success or failure.
 
 ## Runtime Response
 
@@ -157,11 +156,9 @@ If runtime execution fails after starting, the response may include `error_text`
 
 When `error_text` is present, it is the primary failure message shown by PHgo. Missing `aligned.fasta` or `tree.nwk` should not replace the runtime-specific error text.
 
-When the runtime cannot convert or use individual rows, it may return `skipped_records`. PHgo surfaces these through the common skip dialog; if the panel setting is enabled, the skipped row selections are also cleared before retrying.
+When the runtime reports unusable individual rows through `skipped_records`, PHgo surfaces these through the common skip dialog; if the panel setting is enabled, the skipped row selections are also cleared before retrying.
 
-After every new runtime execution or artifact reuse, PHgo validates `aligned.fasta` against the request before publishing the viewer payload. A wrong sequence count, unconverted nucleotide output in Protein mode, or protein output in DNA mode is a hard error with the artifact directory preserved for diagnosis.
-
-Snapshot-restored artifacts are display/recovery state, not permission to skip the next compute. A saved `.pgo` may contain an old viewer payload and old alignment files from a previous runtime build. If the restored aligned FASTA already proves the payload has the wrong biological target, PHgo suppresses that stale payload instead of pushing it to Reactree. The first user-triggered Refresh after opening a Canvas snapshot must bypass artifact reuse entirely and run the current `mega-phgo-runtime` so stale historical files are replaced even when their old fingerprints still match.
+Snapshot-restored artifacts are display/recovery state, not permission to skip the next compute. The first user-triggered Refresh after opening a Canvas snapshot must bypass artifact reuse entirely and run the current `mega-phgo-runtime` so stale historical files are replaced even when their old fingerprints still match.
 
 When computation artifacts are reused, `runtime-response.json` uses:
 
@@ -281,7 +278,7 @@ Implemented snapshot shape:
 - Snapshot open restores packed files to their original run directory, restores the Canvas tree panel state, and keeps the last payload/plan in memory so reopening the tree panel can immediately push the previous tree to the local Reactree service.
 - Snapshot save synchronizes the last tree payload metadata from the current Canvas table before packing the snapshot. If the user changed `display_name` or the display-name source after the last tree refresh, the snapshot records those current labels in `last_payload` and updates only the preview fingerprint. Alignment/tree fingerprints and runtime artifacts are not changed, and `mega-phgo-runtime` is not rerun during snapshot save.
 - Snapshot restore rebuilds an in-memory tree run plan from the saved payload, manifest, and restored artifact files. If an older or partial snapshot has an empty `last_payload` but still contains `viewer.payload.json`, restore reads that artifact as a fallback so reopening the tree panel can still recover the rendered tree.
-- Snapshot-restored run plans keep the requested Protein/DNA target from the manifest or panel state. The next explicit refresh always reruns `mega-phgo-runtime`; only later refreshes may reuse validated artifacts when the computation fingerprints match and the only change is label/render metadata.
+- Snapshot-restored run plans keep the requested Protein/DNA target from the manifest or panel state. The next explicit refresh always reruns `mega-phgo-runtime`; only later refreshes may reuse runtime artifacts when the computation fingerprints match and the only change is label/render metadata.
 
 Snapshot open should restore the Canvas page and allow the tree panel to reopen with the previous settings and previous rendered tree. It must not rerun `mega-phgo-runtime` during open or panel display, but the first explicit `Refresh tree` after snapshot open is always a full compute refresh.
 

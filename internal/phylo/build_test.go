@@ -65,7 +65,7 @@ func TestBuildInputUsesDisplayNameThenSourceThenHead(t *testing.T) {
 	}
 }
 
-func TestBuildInputInfersBlankSequenceKindFromRestoredSnapshots(t *testing.T) {
+func TestBuildInputDoesNotInferBlankSequenceKind(t *testing.T) {
 	now := time.Date(2026, 5, 30, 1, 30, 0, 0, time.UTC)
 	records, _, err := BuildInput([]RowSource{
 		{
@@ -88,11 +88,11 @@ func TestBuildInputInfersBlankSequenceKindFromRestoredSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildInput returned error: %v", err)
 	}
-	if records[0].SequenceKind != SequenceNucleotide {
-		t.Fatalf("blank DNA sequence kind inferred as %q, want nucleotide", records[0].SequenceKind)
+	if records[0].SequenceKind != "" {
+		t.Fatalf("blank DNA sequence kind = %q, want unchanged blank", records[0].SequenceKind)
 	}
-	if records[1].SequenceKind != SequenceProtein {
-		t.Fatalf("blank protein sequence kind inferred as %q, want protein", records[1].SequenceKind)
+	if records[1].SequenceKind != "" {
+		t.Fatalf("blank protein sequence kind = %q, want unchanged blank", records[1].SequenceKind)
 	}
 }
 
@@ -117,7 +117,7 @@ func TestBuildFingerprintsAreStableAndSensitiveToSettings(t *testing.T) {
 	if first != second {
 		t.Fatalf("fingerprints must be stable: %#v vs %#v", first, second)
 	}
-	settings.AlignmentParams = map[string]string{"gap_open": "1"}
+	settings.AlignmentParams = map[string]string{"pairwise_gap_opening_penalty": "1"}
 	third := BuildFingerprints(records, settings, "aligned", "(PHGOT000001)")
 	if first.Alignment == third.Alignment {
 		t.Fatalf("alignment fingerprint should change when params change")
@@ -129,8 +129,8 @@ func TestBuildFingerprintsAreStableAndSensitiveToSettings(t *testing.T) {
 	if first.Input != skipChanged.Input {
 		t.Fatalf("conversion skip/unselect setting must not change input fingerprint")
 	}
-	if first.Alignment == skipChanged.Alignment || first.Tree == skipChanged.Tree {
-		t.Fatalf("conversion skip/unselect setting must trigger full recompute: %#v vs %#v", first, skipChanged)
+	if first.Alignment != skipChanged.Alignment || first.Tree != skipChanged.Tree {
+		t.Fatalf("runtime skipped-row cleanup preference must not trigger recompute: %#v vs %#v", first, skipChanged)
 	}
 }
 
@@ -202,6 +202,19 @@ func TestInputFASTAUsesStableTaxonIDs(t *testing.T) {
 	})
 	if strings.Contains(fasta, "PAL1") || !strings.Contains(fasta, ">PHGOT000001\nMPEPTIDE\n") || !strings.Contains(fasta, ">PHGOT000002\nATGC\n") {
 		t.Fatalf("unexpected FASTA:\n%s", fasta)
+	}
+}
+
+func TestInputFASTADoesNotDropEmptySequences(t *testing.T) {
+	fasta := InputFASTA([]InputRecord{
+		{TaxonID: "PHGOT000001", DisplayName: "empty", Sequence: ""},
+		{TaxonID: "PHGOT000002", DisplayName: "filled", Sequence: "ATGC"},
+	})
+	if !strings.Contains(fasta, ">PHGOT000001\n") {
+		t.Fatalf("empty record header was dropped:\n%s", fasta)
+	}
+	if !strings.Contains(fasta, ">PHGOT000002\nATGC\n") {
+		t.Fatalf("filled record missing:\n%s", fasta)
 	}
 }
 

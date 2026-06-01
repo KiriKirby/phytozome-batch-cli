@@ -189,6 +189,34 @@ func TestViewerServerStateEndpointRoundTripsWithoutSSEBroadcast(t *testing.T) {
 	}
 }
 
+func TestViewerServerKeepsPayloadAndStatePerSession(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := NewViewerServer("127.0.0.1:0")
+	if err := server.Start(ctx); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	putViewerPayload(t, server.URL()+"/sessions/canvas/payload", []byte(`{"schema_version":1,"newick":"(CANVAS);","updated_at":"`+time.Now().Format(time.RFC3339Nano)+`"}`))
+	putViewerPayload(t, server.URL()+"/sessions/nwk-browser-1/payload", []byte(`{"schema_version":1,"newick":"(BROWSER);","updated_at":"`+time.Now().Format(time.RFC3339Nano)+`"}`))
+	putViewerPayload(t, server.URL()+"/sessions/canvas/state", []byte(`{"schema_version":1,"reactree":{"layout":"rectangular"}}`))
+	putViewerPayload(t, server.URL()+"/sessions/nwk-browser-1/state", []byte(`{"schema_version":1,"reactree":{"layout":"circular"}}`))
+
+	canvasPayload := getViewerPayload(t, server.URL()+"/sessions/canvas/payload")
+	browserPayload := getViewerPayload(t, server.URL()+"/sessions/nwk-browser-1/payload")
+	if !strings.Contains(canvasPayload, "(CANVAS);") || strings.Contains(canvasPayload, "(BROWSER);") {
+		t.Fatalf("canvas payload leaked browser state: %s", canvasPayload)
+	}
+	if !strings.Contains(browserPayload, "(BROWSER);") || strings.Contains(browserPayload, "(CANVAS);") {
+		t.Fatalf("browser payload leaked canvas state: %s", browserPayload)
+	}
+	if got := getViewerState(t, server.URL()+"/sessions/canvas/state"); !strings.Contains(got, `"layout":"rectangular"`) || strings.Contains(got, "circular") {
+		t.Fatalf("canvas state leaked browser state: %s", got)
+	}
+	if got := getViewerState(t, server.URL()+"/sessions/nwk-browser-1/state"); !strings.Contains(got, `"layout":"circular"`) || strings.Contains(got, "rectangular") {
+		t.Fatalf("browser state leaked canvas state: %s", got)
+	}
+}
+
 func readViewerSSEUpdate(t *testing.T, reader *bufio.Reader) string {
 	t.Helper()
 	var lines []string
@@ -254,6 +282,23 @@ func getViewerState(t *testing.T, url string) string {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("read state: %v", err)
+	}
+	return string(body)
+}
+
+func getViewerPayload(t *testing.T, url string) string {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("payload request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("payload status = %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read payload: %v", err)
 	}
 	return string(body)
 }

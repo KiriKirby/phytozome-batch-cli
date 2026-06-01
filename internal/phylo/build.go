@@ -90,7 +90,7 @@ func BuildInput(records []RowSource, sourceColumn string, sessionID string, now 
 			SourceType:     strings.TrimSpace(src.SourceType),
 			OriginalHead:   strings.TrimSpace(src.OriginalHead),
 			Sequence:       strings.TrimSpace(src.Sequence),
-			SequenceKind:   normalizeInputSequenceKind(src.SequenceKind, src.Sequence),
+			SequenceKind:   src.SequenceKind,
 			CanvasItem:     strings.TrimSpace(src.ItemTitle),
 			CanvasRow:      src.RowIndex,
 			TableValues:    cloneTreeTableValues(src.TableValues),
@@ -100,13 +100,6 @@ func BuildInput(records []RowSource, sourceColumn string, sessionID string, now 
 		meta.Records = append(meta.Records, record)
 	}
 	return out, meta, nil
-}
-
-func normalizeInputSequenceKind(kind SequenceKind, sequence string) SequenceKind {
-	if strings.TrimSpace(string(kind)) != "" && kind != SequenceUnknown {
-		return kind
-	}
-	return inferSequenceKind(sequence)
 }
 
 func BuildPayload(sessionID string, records []InputRecord, metadata Metadata, alignedFASTA string, newick string, updatedAt time.Time) ViewerPayload {
@@ -143,9 +136,6 @@ func viewerPayloadTitle(records []InputRecord, fallback string) string {
 
 func BuildRunPlan(sessionID string, runID string, baseDir string, settings TreeSettings, kind SequenceKind, records []InputRecord, metadata Metadata, alignedFASTA string, newick string, updatedAt time.Time) (RunPlan, error) {
 	settings = NormalizeTreeSettingsForKind(settings, kind)
-	if err := validateSettingsForKind(settings, kind); err != nil {
-		return RunPlan{}, err
-	}
 	inputFASTA := InputFASTA(records)
 	fingerprints := BuildFingerprints(records, settings, alignedFASTA, newick)
 	return RunPlan{
@@ -164,16 +154,6 @@ func BuildRunPlan(sessionID string, runID string, baseDir string, settings TreeS
 		Fingerprints:    fingerprints,
 		UpdatedAt:       updatedAt,
 	}, nil
-}
-
-func validateSettingsForKind(settings TreeSettings, kind SequenceKind) error {
-	if def, ok := MethodDefinitionForAlignment(settings.AlignmentMethod); ok && !MethodSupportsKind(def, kind) {
-		return fmt.Errorf("alignment method %s is not compatible with %s sequences", def.Label, kind)
-	}
-	if def, ok := MethodDefinitionForTree(settings.TreeMethod); ok && !MethodSupportsKind(def, kind) {
-		return fmt.Errorf("tree method %s is not compatible with %s sequences", def.Label, kind)
-	}
-	return nil
 }
 
 func (p RunPlan) ToArtifactSet() ArtifactSet {
@@ -216,8 +196,6 @@ func BuildFingerprints(records []InputRecord, settings TreeSettings, alignedFAST
 	writeComputeRecordFingerprint(inputDigest, records)
 	writeComputeRecordFingerprint(alignmentDigest, records)
 	alignmentDigest.Write([]byte("\nconversion_target=" + string(settings.ConversionTarget)))
-	alignmentDigest.Write([]byte("\nconversion_action=" + string(settings.ConversionAction)))
-	alignmentDigest.Write([]byte("\nconversion_skip_unselect=" + strconv.FormatBool(settings.ConversionSkipUnselect)))
 	alignmentDigest.Write([]byte("\nmethod=" + string(settings.AlignmentMethod)))
 	writeSortedMap(alignmentDigest, settings.AlignmentParams)
 
@@ -272,8 +250,6 @@ func computationSettingsEqual(a TreeSettings, b TreeSettings) bool {
 	b = NormalizeTreeSettings(b)
 	return a.AlignmentMethod == b.AlignmentMethod &&
 		a.ConversionTarget == b.ConversionTarget &&
-		a.ConversionAction == b.ConversionAction &&
-		a.ConversionSkipUnselect == b.ConversionSkipUnselect &&
 		a.TreeMethod == b.TreeMethod &&
 		reflect.DeepEqual(a.AlignmentParams, b.AlignmentParams) &&
 		reflect.DeepEqual(a.TreeParams, b.TreeParams)
@@ -289,35 +265,6 @@ func fingerprintRow(src RowSource, sourceColumn string) string {
 	writeString(h, src.Sequence)
 	writeSortedMapExcept(h, src.TableValues, "display_name")
 	return hex.EncodeToString(h.Sum(nil))
-}
-
-func inferSequenceKind(sequence string) SequenceKind {
-	sequence = strings.TrimSpace(sequence)
-	if sequence == "" {
-		return SequenceUnknown
-	}
-	dnaOnly := true
-	proteinOnly := true
-	hasProteinSpecific := false
-	for _, ch := range sequence {
-		if !strings.ContainsRune("ACGTURYSWKMBDHVNacgturyswkmbdhvn-.~", ch) {
-			dnaOnly = false
-		}
-		if strings.ContainsRune("EFILPQZXJOefilpqzxjo*", ch) {
-			hasProteinSpecific = true
-		}
-		if !strings.ContainsRune("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz*-.~", ch) {
-			proteinOnly = false
-		}
-	}
-	switch {
-	case dnaOnly && !hasProteinSpecific:
-		return SequenceNucleotide
-	case proteinOnly:
-		return SequenceProtein
-	default:
-		return SequenceUnknown
-	}
 }
 
 func cloneTreeTableValues(values map[string]string) map[string]string {

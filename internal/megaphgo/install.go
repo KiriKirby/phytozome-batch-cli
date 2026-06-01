@@ -190,7 +190,7 @@ func PrepareExecution(path string) (string, func(), error) {
 		_ = os.RemoveAll(tempDir)
 	}
 	tempRuntime := filepath.Join(tempDir, RuntimeExecutable+".exe")
-	tempMuscle := filepath.Join(tempDir, "muscleWin64.exe")
+	tempMuscle := filepath.Join(tempDir, "muscleWin64.bin")
 	if err := copyExecutionFile(runtimeSource, tempRuntime); err != nil {
 		cleanup()
 		return "", func() {}, err

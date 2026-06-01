@@ -84,36 +84,28 @@ runtime-summary.txt
 runtime.log
 ```
 
-The request carries stable IDs, sequence kind, conversion settings, selected alignment/tree methods, parameter maps, input FASTA text, and artifact paths. This is the direct PHgo-to-runtime API. `.mao` files are not part of the PHgo runtime contract.
+The request carries stable IDs, target sequence kind, selected alignment/tree methods, parameter maps, input FASTA text, and artifact paths. This is the direct PHgo-to-runtime API. `.mao` files are not part of the PHgo runtime contract.
 
-After the runtime finishes, PHgo validates the aligned FASTA before accepting the result. If the runtime returns the wrong biological type for the selected conversion target, or returns a sequence count that does not match the request, PHgo raises an explicit error instead of silently accepting a bad tree.
+After the runtime finishes, PHgo accepts or rejects the result from the runtime response and required artifact presence. PHgo does not run an extra biological validator over MEGA output; `mega-phgo-runtime` is the authority for alignment/tree correctness and runtime failure text.
 
-## Conversion Settings
+## Target Mode
 
-Canvas tree conversion is configured before alignment:
+Canvas tree target mode is configured before alignment:
 
 - Protein mode is the default target.
-- Convert is the default mismatch action.
-- Skipped rows and failed conversions are unchecked by default.
+- Runtime-reported skipped/failed rows are unchecked by default when the recovery dialog continues.
 
 The right-panel target is the source of truth for both sequence preparation and method availability. Protein mode exposes only the protein ClustalW/MUSCLE choices. DNA mode exposes only ClustalW (DNA), MUSCLE (DNA), ClustalW (Codons), and MUSCLE (Codons). If a restored snapshot or stale UI state contains an incompatible method, refresh normalizes or rejects it before `mega-phgo-runtime` is launched.
 
-In Protein mode, nucleotide rows can be sent to `mega-phgo-runtime` for MEGA-owned DNA-to-protein translation before amino-acid alignment. PHgo may classify and group rows, but it does not translate DNA locally and must not carry a Go codon table.
+MEGA 12.1 GUI behavior is data-type gated: DNA alignment actions are enabled for nucleotide data, protein alignment actions for protein data, and codon actions for coding nucleotide data. The GUI does not reverse-translate protein input into DNA. PHgo follows that behavior in the TUI form: it chooses a MEGA target mode and sends the chosen input to `mega-phgo-runtime`; MEGA either computes or emits the runtime error.
 
-In DNA mode, nucleotide rows are aligned as DNA. Protein rows are only accepted when the source row or source resolver can provide a real nucleotide sequence for that row. PHgo must not invent reverse translations from protein FASTA. Protein-only rows are reported through the same skip/error path instead of being silently included in a DNA tree.
+In Protein mode, PHgo uses selected protein payloads as-is. It does not translate nucleotide rows locally, infer protein content from letters, trim stops, or repair residues before runtime execution.
 
-FASTA rows are not treated as biologically anonymous if PHgo metadata can identify their source. DNA-mode refresh may resolve a protein FASTA row to real CDS/nucleotide data when the row carries a source database, proteome/genome ID, Phytozome genome text, report/header URL, or PHGO FASTA header metadata that uniquely maps to a supported resolver. This is still real source resolution, not reverse translation.
+In DNA mode, PHgo may use a real nucleotide/CDS sequence only when the selected row already embeds one or when row metadata points to a supported source resolver that can fetch the real nucleotide sequence. PHgo must not invent reverse translations from protein FASTA, must not classify protein-only rows by sequence letters, and must not skip them locally before runtime execution. Protein-only rows handed to DNA mode are left for MEGA runtime to accept or fail.
 
-The maintained real-runtime probe for `C:\Users\wangsychn\Desktop\output\123.pgo` exercises the production path: Protein/Convert must show `conversion.applied` and `converted_dna_to_protein` in `runtime.log`, Protein/Skip must report the mismatched DNA rows, DNA mode must resolve row-source metadata such as Lemna BLAST rows before alignment, and DNA mode must run ClustalW (DNA), MUSCLE (DNA), ClustalW (Codons), and MUSCLE (Codons) on DNA-capable rows from that snapshot.
+The maintained real-runtime probe for `C:\Users\wangsychn\Desktop\output\123.pgo` exercises the production path: Protein mode must not show PHgo conversion logs, DNA mode must resolve real row-source metadata such as Lemna BLAST rows before alignment when available, and DNA mode must run ClustalW (DNA), MUSCLE (DNA), ClustalW (Codons), and MUSCLE (Codons) on DNA-capable rows from that snapshot.
 
-`input.fasta` preserves the PHgo-selected sequences for auditability. Before handing protein or unknown non-codon inputs to MEGA-derived ClustalW or the runtime-owned MUSCLE binary, `mega-phgo-runtime` performs a narrow runtime-only cleanup so common exported protein FASTA remains computable:
-
-- terminal protein stop codons (`*`) are removed
-- internal protein stop codons are converted to `X`
-- unsupported protein gap-like characters such as `.` and `~` are converted to `-`
-- other unsupported protein characters are converted to `X`
-
-The cleanup is not applied to nucleotide or codon methods. When cleanup changes anything, `runtime.log` records a `protein.sanitized` line with the number of terminal stops trimmed, internal stops replaced, and invalid characters replaced.
+`input.fasta` preserves the PHgo-selected sequences for auditability. PHgo does not sanitize, trim, translate, reverse-translate, or repair protein/nucleotide content before runtime execution. The runtime request is the handoff boundary; MEGA-derived alignment/tree components accept the selected data or report the runtime failure.
 
 ## Metadata
 
@@ -131,7 +123,7 @@ The viewer uses this metadata to map `PHGOT...` Newick leaves to `display_name`.
 
 ## Alignment Methods
 
-Supported alignment methods are selected by the conversion target:
+Supported alignment methods are selected by the target mode:
 
 - Protein mode: `ClustalW` and `MUSCLE` for amino-acid alignment.
 - DNA mode: `ClustalW (DNA)` and `MUSCLE (DNA)` for base alignment.
@@ -141,35 +133,38 @@ ClustalW uses MEGA 12.1 source code linked into the PHgo runtime. MUSCLE uses th
 
 Each method is backed by a parameter definition registry. The registry stores PHgo-owned parameter IDs, labels, defaults, allowed values, applicability, and runtime method names. Protein `ClustalW` and `MUSCLE` are UI-specific method IDs that map to runtime `clustalw` and `muscle` with `sequence_kind=protein`. DNA base methods map to runtime `clustalw` and `muscle` with `sequence_kind=nucleotide`. Codon methods map to runtime `clustalw_codons` and `muscle_codons`.
 
-The UI exposes methods compatible with the current conversion target. Protein mode shows two align choices; DNA mode shows four because it includes both base-level and codon-level DNA alignment. The pipeline validates the selected method again while building the run plan, so stale snapshots or old panel state cannot launch an incompatible runtime request.
+The UI exposes methods compatible with the current target mode. Protein mode shows two align choices; DNA mode shows four because it includes both base-level and codon-level DNA alignment. The pipeline normalizes the selected method again while building the run plan, so stale snapshots or old panel state cannot launch an incompatible runtime request.
 
 ## Tree Methods
 
-Tree inference is runtime-only. The current verified runtime tree implementation is:
+Tree inference is runtime-only. The verified runtime tree methods are:
 
 - Neighbor-Joining
+- Minimum Evolution
+- UPGMA
+- Maximum Likelihood
+- Maximum Parsimony
 
-Maximum Likelihood and Maximum Parsimony are not exposed until the PHgo runtime owns verified implementations, defaults, artifact parsing, and tests for those methods.
+Minimum Evolution bootstrap is wired through MEGA's `TBootstrapMEThread` path in `mega-phgo-runtime` and covered by a real-runtime probe.
 
 ## Refresh Semantics
 
 `Refresh tree` has two explicit phases:
 
-- compute: prepare selected sequences, run `mega-phgo-runtime` for conversion/skip handling, alignment, and tree inference
+- compute: prepare selected sequences, run `mega-phgo-runtime` for MEGA alignment and tree inference
 - render: push the current payload/metadata to Reactree
 
 The first refresh in a live Canvas session is always a full compute refresh. After a `.pgo` Canvas snapshot is opened, the restored payload may be shown, but the first user-triggered `Refresh tree` is also always a full compute refresh; it must not reuse snapshot-restored alignment/tree artifacts. Later refreshes may run render-only only when the sole change since the last successful compute is a display label change.
 
-The progress UI must make the active phase obvious: loading selected rows, preparing the runtime request, converting or skipping mismatched rows inside `mega-phgo-runtime`, explicitly reporting render-only artifact reuse when applicable, and finally refreshing Reactree.
+The progress UI must make the active phase obvious: loading selected rows, preparing the runtime request, running `mega-phgo-runtime`, explicitly reporting render-only artifact reuse when applicable, and finally refreshing Reactree.
 
 Recompute is required when any of these values change:
 
 - selected row set
 - selected row order
 - sequence content
-- conversion target
-- conversion action
-- skip-and-unselect behavior for skipped/failed conversion rows
+- target mode
+- skip-and-unselect behavior for runtime-reported skipped/failed rows
 - alignment method
 - alignment parameter values
 - tree method
@@ -196,7 +191,7 @@ The runner computes separate fingerprints:
 - tree parameter fingerprint
 - preview fingerprint
 
-The alignment fingerprint includes selected row identity, row order, sequence content, conversion target/action, skip-and-unselect behavior, alignment method, and alignment parameters.
+The alignment fingerprint includes selected row identity, row order, sequence content, target mode, skip-and-unselect behavior, alignment method, and alignment parameters.
 
 The tree fingerprint includes the alignment output fingerprint, tree method, and tree parameters.
 
@@ -204,9 +199,9 @@ The preview fingerprint includes display-name source, display names, and viewer 
 
 The compute fingerprints deliberately exclude final `display_name` values and the display-name source selector. This keeps the refresh rule aligned with the Canvas workflow: relabeling leaves should update the viewer payload and browser rendering without re-running the runtime.
 
-Artifact reuse compares only computation settings and compute fingerprints. A run with the same selected rows, sequence content, conversion settings, alignment settings, tree settings, aligned FASTA, and Newick may be reused even when the metadata display names changed; the reused artifact set is rewritten with fresh metadata and viewer payload for the browser.
+Artifact reuse compares only computation settings and compute fingerprints. A run with the same selected rows, sequence content, target mode, alignment settings, tree settings, aligned FASTA, and Newick may be reused even when the metadata display names changed; the reused artifact set is rewritten with fresh metadata and viewer payload for the browser.
 
-Reuse is not allowed merely because fingerprints match. Before a reused run is published to Reactree, PHgo validates the reused `aligned.fasta` against the current requested target. If a historical snapshot contains nucleotide-only rows in Protein mode, protein rows in DNA mode, ambiguous aligned sequences, or the wrong sequence count, PHgo suppresses the stale payload. The first refresh after opening a snapshot bypasses reuse entirely so the current `mega-phgo-runtime` recomputes and replaces any stale historical artifacts.
+The first refresh after opening a snapshot bypasses reuse entirely so the current `mega-phgo-runtime` recomputes and replaces any stale historical artifacts. Later reuse depends on runtime artifact presence and manifest/fingerprint consistency, not on PHgo-side biological reclassification.
 
 ## Progress
 
@@ -230,11 +225,11 @@ Implemented Canvas refresh progress uses the existing cancellable TUI task modal
 - 1/6 preparing selected Canvas rows
 - 2/6 loading selected Canvas sequence payloads
 - 3/6 writing tree input FASTA and runtime request
-- 4/6 either running `mega-phgo-runtime` for conversion/skip handling plus alignment/tree inference, forcing snapshot-open recomputation, or explicitly reporting render-only artifact reuse after validation
+- 4/6 either running `mega-phgo-runtime` for MEGA alignment/tree inference, forcing snapshot-open recomputation, or explicitly reporting render-only artifact reuse
 - 5/6 preparing/updating Reactree metadata and payload
 - 6/6 Reactree viewer updated
 
-The same progress context is passed into the runtime validation path and runtime execution path, so cancellation can stop before or during long-running work.
+The same progress context is passed into runtime request preparation and runtime execution, so cancellation can stop before or during long-running work.
 
 ## Error Handling
 

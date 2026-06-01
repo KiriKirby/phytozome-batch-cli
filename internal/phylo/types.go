@@ -8,7 +8,6 @@ const (
 	DefaultAlignmentMethod   = AlignmentClustalW
 	DefaultTreeMethod        = TreeNeighborJoining
 	DefaultConversionTarget  = ConversionTargetProtein
-	DefaultConversionAction  = ConversionActionConvert
 )
 
 type AlignmentMethod string
@@ -24,6 +23,8 @@ type TreeMethod string
 
 const (
 	TreeNeighborJoining   TreeMethod = "neighbor_joining"
+	TreeMinimumEvolution  TreeMethod = "minimum_evolution"
+	TreeUPGMA             TreeMethod = "upgma"
 	TreeMaximumLikelihood TreeMethod = "maximum_likelihood"
 	TreeMaximumParsimony  TreeMethod = "maximum_parsimony"
 )
@@ -43,18 +44,10 @@ const (
 	ConversionTargetProtein ConversionTarget = "protein"
 )
 
-type ConversionAction string
-
-const (
-	ConversionActionConvert ConversionAction = "convert"
-	ConversionActionSkip    ConversionAction = "skip"
-)
-
 type TreeSettings struct {
 	DisplayNameSource      string            `json:"display_name_source"`
 	ConversionTarget       ConversionTarget  `json:"conversion_target"`
-	ConversionAction       ConversionAction  `json:"conversion_action"`
-	ConversionSkipUnselect bool              `json:"conversion_skip_unselect"`
+	ConversionSkipUnselect bool              `json:"conversion_skip_unselect,omitempty"`
 	AlignmentMethod        AlignmentMethod   `json:"alignment_method"`
 	AlignmentParams        map[string]string `json:"alignment_params,omitempty"`
 	TreeMethod             TreeMethod        `json:"tree_method"`
@@ -99,7 +92,6 @@ func DefaultTreeSettings() TreeSettings {
 	return TreeSettings{
 		DisplayNameSource:      DefaultDisplayNameSource,
 		ConversionTarget:       DefaultConversionTarget,
-		ConversionAction:       DefaultConversionAction,
 		ConversionSkipUnselect: true,
 		AlignmentMethod:        DefaultAlignmentMethod,
 		AlignmentParams:        map[string]string{},

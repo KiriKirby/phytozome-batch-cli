@@ -17,6 +17,10 @@ The tree system is intentionally independent from keyword search, BLAST review, 
 
 ## Document Map
 
+- [System Tree Reference Library](./reference/README.md)
+  Source-backed documentation library for the MEGA 12.1 anchors, boundary
+  contract, alignment and tree parameter surfaces, rendering/export inventory,
+  artifacts, snapshots, and final audit test plan.
 - [Architecture](./architecture.md)
   Defines process boundaries, ownership, lifecycle, and non-goals.
 - [Canvas Tool Panel](./canvas-tool-panel.md)

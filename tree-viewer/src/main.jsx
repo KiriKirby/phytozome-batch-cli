@@ -4,7 +4,7 @@ import { Reactree } from 'reactreejs';
 import 'reactreejs/style.css';
 import './style.css';
 import { relabelFasta, relabelNewick } from './labels.js';
-import { buildViewerSnapshot, installPHGOSaveBridge, saveTextFile, snapshotFilename } from './pgv.js';
+import { buildViewerSnapshot, installPHGOSaveBridge, parseViewerSnapshot, saveTextFile, snapshotFilename } from './pgv.js';
 
 function sessionIDFromPath() {
   const parts = window.location.pathname.split('/').filter(Boolean);
@@ -49,6 +49,9 @@ function App() {
   const viewerHeightRef = useRef(520);
   const loadedPayloadStampRef = useRef('');
   const hasLoadedPayloadRef = useRef(false);
+  const fileInputRef = useRef(null);
+  const localSnapshotModeRef = useRef(false);
+  const [snapshotMode, setSnapshotMode] = useState(false);
   const hasTree = Boolean(payload?.newick?.trim());
   const newick = useMemo(() => relabelNewick(payload?.newick, payload?.metadata), [payload]);
   const fasta = useMemo(() => relabelFasta(payload?.aligned_fasta, payload?.metadata), [payload]);
@@ -61,6 +64,9 @@ function App() {
   };
 
   async function reload() {
+    if (localSnapshotModeRef.current) {
+      return;
+    }
     try {
       setError('');
       const [nextPayload, nextState] = await Promise.all([
@@ -87,6 +93,39 @@ function App() {
     }
   }
 
+  async function handleOpenViewerSnapshot(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) {
+      return;
+    }
+    try {
+      setError('');
+      const snapshot = parseViewerSnapshot(await file.text());
+      const nextPayload = snapshot.payload || {};
+      const nextState = snapshot.viewer_state || {};
+      const payloadStamp = nextPayload?.updated_at || '';
+      localSnapshotModeRef.current = true;
+      setSnapshotMode(true);
+      setPayload(nextPayload);
+      setInitialViewerState(Object.keys(nextState).length > 0 ? nextState : null);
+      viewerStateRef.current = nextState;
+      loadedPayloadStampRef.current = payloadStamp;
+      hasLoadedPayloadRef.current = true;
+      if (typeof nextState?.phgo?.split_percent === 'number') {
+        setSplitPercent(nextState.phgo.split_percent);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  function handleReturnToLiveSession() {
+    localSnapshotModeRef.current = false;
+    setSnapshotMode(false);
+    reload();
+  }
+
   function handleViewerStateChange(state) {
     viewerStateRef.current = {
       schema_version: 1,
@@ -102,6 +141,9 @@ function App() {
       },
     };
     window.clearTimeout(handleViewerStateChange.timer);
+    if (localSnapshotModeRef.current) {
+      return;
+    }
     handleViewerStateChange.timer = window.setTimeout(() => {
       putViewerState(sessionID, viewerStateRef.current).catch((err) => {
         setError(err instanceof Error ? err.message : String(err));
@@ -193,6 +235,9 @@ function App() {
           payload_updated_at: payload?.updated_at || '',
         },
       };
+      if (localSnapshotModeRef.current) {
+        return;
+      }
       window.clearTimeout(handleViewerStateChange.timer);
       handleViewerStateChange.timer = window.setTimeout(() => {
         putViewerState(sessionID, viewerStateRef.current).catch((err) => {
@@ -268,6 +313,17 @@ function App() {
 
   return (
     <main className="shell" onSelectStart={preventTextSelection} onDragStart={preventTextSelection}>
+      <div className="viewer-tools">
+        <input
+          ref={fileInputRef}
+          className="viewer-file-input"
+          type="file"
+          accept=".pgv,application/json"
+          onChange={handleOpenViewerSnapshot}
+        />
+        <button type="button" onClick={() => fileInputRef.current?.click()}>Open .pgv</button>
+        {snapshotMode && <button type="button" onClick={handleReturnToLiveSession}>Live</button>}
+      </div>
       {error && (
         <div className="modal-backdrop" role="alertdialog" aria-modal="true" aria-label="Tree viewer warning">
           <div className="modal">

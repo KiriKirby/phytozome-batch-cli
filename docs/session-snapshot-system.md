@@ -93,7 +93,7 @@ Canvas item titles follow a fixed source rule:
 - FASTA/text files use the shortened source filename
 - pasted FASTA text uses a numeric title
 
-Canvas tree snapshots also preserve the system-tree tool panel state: the current page, display-name source, conversion target/action, skip-unselect setting, alignment method/parameters, and tree method/parameters. The default restored page is the conversion page, so reopened snapshots expose the Protein/DNA mode choice before alignment and tree settings. A restored tree payload may be shown immediately, but the first user-triggered `Refresh tree` after opening a Canvas snapshot must run a full `mega-phgo-runtime` compute pass before rendering; only later display-label-only changes are render-only.
+Canvas tree snapshots also preserve the system-tree tool panel state: the current page, display-name source, target mode, skip-unselect setting, alignment method/parameters, and tree method/parameters. The default restored page is the target-mode page, so reopened snapshots expose the Protein/DNA mode choice before alignment and tree settings. A restored tree payload may be shown immediately, but the first user-triggered `Refresh tree` after opening a Canvas snapshot must run a full `mega-phgo-runtime` compute pass before rendering; only later display-label-only changes are render-only.
 
 ## Current Version Rule
 

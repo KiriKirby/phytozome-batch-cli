@@ -168,6 +168,37 @@ func TestEnsureRuntimeAvailableRequiredListStillRequiresRuntimeOwnedMuscle(t *te
 	}
 }
 
+func TestPrepareExecutionCopiesRuntimeOwnedMuscleNameExpectedByRuntime(t *testing.T) {
+	requireBundledRuntimePlatform(t)
+	t.Cleanup(withTempApplicationDir(t))
+	toolsDir, err := ToolsDir()
+	if err != nil {
+		t.Fatalf("ToolsDir returned error: %v", err)
+	}
+	runtimePath := filepath.Join(toolsDir, executableName(RuntimeExecutable))
+	if err := writeProbeRuntime(runtimePath); err != nil {
+		t.Fatalf("write runtime: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(toolsDir, executableName(MuscleExecutable)), []byte("fake muscle"), 0o755); err != nil {
+		t.Fatalf("write muscle: %v", err)
+	}
+	preparedRuntime, cleanup, err := PrepareExecution(runtimePath)
+	if err != nil {
+		t.Fatalf("PrepareExecution returned error: %v", err)
+	}
+	defer cleanup()
+	if filepath.Base(preparedRuntime) != RuntimeExecutable+".exe" {
+		t.Fatalf("prepared runtime = %q, want temporary .exe runtime", preparedRuntime)
+	}
+	preparedDir := filepath.Dir(preparedRuntime)
+	if _, err := os.Stat(filepath.Join(preparedDir, "muscleWin64.bin")); err != nil {
+		t.Fatalf("temporary runtime directory missing runtime-owned MUSCLE .bin: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(preparedDir, "muscleWin64.exe")); err == nil {
+		t.Fatalf("temporary runtime directory should not use MEGA runtime-invisible MUSCLE .exe copy")
+	}
+}
+
 func TestManagedExecutableRejectsRenamedNonPHGORuntime(t *testing.T) {
 	requireBundledRuntimePlatform(t)
 	t.Cleanup(withTempApplicationDir(t))

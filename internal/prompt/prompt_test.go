@@ -367,7 +367,7 @@ func TestBuildCanvasTreePanelFiltersCodonMethodsByConversionTarget(t *testing.T)
 		Columns:  nucViewColumns,
 		Rows:     nucViewRows,
 		Selected: []bool{true},
-	}}, []model.CanvasItem{nucleotideItem}, phylo.DefaultTreeSettings(), tui.CanvasTreePanelState{ConversionTarget: string(phylo.ConversionTargetDNA), ConversionAction: string(phylo.ConversionActionConvert)})
+	}}, []model.CanvasItem{nucleotideItem}, phylo.DefaultTreeSettings(), tui.CanvasTreePanelState{ConversionTarget: string(phylo.ConversionTargetDNA)})
 	hasCodon := false
 	hasNucleotideClustal := false
 	hasNucleotideMuscle := false

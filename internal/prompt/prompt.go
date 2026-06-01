@@ -5555,7 +5555,6 @@ func (p *Prompter) SelectCanvas(initial []model.CanvasItem, currentItem int, nex
 		if stored, ok := p.canvasTreeStates[stateKey]; ok {
 			treeSettings.DisplayNameSource = stored.DisplayNameSource
 			treeSettings.ConversionTarget = phylo.ConversionTarget(stored.ConversionTarget)
-			treeSettings.ConversionAction = phylo.ConversionAction(stored.ConversionAction)
 			treeSettings.ConversionSkipUnselect = stored.ConversionSkipUnselect
 			treeSettings.AlignmentMethod = phylo.AlignmentMethod(stored.AlignmentMethod)
 			treeSettings.AlignmentParams = cloneStringMap(stored.AlignmentParams)
@@ -5821,18 +5820,21 @@ func buildCanvasTreePanel(items []tui.BlastRunItem, canvasItems []model.CanvasIt
 	}
 	alignmentMethods := alignmentByTarget[string(settings.ConversionTarget)]
 	treeMethods := treeByTarget[string(settings.ConversionTarget)]
+	hadPanelState := state.EnabledEver || state.Expanded || state.Focused || state.CurrentControl != 0 ||
+		strings.TrimSpace(state.DisplayNameSource) != "" ||
+		strings.TrimSpace(state.ConversionTarget) != "" ||
+		strings.TrimSpace(state.AlignmentMethod) != "" ||
+		strings.TrimSpace(state.TreeMethod) != "" ||
+		len(state.AlignmentParams) > 0 ||
+		len(state.TreeParams) > 0
 	if state.DisplayNameSource == "" {
 		state.DisplayNameSource = settings.DisplayNameSource
 	}
-	hadConversionState := strings.TrimSpace(state.ConversionTarget) != "" || strings.TrimSpace(state.ConversionAction) != ""
 	if strings.TrimSpace(state.ConversionTarget) == "" {
 		state.ConversionTarget = string(settings.ConversionTarget)
 	}
-	if strings.TrimSpace(state.ConversionAction) == "" {
-		state.ConversionAction = string(settings.ConversionAction)
-	}
-	if !hadConversionState && !state.ConversionSkipUnselect {
-		state.ConversionSkipUnselect = true
+	if !hadPanelState {
+		state.ConversionSkipUnselect = settings.ConversionSkipUnselect
 	}
 	if state.AlignmentMethod == "" || !canvasTreeMethodIDAvailable(alignmentMethods, state.AlignmentMethod) {
 		state.AlignmentMethod = string(settings.AlignmentMethod)
@@ -5861,7 +5863,7 @@ func buildCanvasTreePanel(items []tui.BlastRunItem, canvasItems []model.CanvasIt
 		TreeMethods:        treeMethods,
 		AlignmentByTarget:  alignmentByTarget,
 		TreeByTarget:       treeByTarget,
-		Status:             canvasTreePanelStatus(inputSequenceKind, sequenceKind, settings),
+		Status:             canvasTreePanelStatus(inputSequenceKind, sequenceKind),
 	}
 }
 
@@ -5870,12 +5872,7 @@ func treeSettingsWithPanelConversionState(settings phylo.TreeSettings, state tui
 	if strings.TrimSpace(state.ConversionTarget) != "" {
 		settings.ConversionTarget = phylo.ConversionTarget(strings.TrimSpace(state.ConversionTarget))
 	}
-	if strings.TrimSpace(state.ConversionAction) != "" {
-		settings.ConversionAction = phylo.ConversionAction(strings.TrimSpace(state.ConversionAction))
-	}
-	if strings.TrimSpace(state.ConversionTarget) != "" || strings.TrimSpace(state.ConversionAction) != "" {
-		settings.ConversionSkipUnselect = state.ConversionSkipUnselect
-	}
+	settings.ConversionSkipUnselect = state.ConversionSkipUnselect
 	return phylo.NormalizeTreeSettings(settings)
 }
 
@@ -5891,7 +5888,11 @@ func canvasTreeAlignmentMethodsForKind(kind phylo.SequenceKind, params map[strin
 	defs := phylo.AlignmentDefinitionsForKind(kind)
 	methods := make([]tui.CanvasTreeMethod, 0, len(defs))
 	for _, def := range defs {
-		methods = append(methods, canvasTreeMethodFromDefinition(def, params))
+		current := map[string]string(nil)
+		if paramsApplyToMethod(def, params) {
+			current = params
+		}
+		methods = append(methods, canvasTreeMethodFromDefinition(def, current))
 	}
 	return methods
 }
@@ -5900,12 +5901,16 @@ func canvasTreeTreeMethodsForKind(kind phylo.SequenceKind, params map[string]str
 	defs := phylo.TreeDefinitionsForKind(kind)
 	methods := make([]tui.CanvasTreeMethod, 0, len(defs))
 	for _, def := range defs {
-		methods = append(methods, canvasTreeMethodFromDefinition(def, params))
+		current := map[string]string(nil)
+		if paramsApplyToMethod(def, params) {
+			current = params
+		}
+		methods = append(methods, canvasTreeMethodFromDefinition(def, current))
 	}
 	return methods
 }
 
-func canvasTreePanelStatus(inputKind phylo.SequenceKind, targetKind phylo.SequenceKind, settings phylo.TreeSettings) string {
+func canvasTreePanelStatus(inputKind phylo.SequenceKind, targetKind phylo.SequenceKind) string {
 	target := "protein"
 	if targetKind == phylo.SequenceNucleotide {
 		target = "DNA"
@@ -5916,11 +5921,7 @@ func canvasTreePanelStatus(inputKind phylo.SequenceKind, targetKind phylo.Sequen
 	case phylo.SequenceProtein:
 		return fmt.Sprintf("mega-phgo-runtime will prepare %s tree input from selected protein rows; Reactree consumes generated artifacts.", target)
 	default:
-		action := "convert"
-		if settings.ConversionAction == phylo.ConversionActionSkip {
-			action = "skip"
-		}
-		return fmt.Sprintf("mega-phgo-runtime handles mixed/unknown rows with target=%s and mismatch=%s before Reactree preview.", target, action)
+		return fmt.Sprintf("mega-phgo-runtime receives selected rows in %s mode; any sequence/data errors come back from MEGA before Reactree preview.", target)
 	}
 }
 
@@ -5931,6 +5932,47 @@ func canvasTreeMethodIDAvailable(methods []tui.CanvasTreeMethod, id string) bool
 	}
 	for _, method := range methods {
 		if strings.EqualFold(strings.TrimSpace(method.ID), id) {
+			return true
+		}
+	}
+	return false
+}
+
+func paramsApplyToMethod(def phylo.MethodDefinition, params map[string]string) bool {
+	if len(params) == 0 {
+		return false
+	}
+	valid := make(map[string]bool, len(def.Parameters))
+	for _, param := range def.Parameters {
+		if param.Kind == phylo.ParameterSection || param.ReadOnly || strings.TrimSpace(param.ID) == "" {
+			continue
+		}
+		valid[param.ID] = true
+	}
+	for key := range params {
+		if !valid[strings.TrimSpace(key)] {
+			return false
+		}
+	}
+	for _, param := range def.Parameters {
+		if param.Kind == phylo.ParameterSection || param.ReadOnly || strings.TrimSpace(param.ID) == "" || len(param.Options) == 0 {
+			continue
+		}
+		value, ok := params[param.ID]
+		if !ok {
+			continue
+		}
+		if !canvasTreeParamOptionAllowed(param.Options, value) {
+			return false
+		}
+	}
+	return true
+}
+
+func canvasTreeParamOptionAllowed(options []string, value string) bool {
+	value = strings.TrimSpace(value)
+	for _, option := range options {
+		if strings.EqualFold(strings.TrimSpace(option), value) {
 			return true
 		}
 	}
@@ -5985,39 +6027,12 @@ func canvasTreeRowSequenceKind(row model.CanvasRow) phylo.SequenceKind {
 		if row.FASTA.SequenceKind == model.SequenceProtein {
 			return phylo.SequenceProtein
 		}
-		return promptInferPhyloSequenceKind(firstNonEmptyText(row.FASTA.Sequence, row.FASTA.NucleotideSequence, row.FASTA.ProteinSequence))
+		return phylo.SequenceUnknown
 	case model.CanvasKindKeyword, model.CanvasKindBlast:
 		return phylo.SequenceProtein
 	default:
 		return phylo.SequenceUnknown
 	}
-}
-
-func promptInferPhyloSequenceKind(sequence string) phylo.SequenceKind {
-	sequence = strings.TrimSpace(sequence)
-	if sequence == "" {
-		return phylo.SequenceUnknown
-	}
-	dna, protein := 0, 0
-	for _, ch := range sequence {
-		switch {
-		case ch == '-' || ch == '*' || ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t':
-			continue
-		case strings.ContainsRune("ACGTUNacgtun", ch):
-			dna++
-		case (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z'):
-			protein++
-		default:
-			return phylo.SequenceUnknown
-		}
-	}
-	if protein > 0 {
-		return phylo.SequenceProtein
-	}
-	if dna > 0 {
-		return phylo.SequenceNucleotide
-	}
-	return phylo.SequenceUnknown
 }
 
 func canvasTreeMethodFromDefinition(def phylo.MethodDefinition, current map[string]string) tui.CanvasTreeMethod {
@@ -6030,14 +6045,18 @@ func canvasTreeMethodFromDefinition(def phylo.MethodDefinition, current map[stri
 			}
 		}
 		params = append(params, tui.CanvasTreeParameter{
-			ID:       param.ID,
-			Label:    param.Label,
-			Kind:     string(param.Kind),
-			Value:    value,
-			Default:  param.Default,
-			Options:  append([]string(nil), param.Options...),
-			ReadOnly: param.ReadOnly,
-			Section:  param.Kind == phylo.ParameterSection,
+			ID:        param.ID,
+			Label:     param.Label,
+			Kind:      string(param.Kind),
+			Value:     value,
+			Default:   param.Default,
+			Options:   append([]string(nil), param.Options...),
+			ReadOnly:  param.ReadOnly,
+			Section:   param.Kind == phylo.ParameterSection,
+			Min:       param.Min,
+			Max:       param.Max,
+			Increment: param.Increment,
+			Precision: param.Precision,
 		})
 	}
 	return tui.CanvasTreeMethod{ID: def.ID, Label: def.Label, Parameters: params}
@@ -6047,7 +6066,6 @@ func treeSettingsFromPanel(panel tui.CanvasTreePanelState) phylo.TreeSettings {
 	return phylo.NormalizeTreeSettings(phylo.TreeSettings{
 		DisplayNameSource:      strings.TrimSpace(panel.DisplayNameSource),
 		ConversionTarget:       phylo.ConversionTarget(strings.TrimSpace(panel.ConversionTarget)),
-		ConversionAction:       phylo.ConversionAction(strings.TrimSpace(panel.ConversionAction)),
 		ConversionSkipUnselect: panel.ConversionSkipUnselect,
 		AlignmentMethod:        phylo.AlignmentMethod(strings.TrimSpace(panel.AlignmentMethod)),
 		AlignmentParams:        cloneStringMap(panel.AlignmentParams),

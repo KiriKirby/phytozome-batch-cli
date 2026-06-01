@@ -30,7 +30,6 @@ import (
 	"github.com/KiriKirby/phytozome-go/internal/progressctx"
 	"github.com/KiriKirby/phytozome-go/internal/prompt"
 	"github.com/KiriKirby/phytozome-go/internal/sessionsnapshot"
-	"github.com/KiriKirby/phytozome-go/internal/source"
 	"github.com/KiriKirby/phytozome-go/internal/tui"
 )
 
@@ -410,33 +409,19 @@ func (w *BlastWizard) refreshCanvasTreeWithProgress(ctx context.Context, state c
 
 func (w *BlastWizard) buildCanvasTreeArtifacts(ctx context.Context, state canvasLaunchState, selectedRows []canvasSelectedRow, settings phylo.TreeSettings) (phylo.RunResult, error) {
 	now := time.Now()
-	progressctx.Report(ctx, 2, fmt.Sprintf("Loading selected Canvas sequence payloads for %s-mode tree analysis (%s)...", canvasTreeTargetLabel(settings), canvasTreeConversionLabel(settings)))
-	rowSources, skipped, err := w.canvasTreeRowSourcesWithSkippedForSettings(ctx, state, selectedRows, settings)
+	progressctx.Report(ctx, 2, fmt.Sprintf("Loading selected Canvas sequence payloads for MEGA %s-mode tree analysis...", canvasTreeTargetLabel(settings)))
+	rowSources, err := w.canvasTreeRowSourcesWithSkippedForSettings(ctx, state, selectedRows, settings)
 	if err != nil {
 		return phylo.RunResult{}, err
 	}
-	rowSources, skipped, normalizedKind, err := normalizeCanvasTreeRowSourcesWithSkipped(rowSources, skipped, settings)
-	if len(skipped) > 0 {
-		return phylo.RunResult{}, &canvasTreeSkippedRowsError{SkippedRows: skipped}
-	}
-	if err != nil {
-		return phylo.RunResult{}, err
-	}
-	progressctx.Report(ctx, 3, fmt.Sprintf("Writing tree input FASTA and runtime request for %s...", canvasTreeConversionLabel(settings)))
+	progressctx.Report(ctx, 3, fmt.Sprintf("Writing tree input FASTA and runtime request for MEGA %s mode...", canvasTreeTargetLabel(settings)))
 	records, meta, err := phylo.BuildInput(rowSources, settings.DisplayNameSource, w.canvasTreeSessionID(), now)
 	if err != nil {
 		return phylo.RunResult{}, err
 	}
-	sequenceKind := normalizedKind
-	if sequenceKind == phylo.SequenceUnknown {
-		sequenceKind = inferCanvasTreeSequenceKind(records)
-	}
-	if sequenceKind == phylo.SequenceUnknown {
-		return phylo.RunResult{}, fmt.Errorf("selected canvas rows mix incompatible sequence kinds or include ambiguous FASTA content; please refresh the tree with one sequence kind at a time")
-	}
 	runID := canvasTreeRunID(now)
 	artifactDir := mustCanvasTreeArtifactDir(w.canvasTreeSessionID(), runID)
-	plan, err := phylo.BuildRunPlan(w.canvasTreeSessionID(), runID, artifactDir, settings, sequenceKind, records, meta, "", "", now)
+	plan, err := phylo.BuildRunPlan(w.canvasTreeSessionID(), runID, artifactDir, settings, canvasTreeTargetSequenceKind(settings), records, meta, "", "", now)
 	if err != nil {
 		return phylo.RunResult{}, err
 	}
@@ -445,11 +430,11 @@ func (w *BlastWizard) buildCanvasTreeArtifacts(ctx context.Context, state canvas
 	} else if reused, ok, err := w.reuseLastCanvasTreePlan(plan, records, meta, now); err != nil {
 		return phylo.RunResult{}, err
 	} else if ok {
-		progressctx.Report(ctx, 4, "Only tree labels changed; reusing validated runtime artifacts and rerendering Reactree...")
+		progressctx.Report(ctx, 4, "Only tree labels changed; reusing runtime artifacts and rerendering Reactree...")
 		w.canvasTreeLastPlan = reused.Plan
 		return reused, nil
 	}
-	progressctx.Report(ctx, 4, fmt.Sprintf("Running mega-phgo-runtime for %s conversion/skip handling, alignment, and tree inference...", canvasTreeConversionLabel(settings)))
+	progressctx.Report(ctx, 4, fmt.Sprintf("Running mega-phgo-runtime for MEGA %s alignment and tree inference...", canvasTreeTargetLabel(settings)))
 	result, err := phylo.RunPlanWithRuntime(ctx, plan, phylo.RuntimeOptions{})
 	if err != nil {
 		if runtimeSkipped := canvasTreeSkippedRowsFromRuntime(result.SkippedRecords); len(runtimeSkipped) > 0 {
@@ -481,9 +466,6 @@ func (w *BlastWizard) reuseLastCanvasTreePlan(plan phylo.RunPlan, records []phyl
 		return phylo.RunResult{}, false, err
 	}
 	if candidate.Fingerprints.Alignment != last.Fingerprints.Alignment || candidate.Fingerprints.Tree != last.Fingerprints.Tree {
-		return phylo.RunResult{}, false, nil
-	}
-	if err := phylo.ValidateRunPlanAlignment(candidate, candidate.AlignedFASTA); err != nil {
 		return phylo.RunResult{}, false, nil
 	}
 	candidate = phylo.AttachRuntimeAudit(candidate, "mega-phgo-runtime/reused", now)
@@ -543,9 +525,6 @@ func (w *BlastWizard) openCanvasTreeViewer(ctx context.Context) error {
 }
 
 func (w *BlastWizard) updateCanvasTreeViewer(ctx context.Context, plan phylo.RunPlan) error {
-	if err := phylo.ValidateRunPlanAlignment(plan, plan.AlignedFASTA); err != nil {
-		return err
-	}
 	server, _, err := w.ensureCanvasTreeViewer(ctx)
 	if err != nil {
 		return err
@@ -640,23 +619,18 @@ func mustCanvasTreeArtifactDir(sessionID string, runID string) string {
 }
 
 func (w *BlastWizard) canvasTreeRowSources(ctx context.Context, state canvasLaunchState, selectedRows []canvasSelectedRow) ([]phylo.RowSource, error) {
-	rowSources, skipped, err := w.canvasTreeRowSourcesWithSkipped(ctx, state, selectedRows)
+	rowSources, err := w.canvasTreeRowSourcesWithSkipped(ctx, state, selectedRows)
 	if err != nil {
 		return nil, err
-	}
-	if len(skipped) > 0 {
-		first := skipped[0]
-		return nil, fmt.Errorf("canvas row %d in %q %s", first.RowIndex+1, strings.TrimSpace(first.ItemTitle), first.Reason)
 	}
 	return rowSources, nil
 }
 
-func (w *BlastWizard) canvasTreeRowSourcesWithSkipped(ctx context.Context, state canvasLaunchState, selectedRows []canvasSelectedRow) ([]phylo.RowSource, []canvasTreeSkippedRow, error) {
+func (w *BlastWizard) canvasTreeRowSourcesWithSkipped(ctx context.Context, state canvasLaunchState, selectedRows []canvasSelectedRow) ([]phylo.RowSource, error) {
 	return w.canvasTreeRowSourcesWithSkippedForSettings(ctx, state, selectedRows, phylo.DefaultTreeSettings())
 }
 
-func (w *BlastWizard) canvasTreeRowSourcesWithSkippedForSettings(ctx context.Context, state canvasLaunchState, selectedRows []canvasSelectedRow, settings phylo.TreeSettings) ([]phylo.RowSource, []canvasTreeSkippedRow, error) {
-	settings = phylo.NormalizeTreeSettings(settings)
+func (w *BlastWizard) canvasTreeRowSourcesWithSkippedForSettings(ctx context.Context, state canvasLaunchState, selectedRows []canvasSelectedRow, settings phylo.TreeSettings) ([]phylo.RowSource, error) {
 	itemIndexByTitle := make(map[string]int, len(state.Items))
 	for i, item := range state.Items {
 		title := strings.TrimSpace(item.Title)
@@ -668,54 +642,27 @@ func (w *BlastWizard) canvasTreeRowSourcesWithSkippedForSettings(ctx context.Con
 		}
 	}
 	out := make([]phylo.RowSource, 0, len(selectedRows))
-	skipped := make([]canvasTreeSkippedRow, 0)
 	for _, selected := range selectedRows {
 		choice, err := w.canvasTreeSequenceForSettings(ctx, selected, settings)
 		if err != nil {
-			skipped = append(skipped, canvasTreeSkippedRow{
-				ItemTitle: strings.TrimSpace(selected.ItemTitle),
-				RowIndex:  selected.RowIndex,
-				Reason:    err.Error(),
-			})
-			continue
-		}
-		sequence := strings.TrimSpace(choice.Sequence)
-		if strings.TrimSpace(sequence) == "" {
-			skipped = append(skipped, canvasTreeSkippedRow{
-				ItemTitle: strings.TrimSpace(selected.ItemTitle),
-				RowIndex:  selected.RowIndex,
-				Reason:    fmt.Sprintf("canvas row %d has no sequence payload", selected.RowIndex+1),
-			})
-			continue
+			return nil, err
 		}
 		row := selected.Row
 		values := canvasTreeTableValues(row, selected.ItemTitle)
-		kind := choice.Kind
-		if kind == phylo.SequenceUnknown {
-			kind = rowSequenceKindForCanvasTree(row, sequence)
-		}
-		if kind == phylo.SequenceUnknown {
-			skipped = append(skipped, canvasTreeSkippedRow{
-				ItemTitle: strings.TrimSpace(selected.ItemTitle),
-				RowIndex:  selected.RowIndex,
-				Reason:    fmt.Sprintf("canvas row %d in %q has ambiguous sequence kind", selected.RowIndex+1, strings.TrimSpace(selected.ItemTitle)),
-			})
-			continue
-		}
 		itemIndex := itemIndexByTitle[strings.TrimSpace(selected.ItemTitle)]
 		out = append(out, phylo.RowSource{
 			ItemTitle:    strings.TrimSpace(selected.ItemTitle),
 			ItemIndex:    itemIndex,
 			RowIndex:     selected.RowIndex,
 			CanvasRow:    row,
-			Sequence:     sequence,
-			SequenceKind: kind,
+			Sequence:     strings.TrimSpace(choice.Sequence),
+			SequenceKind: choice.Kind,
 			SourceType:   string(row.Kind),
 			OriginalHead: canvasRowOriginalHead(row, selected.ItemTitle),
 			TableValues:  values,
 		})
 	}
-	return out, skipped, nil
+	return out, nil
 }
 
 func canvasTreeSkipSummary(skipped []canvasTreeSkippedRow) string {
@@ -725,7 +672,7 @@ func canvasTreeSkipSummary(skipped []canvasTreeSkippedRow) string {
 	lines := []string{
 		fmt.Sprintf("%d selected Canvas row(s) cannot be used for the current tree refresh.", len(skipped)),
 		"",
-		"Choose Skip to continue refreshing the remaining compatible rows. The conversion cleanup setting controls whether skipped rows are also unchecked.",
+		"Choose Skip to continue after MEGA/runtime reported skipped rows. The cleanup setting controls whether those rows are also unchecked.",
 		"",
 	}
 	limit := minInt(len(skipped), 8)
@@ -776,7 +723,7 @@ func canvasTreeSkippedRowsFromRuntime(records []phylo.RuntimeSkippedRecord) []ca
 		out = append(out, canvasTreeSkippedRow{
 			ItemTitle: strings.TrimSpace(record.ItemTitle),
 			RowIndex:  record.RowIndex,
-			Reason:    firstNonEmpty(strings.TrimSpace(record.Reason), "was skipped by mega-phgo-runtime conversion"),
+			Reason:    firstNonEmpty(strings.TrimSpace(record.Reason), "was reported by mega-phgo-runtime"),
 		})
 	}
 	return out
@@ -798,94 +745,183 @@ type canvasTreeSequenceChoice struct {
 func (w *BlastWizard) canvasTreeSequenceForSettings(ctx context.Context, selected canvasSelectedRow, settings phylo.TreeSettings) (canvasTreeSequenceChoice, error) {
 	row := selected.Row
 	targetKind := canvasTreeTargetSequenceKind(settings)
+	if targetKind == phylo.SequenceNucleotide {
+		if choice, ok, err := w.canvasTreeNucleotideSequenceChoice(ctx, selected, settings); err != nil {
+			return canvasTreeSequenceChoice{}, err
+		} else if ok {
+			return choice, nil
+		}
+		return canvasTreeSequenceChoice{Kind: targetKind}, nil
+	}
 	switch row.Kind {
 	case model.CanvasKindFasta:
 		if row.FASTA == nil {
-			return canvasTreeSequenceChoice{}, fmt.Errorf("canvas FASTA row %d has no sequence payload", selected.RowIndex+1)
+			return canvasTreeSequenceChoice{Kind: targetKind}, nil
 		}
-		choice := canvasFastaTreeSequenceChoice(*row.FASTA, targetKind)
-		if targetKind == phylo.SequenceNucleotide && choice.Kind != phylo.SequenceNucleotide {
-			sequence, resolveErr := w.canvasTreeNucleotideSequence(ctx, selected)
-			if resolveErr != nil {
-				return canvasTreeSequenceChoice{}, resolveErr
-			}
-			return canvasTreeSequenceChoice{Sequence: sequence, Kind: phylo.SequenceNucleotide}, nil
-		}
-		return choice, nil
+		return canvasFastaTreeSequenceChoice(*row.FASTA, targetKind), nil
 	case model.CanvasKindKeyword, model.CanvasKindBlast:
 		if sequence := strings.TrimSpace(canvasRowStoredSequence(row)); sequence != "" {
-			if targetKind == phylo.SequenceNucleotide {
-				if kind := inferSequenceKindForCanvasTree(sequence); kind == phylo.SequenceNucleotide {
-					return canvasTreeSequenceChoice{Sequence: sequence, Kind: phylo.SequenceNucleotide}, nil
-				}
-			} else if kind := inferSequenceKindForCanvasTree(sequence); kind == phylo.SequenceProtein {
-				return canvasTreeSequenceChoice{Sequence: sequence, Kind: phylo.SequenceProtein}, nil
-			}
-			if targetKind == phylo.SequenceNucleotide {
-				if sequence, err := w.canvasTreeNucleotideSequence(ctx, selected); err == nil {
-					return canvasTreeSequenceChoice{Sequence: sequence, Kind: phylo.SequenceNucleotide}, nil
-				} else {
-					return canvasTreeSequenceChoice{}, err
-				}
-			}
-			return canvasTreeSequenceChoice{Sequence: sequence, Kind: inferSequenceKindForCanvasTree(sequence)}, nil
+			return canvasTreeSequenceChoice{Sequence: sequence, Kind: phylo.SequenceProtein}, nil
+		}
+		if !canvasTreeProteinSequenceResolvable(row) {
+			return canvasTreeSequenceChoice{Kind: targetKind}, nil
 		}
 		record, err := w.canvasSequenceRecord(ctx, selected)
 		if err != nil {
-			if targetKind == phylo.SequenceNucleotide {
-				sequence, resolveErr := w.canvasTreeNucleotideSequence(ctx, selected)
-				if resolveErr != nil {
-					return canvasTreeSequenceChoice{}, resolveErr
-				}
-				return canvasTreeSequenceChoice{Sequence: sequence, Kind: phylo.SequenceNucleotide}, nil
-			}
 			return canvasTreeSequenceChoice{}, err
 		}
 		sequence := strings.TrimSpace(record.Sequence)
-		return canvasTreeSequenceChoice{Sequence: sequence, Kind: inferSequenceKindForCanvasTree(sequence)}, nil
+		return canvasTreeSequenceChoice{Sequence: sequence, Kind: phylo.SequenceProtein}, nil
 	default:
-		return canvasTreeSequenceChoice{}, fmt.Errorf("canvas row %d cannot be used for tree analysis", selected.RowIndex+1)
+		return canvasTreeSequenceChoice{Kind: targetKind}, nil
 	}
 }
 
-func canvasFastaTreeSequenceChoice(source model.QuerySequenceSource, targetKind phylo.SequenceKind) canvasTreeSequenceChoice {
-	generic := strings.TrimSpace(source.Sequence)
-	protein := strings.TrimSpace(source.ProteinSequence)
-	nucleotide := strings.TrimSpace(source.NucleotideSequence)
-	genericKind := modelSequenceKindToPhylo(source.SequenceKind)
-	if genericKind == phylo.SequenceUnknown && generic != "" {
-		genericKind = inferSequenceKindForCanvasTree(generic)
+func canvasTreeProteinSequenceResolvable(row model.CanvasRow) bool {
+	switch row.Kind {
+	case model.CanvasKindKeyword:
+		return row.KeywordRow != nil && strings.TrimSpace(row.KeywordRow.SequenceID) != ""
+	case model.CanvasKindBlast:
+		return row.BlastRow != nil && strings.TrimSpace(firstNonEmpty(row.BlastRow.SequenceID, row.BlastRow.TranscriptID, row.BlastRow.Protein)) != ""
+	default:
+		return false
 	}
+}
 
-	if targetKind == phylo.SequenceNucleotide {
-		switch {
-		case nucleotide != "":
-			return canvasTreeSequenceChoice{Sequence: nucleotide, Kind: phylo.SequenceNucleotide}
-		case generic != "" && genericKind == phylo.SequenceNucleotide:
-			return canvasTreeSequenceChoice{Sequence: generic, Kind: phylo.SequenceNucleotide}
-		case generic != "":
-			return canvasTreeSequenceChoice{Sequence: generic, Kind: genericKind}
-		case protein != "":
-			return canvasTreeSequenceChoice{Sequence: protein, Kind: phylo.SequenceProtein}
+func (w *BlastWizard) canvasTreeNucleotideSequenceChoice(ctx context.Context, selected canvasSelectedRow, settings phylo.TreeSettings) (canvasTreeSequenceChoice, bool, error) {
+	row := selected.Row
+	if row.Kind == model.CanvasKindFasta && row.FASTA != nil {
+		source := *row.FASTA
+		if sequence := strings.TrimSpace(source.NucleotideSequence); sequence != "" {
+			return canvasTreeSequenceChoice{Sequence: sequence, Kind: phylo.SequenceNucleotide}, true, nil
 		}
-		return canvasTreeSequenceChoice{}
+		if sourceSequenceKind(source.SequenceKind) == phylo.SequenceNucleotide {
+			if sequence := strings.TrimSpace(source.Sequence); sequence != "" {
+				return canvasTreeSequenceChoice{Sequence: sequence, Kind: phylo.SequenceNucleotide}, true, nil
+			}
+		}
 	}
+	src, sourceName, targetID, sequenceID, ok, err := w.canvasTreeNucleotideResolver(row)
+	if err != nil {
+		return canvasTreeSequenceChoice{}, false, err
+	}
+	if !ok {
+		return canvasTreeSequenceChoice{}, false, nil
+	}
+	resolver, ok := src.(nucleotideSequenceResolver)
+	if !ok {
+		return canvasTreeSequenceChoice{}, false, nil
+	}
+	program := canvasTreeNucleotideProgram(settings)
+	cacheKey := canvasTreeNucleotideSequenceCacheKey(sourceName, targetID, sequenceID, program)
+	if sequence, ok := w.cachedProteinSequence(cacheKey); ok {
+		return canvasTreeSequenceChoice{Sequence: sequence.Sequence, Kind: phylo.SequenceNucleotide}, true, nil
+	}
+	value, err, _ := w.proteinSequenceGroup.Do(cacheKey, func() (any, error) {
+		if sequence, ok := w.cachedProteinSequence(cacheKey); ok {
+			return sequence, nil
+		}
+		sequence, err := resolver.FetchNucleotideSequence(ctx, targetID, sequenceID, program)
+		if err != nil {
+			return model.ProteinSequenceData{}, err
+		}
+		w.storeProteinSequence(cacheKey, sequence)
+		return sequence, nil
+	})
+	if err != nil {
+		return canvasTreeSequenceChoice{}, false, err
+	}
+	sequence := value.(model.ProteinSequenceData)
+	if strings.TrimSpace(sequence.Sequence) == "" {
+		return canvasTreeSequenceChoice{}, false, nil
+	}
+	return canvasTreeSequenceChoice{Sequence: sequence.Sequence, Kind: phylo.SequenceNucleotide}, true, nil
+}
 
-	switch {
-	case protein != "":
-		return canvasTreeSequenceChoice{Sequence: protein, Kind: phylo.SequenceProtein}
-	case generic != "" && genericKind == phylo.SequenceProtein:
-		return canvasTreeSequenceChoice{Sequence: generic, Kind: phylo.SequenceProtein}
-	case generic != "":
-		return canvasTreeSequenceChoice{Sequence: generic, Kind: genericKind}
-	case nucleotide != "":
-		return canvasTreeSequenceChoice{Sequence: nucleotide, Kind: phylo.SequenceNucleotide}
+func (w *BlastWizard) canvasTreeNucleotideResolver(row model.CanvasRow) (any, string, int, string, bool, error) {
+	database := normalizeSnapshotDatabase(canvasRowSourceDatabase(row))
+	var src any
+	if database == "" && w.source != nil {
+		src = w.source
+		database = normalizeSnapshotDatabase(w.source.Name())
+	} else if database != "" && w.source != nil && strings.EqualFold(normalizeSnapshotDatabase(w.source.Name()), database) {
+		src = w.source
+	} else if database != "" && database != string(model.CanvasKindFasta) {
+		resolved, err := w.dataSourceForDatabase(database)
+		if err != nil {
+			return nil, "", 0, "", false, err
+		}
+		src = resolved
+	}
+	if src == nil {
+		return nil, "", 0, "", false, nil
+	}
+	targetID, sequenceID := canvasTreeNucleotideTarget(row, w.lastKeywordSpecies)
+	sequenceID = strings.TrimSpace(sequenceID)
+	if sequenceID == "" {
+		return nil, "", 0, "", false, nil
+	}
+	sourceName := database
+	if named, ok := src.(interface{ Name() string }); ok {
+		sourceName = named.Name()
+	}
+	return src, sourceName, targetID, sequenceID, true, nil
+}
+
+func canvasTreeNucleotideTarget(row model.CanvasRow, keywordSpecies model.SpeciesCandidate) (int, string) {
+	switch row.Kind {
+	case model.CanvasKindFasta:
+		if row.FASTA == nil {
+			return 0, ""
+		}
+		return row.FASTA.SourceProteomeID, firstNonEmpty(
+			row.FASTA.PreferredSequenceID,
+			row.FASTA.TranscriptID,
+			row.FASTA.ProteinID,
+			row.FASTA.GeneID,
+		)
+	case model.CanvasKindKeyword:
+		if row.KeywordRow == nil {
+			return 0, ""
+		}
+		return keywordSpecies.ProteomeID, firstNonEmpty(
+			row.KeywordRow.SequenceID,
+			row.KeywordRow.TranscriptID,
+			row.KeywordRow.ProteinID,
+			row.KeywordRow.GeneIdentifier,
+		)
+	case model.CanvasKindBlast:
+		if row.BlastRow == nil {
+			return 0, ""
+		}
+		return row.BlastRow.TargetID, firstNonEmpty(
+			row.BlastRow.SequenceID,
+			row.BlastRow.TranscriptID,
+			row.BlastRow.Protein,
+			row.BlastRow.SubjectID,
+		)
 	default:
-		return canvasTreeSequenceChoice{}
+		return 0, ""
 	}
 }
 
-func modelSequenceKindToPhylo(kind model.SequenceKind) phylo.SequenceKind {
+func canvasTreeNucleotideProgram(settings phylo.TreeSettings) string {
+	settings = phylo.NormalizeTreeSettings(settings)
+	if settings.AlignmentMethod == phylo.AlignmentClustalWCodons || settings.AlignmentMethod == phylo.AlignmentMUSCLECodons {
+		return "tblastn"
+	}
+	return "blastn"
+}
+
+func canvasTreeNucleotideSequenceCacheKey(sourceName string, targetID int, sequenceID string, program string) string {
+	sourceName = databaseDisplayName(firstNonEmpty(strings.TrimSpace(sourceName), "unknown"))
+	if strings.EqualFold(sourceName, "lemna") {
+		targetID = 0
+	}
+	return "nucleotide:" + sourceName + ":" + strconv.Itoa(targetID) + ":" + strings.ToLower(strings.TrimSpace(program)) + ":" + strings.TrimSpace(sequenceID)
+}
+
+func sourceSequenceKind(kind model.SequenceKind) phylo.SequenceKind {
 	switch kind {
 	case model.SequenceDNA:
 		return phylo.SequenceNucleotide
@@ -896,140 +932,33 @@ func modelSequenceKindToPhylo(kind model.SequenceKind) phylo.SequenceKind {
 	}
 }
 
-func (w *BlastWizard) canvasTreeNucleotideSequence(ctx context.Context, selected canvasSelectedRow) (string, error) {
-	row := selected.Row
-	resolverSource, err := w.canvasTreeResolverSource(ctx, row)
-	if err != nil {
-		return "", fmt.Errorf("canvas row %d cannot be converted to DNA: %w", selected.RowIndex+1, err)
+func canvasFastaTreeSequenceChoice(source model.QuerySequenceSource, targetKind phylo.SequenceKind) canvasTreeSequenceChoice {
+	generic := strings.TrimSpace(source.Sequence)
+	protein := strings.TrimSpace(source.ProteinSequence)
+	nucleotide := strings.TrimSpace(source.NucleotideSequence)
+
+	if targetKind == phylo.SequenceNucleotide {
+		switch {
+		case nucleotide != "":
+			return canvasTreeSequenceChoice{Sequence: nucleotide, Kind: phylo.SequenceNucleotide}
+		case generic != "":
+			return canvasTreeSequenceChoice{Sequence: generic, Kind: sourceSequenceKind(source.SequenceKind)}
+		case protein != "":
+			return canvasTreeSequenceChoice{Sequence: protein, Kind: phylo.SequenceProtein}
+		}
+		return canvasTreeSequenceChoice{}
 	}
-	resolver, ok := resolverSource.(nucleotideSequenceResolver)
-	if !ok {
-		sourceName := "selected source"
-		if resolverSource != nil {
-			sourceName = databaseDisplayName(resolverSource.Name())
-		}
-		return "", fmt.Errorf("canvas row %d cannot be converted to DNA because %s does not support nucleotide sequence resolution", selected.RowIndex+1, sourceName)
-	}
-	var (
-		targetID   int
-		sequenceID string
-	)
-	switch row.Kind {
-	case model.CanvasKindFasta:
-		if row.FASTA == nil {
-			return "", fmt.Errorf("canvas FASTA row %d is unavailable", selected.RowIndex+1)
-		}
-		targetID = row.FASTA.SourceProteomeID
-		sequenceID = strings.TrimSpace(firstNonEmpty(row.FASTA.TranscriptID, row.FASTA.ProteinID, row.FASTA.GeneID, row.FASTA.PreferredSequenceID))
-		if targetID == 0 {
-			if _, inferredTargetID, _ := w.canvasFastaNucleotideResolutionHint(ctx, *row.FASTA); inferredTargetID > 0 {
-				targetID = inferredTargetID
-			}
-		}
-	case model.CanvasKindKeyword:
-		if row.KeywordRow == nil {
-			return "", fmt.Errorf("canvas keyword row %d is unavailable", selected.RowIndex+1)
-		}
-		targetID = canvasKeywordNucleotideTargetID(*row.KeywordRow, resolverSource, w.lastKeywordSpecies)
-		sequenceID = strings.TrimSpace(firstNonEmpty(row.KeywordRow.SequenceID, row.KeywordRow.TranscriptID, row.KeywordRow.ProteinID))
-	case model.CanvasKindBlast:
-		if row.BlastRow == nil {
-			return "", fmt.Errorf("canvas BLAST row %d is unavailable", selected.RowIndex+1)
-		}
-		targetID = row.BlastRow.TargetID
-		if targetID == 0 && sameSourceName(resolverSource, w.source) {
-			targetID = w.phytozomeTargetIDForRow(ctx, *row.BlastRow)
-		}
-		sequenceID = strings.TrimSpace(firstNonEmpty(row.BlastRow.SequenceID, row.BlastRow.TranscriptID, row.BlastRow.Protein, row.BlastRow.SubjectID))
+
+	switch {
+	case protein != "":
+		return canvasTreeSequenceChoice{Sequence: protein, Kind: phylo.SequenceProtein}
+	case generic != "":
+		return canvasTreeSequenceChoice{Sequence: generic, Kind: sourceSequenceKind(source.SequenceKind)}
+	case nucleotide != "":
+		return canvasTreeSequenceChoice{Sequence: nucleotide, Kind: phylo.SequenceNucleotide}
 	default:
-		return "", fmt.Errorf("canvas row %d cannot be converted to DNA", selected.RowIndex+1)
+		return canvasTreeSequenceChoice{}
 	}
-	if targetID == 0 || sequenceID == "" {
-		return "", fmt.Errorf("canvas row %d cannot be converted to DNA because no nucleotide sequence id is available", selected.RowIndex+1)
-	}
-	data, err := resolver.FetchNucleotideSequence(ctx, targetID, sequenceID, "blastn")
-	if err != nil {
-		return "", fmt.Errorf("canvas row %d could not resolve a nucleotide sequence for DNA mode: %w", selected.RowIndex+1, err)
-	}
-	sequence := strings.TrimSpace(data.Sequence)
-	if sequence == "" {
-		return "", fmt.Errorf("canvas row %d resolved an empty nucleotide sequence for DNA mode", selected.RowIndex+1)
-	}
-	return sequence, nil
-}
-
-func (w *BlastWizard) canvasTreeResolverSource(ctx context.Context, row model.CanvasRow) (source.DataSource, error) {
-	database := normalizeSnapshotDatabase(canvasRowSourceDatabase(row))
-	if row.Kind == model.CanvasKindKeyword && database == "" && row.KeywordRow != nil {
-		if phytozomeGenomeIDFromText(row.KeywordRow.Genome) > 0 {
-			database = "phytozome"
-		}
-	}
-	if row.Kind == model.CanvasKindFasta && row.FASTA != nil {
-		if hintedDatabase, _, _ := w.canvasFastaNucleotideResolutionHint(ctx, *row.FASTA); hintedDatabase != "" {
-			database = hintedDatabase
-		}
-	}
-	if database == "" || database == "fasta" {
-		if w.source == nil {
-			return nil, fmt.Errorf("no selected source is available")
-		}
-		return w.source, nil
-	}
-	if w.source != nil && strings.EqualFold(strings.TrimSpace(w.source.Name()), database) {
-		return w.source, nil
-	}
-	return w.dataSourceForDatabase(database)
-}
-
-func (w *BlastWizard) canvasFastaNucleotideResolutionHint(ctx context.Context, fasta model.QuerySequenceSource) (string, int, string) {
-	database := normalizeSnapshotDatabase(fasta.SourceDatabase)
-	targetID := fasta.SourceProteomeID
-	sequenceID := strings.TrimSpace(firstNonEmpty(fasta.TranscriptID, fasta.ProteinID, fasta.GeneID, fasta.PreferredSequenceID))
-	if database == "" || database == "fasta" || database == "canvas" {
-		database = normalizeSnapshotDatabase(firstNonEmpty(
-			inferSourceDatabaseFromURL(fasta.NormalizedURL),
-			inferSourceDatabaseFromURL(fasta.OriginalInputURL),
-		))
-	}
-	if (database == "" || database == "fasta" || database == "canvas") && sequenceID != "" {
-		if species, ok := w.canvasFastaPhytozomeSpecies(ctx, fasta); ok {
-			database = "phytozome"
-			if targetID == 0 {
-				targetID = species.ProteomeID
-			}
-		}
-	}
-	return database, targetID, sequenceID
-}
-
-func (w *BlastWizard) canvasFastaPhytozomeSpecies(ctx context.Context, fasta model.QuerySequenceSource) (model.SpeciesCandidate, bool) {
-	phytozomeSource, err := w.dataSourceForDatabase("phytozome")
-	if err != nil || phytozomeSource == nil {
-		return model.SpeciesCandidate{}, false
-	}
-	candidates, err := w.speciesCandidatesForSource(ctx, phytozomeSource, nil)
-	if err != nil {
-		return model.SpeciesCandidate{}, false
-	}
-	if fasta.SourceJBrowseName != "" {
-		if species, ok := findSpeciesCandidateByJBrowseName(candidates, fasta.SourceJBrowseName); ok {
-			return species, true
-		}
-	}
-	if fasta.SourceProteomeID > 0 {
-		for _, candidate := range candidates {
-			if candidate.ProteomeID == fasta.SourceProteomeID {
-				return candidate, true
-			}
-		}
-	}
-	for _, value := range []string{fasta.SourceGenomeLabel, fasta.OrganismShort, fasta.Annotation} {
-		if species, ok := matchPhytozomeSpeciesForFastaHeader(value, candidates); ok {
-			return species, true
-		}
-	}
-	return model.SpeciesCandidate{}, false
 }
 
 func canvasRowSourceDatabase(row model.CanvasRow) string {
@@ -1048,48 +977,6 @@ func canvasRowSourceDatabase(row model.CanvasRow) string {
 		}
 	}
 	return ""
-}
-
-func canvasKeywordNucleotideTargetID(row model.KeywordResultRow, src source.DataSource, fallback model.SpeciesCandidate) int {
-	if id := phytozomeGenomeIDFromText(row.Genome); id > 0 {
-		return id
-	}
-	return fallback.ProteomeID
-}
-
-func phytozomeGenomeIDFromText(text string) int {
-	lower := strings.ToLower(text)
-	marker := "phytozome genome id:"
-	idx := strings.Index(lower, marker)
-	if idx < 0 {
-		return 0
-	}
-	rest := strings.TrimSpace(text[idx+len(marker):])
-	var digits strings.Builder
-	for _, ch := range rest {
-		if ch >= '0' && ch <= '9' {
-			digits.WriteRune(ch)
-			continue
-		}
-		if digits.Len() > 0 {
-			break
-		}
-	}
-	if digits.Len() == 0 {
-		return 0
-	}
-	id, err := strconv.Atoi(digits.String())
-	if err != nil {
-		return 0
-	}
-	return id
-}
-
-func sameSourceName(a source.DataSource, b source.DataSource) bool {
-	if a == nil || b == nil {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(a.Name()), strings.TrimSpace(b.Name()))
 }
 
 func canvasTreeTableValues(row model.CanvasRow, fallback string) map[string]string {
@@ -1337,172 +1224,24 @@ func canvasRowColumnValue(row model.CanvasRow, columnID string, fallback string)
 	return ""
 }
 
-func inferCanvasTreeSequenceKind(records []phylo.InputRecord) phylo.SequenceKind {
-	kind := phylo.SequenceUnknown
-	for _, record := range records {
-		if record.SequenceKind == phylo.SequenceUnknown {
-			continue
-		}
-		if kind == phylo.SequenceUnknown {
-			kind = record.SequenceKind
-			continue
-		}
-		if kind != record.SequenceKind {
-			return phylo.SequenceUnknown
-		}
-	}
-	return kind
-}
-
-func rowSequenceKindForCanvasTree(row model.CanvasRow, sequence string) phylo.SequenceKind {
-	switch row.Kind {
-	case model.CanvasKindFasta:
-		if row.FASTA != nil {
-			switch row.FASTA.SequenceKind {
-			case model.SequenceDNA:
-				return phylo.SequenceNucleotide
-			case model.SequenceProtein:
-				return phylo.SequenceProtein
-			}
-		}
-		return inferSequenceKindForCanvasTree(sequence)
-	case model.CanvasKindKeyword, model.CanvasKindBlast:
-		if kind := inferSequenceKindForCanvasTree(sequence); kind != phylo.SequenceUnknown {
-			return kind
-		}
-		return phylo.SequenceProtein
-	default:
-		return phylo.SequenceUnknown
-	}
-}
-
-func inferSequenceKindForCanvasTree(sequence string) phylo.SequenceKind {
-	cleaned := cleanCanvasTreeSequenceForKind(sequence)
-	if cleaned == "" {
-		return phylo.SequenceUnknown
-	}
-	letterSeen := false
-	nucleotideOnly := true
-	proteinLetterSeen := false
-	for _, ch := range cleaned {
-		if strings.ContainsRune("-.*~?=", ch) {
-			continue
-		}
-		if ch < 'A' || ch > 'Z' {
-			nucleotideOnly = false
-			continue
-		}
-		letterSeen = true
-		if !strings.ContainsRune("ACGTUNRYKMSWBDHVX", ch) {
-			nucleotideOnly = false
-		}
-		if strings.ContainsRune("EFILPQJOZBX", ch) {
-			proteinLetterSeen = true
-		}
-	}
-	if !letterSeen {
-		return phylo.SequenceUnknown
-	}
-	switch {
-	case proteinLetterSeen && !nucleotideOnly:
-		return phylo.SequenceProtein
-	case nucleotideOnly:
-		return phylo.SequenceNucleotide
-	default:
-		return phylo.SequenceUnknown
-	}
-}
-
-func cleanCanvasTreeSequenceForKind(sequence string) string {
-	var b strings.Builder
-	b.Grow(len(sequence))
-	for _, line := range strings.Split(strings.ReplaceAll(sequence, "\r\n", "\n"), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, ">") {
-			continue
-		}
-		for _, ch := range line {
-			switch {
-			case ch == ' ' || ch == '\t':
-				continue
-			case ch >= 'a' && ch <= 'z':
-				b.WriteRune(ch - 'a' + 'A')
-			default:
-				b.WriteRune(ch)
-			}
-		}
-	}
-	return strings.TrimSpace(b.String())
-}
-
 func normalizeCanvasTreeRowSources(sources []phylo.RowSource) ([]phylo.RowSource, phylo.SequenceKind, error) {
-	normalized, skipped, kind, err := normalizeCanvasTreeRowSourcesWithSkipped(sources, nil, phylo.DefaultTreeSettings())
+	normalized, _, kind, err := normalizeCanvasTreeRowSourcesWithSkipped(sources, nil, phylo.DefaultTreeSettings())
 	if err != nil {
 		return nil, kind, err
-	}
-	if len(skipped) > 0 {
-		first := skipped[0]
-		return nil, phylo.SequenceUnknown, fmt.Errorf("canvas row %d in %q %s", first.RowIndex+1, strings.TrimSpace(first.ItemTitle), first.Reason)
 	}
 	return normalized, kind, nil
 }
 
 func normalizeCanvasTreeRowSourcesWithSkipped(sources []phylo.RowSource, skipped []canvasTreeSkippedRow, settings phylo.TreeSettings) ([]phylo.RowSource, []canvasTreeSkippedRow, phylo.SequenceKind, error) {
-	settings = phylo.NormalizeTreeSettings(settings)
-	targetKind := canvasTreeTargetSequenceKind(settings)
 	if len(sources) == 0 {
 		return nil, skipped, phylo.SequenceUnknown, fmt.Errorf("no tree input records were selected")
 	}
 	usable := make([]phylo.RowSource, 0, len(sources))
 	for _, src := range sources {
 		next := src
-		if strings.TrimSpace(next.Sequence) == "" {
-			skipped = append(skipped, canvasTreeSkippedRow{
-				ItemTitle: strings.TrimSpace(src.ItemTitle),
-				RowIndex:  src.RowIndex,
-				Reason:    "sequence is empty",
-			})
-			continue
-		}
-		if next.SequenceKind == "" || next.SequenceKind == phylo.SequenceUnknown {
-			next.SequenceKind = inferSequenceKindForCanvasTree(next.Sequence)
-		}
-		switch next.SequenceKind {
-		case phylo.SequenceProtein:
-			if targetKind == phylo.SequenceNucleotide {
-				skipped = append(skipped, canvasTreeSkippedRow{
-					ItemTitle: strings.TrimSpace(src.ItemTitle),
-					RowIndex:  src.RowIndex,
-					Reason:    "is a protein sequence while DNA mode is selected; MEGA cannot infer the original DNA sequence from a protein FASTA",
-				})
-				continue
-			}
-		case phylo.SequenceNucleotide:
-			if targetKind == phylo.SequenceProtein && settings.ConversionAction == phylo.ConversionActionSkip {
-				skipped = append(skipped, canvasTreeSkippedRow{
-					ItemTitle: strings.TrimSpace(src.ItemTitle),
-					RowIndex:  src.RowIndex,
-					Reason:    "is a nucleotide sequence while Protein mode is selected and mismatched rows are set to Skip",
-				})
-				continue
-			}
-		default:
-			skipped = append(skipped, canvasTreeSkippedRow{
-				ItemTitle: strings.TrimSpace(src.ItemTitle),
-				RowIndex:  src.RowIndex,
-				Reason:    "has ambiguous sequence kind",
-			})
-			continue
-		}
 		usable = append(usable, next)
 	}
-	if len(usable) == 0 {
-		if len(skipped) > 0 {
-			return nil, skipped, phylo.SequenceUnknown, nil
-		}
-		return nil, skipped, phylo.SequenceUnknown, fmt.Errorf("no tree input records were selected")
-	}
-	return usable, skipped, targetKind, nil
+	return usable, skipped, canvasTreeTargetSequenceKind(settings), nil
 }
 
 func canvasTreeTargetSequenceKind(settings phylo.TreeSettings) phylo.SequenceKind {
@@ -1518,15 +1257,6 @@ func canvasTreeTargetLabel(settings phylo.TreeSettings) string {
 		return "DNA"
 	}
 	return "Protein"
-}
-
-func canvasTreeConversionLabel(settings phylo.TreeSettings) string {
-	target := canvasTreeTargetLabel(settings)
-	action := strings.ToLower(strings.TrimSpace(string(settings.ConversionAction)))
-	if action == "" {
-		action = "convert"
-	}
-	return fmt.Sprintf("%s / %s", target, action)
 }
 
 func canvasDefaultSaveName(items []model.CanvasItem) string {
@@ -2383,15 +2113,16 @@ func (w *BlastWizard) exportCanvasSelections(ctx context.Context, state canvasLa
 		return nil
 	}
 	selectedRows := w.selectedCanvasRowsInCurrentOrder(state.Items, settings.WriteAllRows)
-	if (settings.WriteText || settings.WriteConvertedFasta) && len(selectedRows) == 0 {
-		return fmt.Errorf("no selected canvas rows are available for FASTA export")
-	}
 	if settings.WriteText {
-		records, err := w.canvasSequenceRecordsForExport(ctx, selectedRows)
+		exportRows := w.selectedCanvasRowsInCurrentOrderForExport(state.Items, settings.WriteAllRows)
+		if len(exportRows) == 0 {
+			return fmt.Errorf("no selected canvas rows are available for FASTA export")
+		}
+		records, err := w.canvasSequenceRecordsForExport(ctx, exportRows)
 		if err != nil {
 			return err
 		}
-		records = applyCanvasHeaderMode(records, selectedRows, settings.fastaHeaderMode())
+		records = applyCanvasHeaderMode(records, exportRows, settings.fastaHeaderMode())
 		textPath := filepath.Join(settings.OutputDir, settings.BaseName+".fasta")
 		if err := withSpinner(w.out, "Writing canvas FASTA file...", func() error {
 			return export.WriteProteinSequencesText(textPath, records)
@@ -2400,6 +2131,9 @@ func (w *BlastWizard) exportCanvasSelections(ctx context.Context, state canvasLa
 		}
 	}
 	if settings.WriteConvertedFasta {
+		if len(selectedRows) == 0 {
+			return fmt.Errorf("no selected canvas rows are available for converted FASTA export")
+		}
 		records, err := w.canvasConvertedSequenceRecordsForExport(ctx, state, selectedRows, settings.TreeSettings, settings.fastaHeaderMode())
 		if err != nil {
 			return err
@@ -2483,12 +2217,16 @@ func (w *BlastWizard) selectedCanvasRowsInCurrentOrder(items []model.CanvasItem,
 	return selectedCanvasRowsInVisibleOrder(items, w.prompt.SnapshotCanvasReviewState(canvasStateKey("canvas")), includeUnchecked)
 }
 
+func (w *BlastWizard) selectedCanvasRowsInCurrentOrderForExport(items []model.CanvasItem, includeUnchecked bool) []canvasSelectedRow {
+	return selectedCanvasRowsInVisibleOrderForExport(items, w.prompt.SnapshotCanvasReviewState(canvasStateKey("canvas")), includeUnchecked)
+}
+
 func selectedCanvasRowsInOrder(items []model.CanvasItem) []canvasSelectedRow {
 	out := make([]canvasSelectedRow, 0)
 	for _, item := range items {
 		selected := normalizeCanvasSelection(item.Selected, len(item.Rows))
 		for rowIndex, row := range item.Rows {
-			if rowIndex >= len(selected) || !selected[rowIndex] || !canvasRowHasSequenceForExport(row) {
+			if rowIndex >= len(selected) || !selected[rowIndex] {
 				continue
 			}
 			out = append(out, canvasSelectedRow{
@@ -2496,6 +2234,16 @@ func selectedCanvasRowsInOrder(items []model.CanvasItem) []canvasSelectedRow {
 				RowIndex:  rowIndex,
 				Row:       row,
 			})
+		}
+	}
+	return out
+}
+
+func selectedCanvasRowsInOrderForExport(items []model.CanvasItem) []canvasSelectedRow {
+	out := make([]canvasSelectedRow, 0)
+	for _, selected := range selectedCanvasRowsInOrder(items) {
+		if canvasRowHasSequenceForExport(selected.Row) {
+			out = append(out, selected)
 		}
 	}
 	return out
@@ -2520,14 +2268,22 @@ func selectedCanvasRowsInVisibleOrder(items []model.CanvasItem, reviewState tui.
 			if !includeUnchecked && (rowIndex >= len(selected) || !selected[rowIndex]) {
 				continue
 			}
-			if !canvasRowHasSequenceForExport(row) {
-				continue
-			}
 			out = append(out, canvasSelectedRow{
 				ItemTitle: strings.TrimSpace(item.Title),
 				RowIndex:  rowIndex,
 				Row:       row,
 			})
+		}
+	}
+	return out
+}
+
+func selectedCanvasRowsInVisibleOrderForExport(items []model.CanvasItem, reviewState tui.BlastRunSelectionState, includeUnchecked bool) []canvasSelectedRow {
+	rows := selectedCanvasRowsInVisibleOrder(items, reviewState, includeUnchecked)
+	out := make([]canvasSelectedRow, 0, len(rows))
+	for _, selected := range rows {
+		if canvasRowHasSequenceForExport(selected.Row) {
+			out = append(out, selected)
 		}
 	}
 	return out

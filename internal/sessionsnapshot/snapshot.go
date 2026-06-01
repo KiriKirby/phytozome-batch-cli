@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,7 +31,7 @@ import (
 const (
 	FileExtension = ".pgo"
 	FormatName    = "phgo-session-snapshot"
-	FormatVersion = "2.3"
+	FormatVersion = "2.7"
 
 	contextModuleName       = "context"
 	keywordModuleName       = "keyword-result"
@@ -160,6 +161,48 @@ type CanvasTreeV2 struct {
 	LastNewick       string                   `json:"last_newick,omitempty"`
 	Fingerprints     phylo.Fingerprints       `json:"fingerprints"`
 	ArtifactPaths    []string                 `json:"artifact_paths,omitempty"`
+}
+
+func IsLegacyTreeSnapshot(snapshot Snapshot) bool {
+	return compareFormatVersion(snapshot.Context.FormatVersion, FormatVersion) < 0
+}
+
+func compareFormatVersion(left string, right string) int {
+	leftParts := strings.Split(strings.TrimSpace(left), ".")
+	rightParts := strings.Split(strings.TrimSpace(right), ".")
+	maxLen := len(leftParts)
+	if len(rightParts) > maxLen {
+		maxLen = len(rightParts)
+	}
+	for i := 0; i < maxLen; i++ {
+		li := 0
+		ri := 0
+		if i < len(leftParts) {
+			li = parseVersionPart(leftParts[i])
+		}
+		if i < len(rightParts) {
+			ri = parseVersionPart(rightParts[i])
+		}
+		if li < ri {
+			return -1
+		}
+		if li > ri {
+			return 1
+		}
+	}
+	return 0
+}
+
+func parseVersionPart(value string) int {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 type CanvasItemV2 struct {
@@ -706,7 +749,10 @@ func ReadFile(path string) (Snapshot, error) {
 		snapshot.Context.FormatName = FormatName
 	}
 	if snapshot.Context.FormatVersion == "" {
-		snapshot.Context.FormatVersion = FormatVersion
+		snapshot.Context.FormatVersion = strings.TrimSpace(manifest.Version)
+		if snapshot.Context.FormatVersion == "" {
+			snapshot.Context.FormatVersion = FormatVersion
+		}
 	}
 	return snapshot, nil
 }

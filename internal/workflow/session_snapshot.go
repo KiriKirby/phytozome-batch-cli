@@ -526,8 +526,9 @@ func (w *BlastWizard) reviewCanvasSnapshot(ctx context.Context, snapshot session
 	if snapshot.CanvasReview != nil {
 		w.prompt.RestoreCanvasReviewState(canvasStateKey("canvas"), snapshot.CanvasReview.SelectionState)
 	}
+	legacyTreeSnapshot := sessionsnapshot.IsLegacyTreeSnapshot(snapshot)
 	if module.Tree != nil {
-		w.restoreCanvasTreeSnapshot(*module.Tree)
+		w.restoreCanvasTreeSnapshot(*module.Tree, legacyTreeSnapshot)
 	}
 	w.hydrateCommonSnapshotState(snapshot)
 	w.hydrateRuntimeCache(snapshot.RuntimeCache)
@@ -602,7 +603,7 @@ func (w *BlastWizard) hydrateCanvasRowSequenceData(items []model.CanvasItem) []m
 	return out
 }
 
-func (w *BlastWizard) restoreCanvasTreeSnapshot(tree sessionsnapshot.CanvasTreeV2) {
+func (w *BlastWizard) restoreCanvasTreeSnapshot(tree sessionsnapshot.CanvasTreeV2, legacy bool) {
 	w.prompt.RestoreCanvasTreePanelState(canvasStateKey("canvas"), tree.PanelState)
 	w.canvasTreeLastPayload = phylo.ViewerPayload{}
 	w.canvasTreeLastPlan = phylo.RunPlan{}
@@ -629,6 +630,14 @@ func (w *BlastWizard) restoreCanvasTreeSnapshot(tree sessionsnapshot.CanvasTreeV
 	settings := treeSettingsFromSnapshotPanel(tree.PanelState)
 	if manifest.SchemaVersion != 0 {
 		settings = manifest.Settings
+	}
+	if legacy {
+		displayNameSource := settings.DisplayNameSource
+		target := settings.ConversionTarget
+		settings = phylo.DefaultTreeSettings()
+		settings.DisplayNameSource = displayNameSource
+		settings.ConversionTarget = target
+		settings = phylo.NormalizeTreeSettingsForKind(settings, canvasTreeTargetSequenceKind(settings))
 	}
 	metadata := tree.LastPayload.Metadata
 	records := append([]phylo.InputRecord(nil), metadata.Records...)
@@ -670,15 +679,19 @@ func (w *BlastWizard) restoreCanvasTreeSnapshot(tree sessionsnapshot.CanvasTreeV
 	if plan.InputFASTA == "" && len(records) > 0 {
 		plan.InputFASTA = phylo.InputFASTA(records)
 	}
-	if strings.TrimSpace(plan.AlignedFASTA) != "" {
-		if err := phylo.ValidateRunPlanAlignment(plan, plan.AlignedFASTA); err != nil {
-			return
-		}
-	}
 	w.canvasTreeLastPlan = plan
 	w.canvasTreeForceCompute = true
 	if hasPayload {
 		w.canvasTreeLastPayload = tree.LastPayload
+	}
+	if legacy {
+		patched := tree.PanelState
+		patched.ConversionTarget = string(settings.ConversionTarget)
+		patched.AlignmentMethod = string(settings.AlignmentMethod)
+		patched.TreeMethod = string(settings.TreeMethod)
+		patched.AlignmentParams = cloneTreeParamMap(settings.AlignmentParams)
+		patched.TreeParams = cloneTreeParamMap(settings.TreeParams)
+		w.prompt.RestoreCanvasTreePanelState(canvasStateKey("canvas"), patched)
 	}
 }
 
@@ -714,7 +727,6 @@ func treeSettingsFromSnapshotPanel(panel tui.CanvasTreePanelState) phylo.TreeSet
 	return phylo.NormalizeTreeSettings(phylo.TreeSettings{
 		DisplayNameSource:      strings.TrimSpace(panel.DisplayNameSource),
 		ConversionTarget:       phylo.ConversionTarget(strings.TrimSpace(panel.ConversionTarget)),
-		ConversionAction:       phylo.ConversionAction(strings.TrimSpace(panel.ConversionAction)),
 		ConversionSkipUnselect: panel.ConversionSkipUnselect,
 		AlignmentMethod:        phylo.AlignmentMethod(strings.TrimSpace(panel.AlignmentMethod)),
 		AlignmentParams:        cloneTreeParamMap(panel.AlignmentParams),

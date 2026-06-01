@@ -14,6 +14,29 @@ export function buildViewerSnapshot(payload, viewerState) {
   };
 }
 
+export function parseViewerSnapshot(text) {
+  let snapshot;
+  try {
+    snapshot = JSON.parse(String(text || ''));
+  } catch {
+    throw new Error('PGV snapshot is not valid JSON.');
+  }
+  if (!snapshot || snapshot.format !== PGV_FORMAT) {
+    throw new Error('PGV snapshot format is not recognized.');
+  }
+  if (snapshot.schema_version !== PGV_SCHEMA_VERSION) {
+    throw new Error(`Unsupported PGV schema version: ${snapshot.schema_version}`);
+  }
+  if (!snapshot.payload || typeof snapshot.payload !== 'object') {
+    throw new Error('PGV snapshot is missing the viewer payload.');
+  }
+  return {
+    ...snapshot,
+    payload: snapshot.payload || {},
+    viewer_state: snapshot.viewer_state && typeof snapshot.viewer_state === 'object' ? snapshot.viewer_state : {},
+  };
+}
+
 function supportsSavePicker() {
   return typeof window !== 'undefined'
     && typeof window.showSaveFilePicker === 'function'

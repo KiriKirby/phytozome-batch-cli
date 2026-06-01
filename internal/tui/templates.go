@@ -37,8 +37,6 @@ const (
 	canvasTreeMinimumLeftWidth = 72
 	canvasTreeTargetProtein    = "protein"
 	canvasTreeTargetDNA        = "dna"
-	canvasTreeActionConvert    = "convert"
-	canvasTreeActionSkip       = "skip"
 	renameDialogWidth          = 58
 	renameDialogHeight         = 8
 	renameDialogFieldWidth     = 44
@@ -384,7 +382,6 @@ type CanvasTreePanelState struct {
 	ScrollOffset           int
 	DisplayNameSource      string
 	ConversionTarget       string
-	ConversionAction       string
 	ConversionSkipUnselect bool
 	AlignmentMethod        string
 	AlignmentParams        map[string]string
@@ -399,14 +396,18 @@ type CanvasTreeMethod struct {
 }
 
 type CanvasTreeParameter struct {
-	ID       string
-	Label    string
-	Kind     string
-	Value    string
-	Default  string
-	Options  []string
-	ReadOnly bool
-	Section  bool
+	ID        string
+	Label     string
+	Kind      string
+	Value     string
+	Default   string
+	Options   []string
+	ReadOnly  bool
+	Section   bool
+	Min       string
+	Max       string
+	Increment string
+	Precision int
 }
 
 func blastRunSelectionShowsExportScope(page BlastRunSelectionPage) bool {
@@ -697,6 +698,12 @@ type checkboxModule struct {
 	toggle  func()
 }
 
+type actionButtonModule struct {
+	*tview.Box
+	label  string
+	action func()
+}
+
 type canvasTreePanelField struct {
 	primitive tview.Primitive
 	input     *tview.InputField
@@ -777,21 +784,11 @@ func (c *canvasTreePanelPrimitive) applyState(state CanvasTreePanelState) {
 }
 
 func normalizeCanvasTreePanelConversionState(state CanvasTreePanelState) CanvasTreePanelState {
-	hadConversionState := strings.TrimSpace(state.ConversionTarget) != "" || strings.TrimSpace(state.ConversionAction) != ""
 	switch strings.ToLower(strings.TrimSpace(state.ConversionTarget)) {
 	case canvasTreeTargetDNA, "nucleotide":
 		state.ConversionTarget = canvasTreeTargetDNA
 	default:
 		state.ConversionTarget = canvasTreeTargetProtein
-	}
-	switch strings.ToLower(strings.TrimSpace(state.ConversionAction)) {
-	case canvasTreeActionSkip:
-		state.ConversionAction = canvasTreeActionSkip
-	default:
-		state.ConversionAction = canvasTreeActionConvert
-	}
-	if !hadConversionState && !state.ConversionSkipUnselect {
-		state.ConversionSkipUnselect = true
 	}
 	return state
 }
@@ -855,15 +852,21 @@ func canvasTreeSetDefaults(params map[string]string, method CanvasTreeMethod) {
 	if params == nil {
 		return
 	}
+	for key := range params {
+		delete(params, key)
+	}
 	for _, param := range method.Parameters {
 		if param.Section || param.ReadOnly || strings.TrimSpace(param.ID) == "" {
 			continue
 		}
-		if _, ok := params[param.ID]; ok {
-			continue
-		}
 		params[param.ID] = canvasTreeParamValue(params, param)
 	}
+}
+
+func canvasTreeMethodDefaults(method CanvasTreeMethod) map[string]string {
+	values := map[string]string{}
+	canvasTreeSetDefaults(values, method)
+	return values
 }
 
 func (c *canvasTreePanelPrimitive) Draw(screen tcell.Screen) {
@@ -882,14 +885,78 @@ func (c *canvasTreePanelPrimitive) Draw(screen tcell.Screen) {
 }
 
 func canvasTreeLooksBooleanOptions(options []string) bool {
+	return len(options) == 2
+}
+
+func canvasTreeCheckboxValue(options []string, checked bool) string {
+	if len(options) != 2 {
+		return ""
+	}
+	first := strings.TrimSpace(options[0])
+	second := strings.TrimSpace(options[1])
+	if checked {
+		if canvasTreeOptionLooksOff(first) || canvasTreeOptionLooksFalse(first) {
+			return second
+		}
+		return first
+	}
+	if canvasTreeOptionLooksOff(first) || canvasTreeOptionLooksFalse(first) {
+		return first
+	}
+	return second
+}
+
+func canvasTreeCheckboxChecked(value string, options []string) bool {
 	if len(options) != 2 {
 		return false
 	}
-	normalized := []string{strings.ToLower(strings.TrimSpace(options[0])), strings.ToLower(strings.TrimSpace(options[1]))}
-	sort.Strings(normalized)
-	return (normalized[0] == "false" && normalized[1] == "true") ||
-		(normalized[0] == "off" && normalized[1] == "on") ||
-		(normalized[0] == "no" && normalized[1] == "yes")
+	value = strings.TrimSpace(value)
+	if value == "" {
+		value = strings.TrimSpace(options[0])
+	}
+	if canvasTreeOptionLooksOn(value) || canvasTreeOptionLooksTrue(value) {
+		return true
+	}
+	if canvasTreeOptionLooksOff(value) || canvasTreeOptionLooksFalse(value) {
+		return false
+	}
+	return strings.EqualFold(value, strings.TrimSpace(canvasTreeCheckboxValue(options, true)))
+}
+
+func canvasTreeOptionLooksOn(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "on", "yes", "enabled", "enable", "true", "1":
+		return true
+	default:
+		return false
+	}
+}
+
+func canvasTreeOptionLooksOff(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "off", "no", "none", "disabled", "disable", "false", "0":
+		return true
+	default:
+		return false
+	}
+}
+
+func canvasTreeOptionLooksTrue(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "true", "yes", "on", "enabled", "enable", "1":
+		return true
+	default:
+		return false
+	}
+}
+
+func canvasTreeOptionLooksFalse(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "false", "no", "off", "disabled", "disable", "0":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *canvasTreePanelPrimitive) InputHandler() func(event *tcell.EventKey, setFocus func(p tview.Primitive)) {
@@ -1231,7 +1298,7 @@ func (c *canvasTreePanelPrimitive) syncUIState() {
 	page := maxInt(0, minInt(state.CurrentControl, 2))
 	if c.pageSelector != nil {
 		c.pageSelector.currentPage = page
-		c.pageSelector.summary = []string{"Conversion settings", "Align settings", "Tree settings"}[page]
+		c.pageSelector.summary = []string{"Mode settings", "Align settings", "Tree settings"}[page]
 	}
 	if c.pageContainer != nil {
 		c.pageContainer.SwitchToPage(fmt.Sprintf("tree-page-%d", page))
@@ -1259,7 +1326,7 @@ func (c *canvasTreePanelPrimitive) buildAlignPage() (*buttonFlex, []canvasTreePa
 		next := c.currentState()
 		next.AlignmentMethod = id
 		if i := canvasTreeMethodIndex(c.panel.AlignmentMethods, id); i >= 0 {
-			canvasTreeSetDefaults(next.AlignmentParams, c.panel.AlignmentMethods[i])
+			next.AlignmentParams = canvasTreeMethodDefaults(c.panel.AlignmentMethods[i])
 		}
 		next.CurrentControl = 1
 		c.panel.State = next
@@ -1277,7 +1344,12 @@ func (c *canvasTreePanelPrimitive) buildAlignPage() (*buttonFlex, []canvasTreePa
 				module.AddItem(sectionHeader(currentSection), 1, 0, false)
 				continue
 			}
+			if !canvasTreeParamVisible(param, state.AlignmentParams) {
+				continue
+			}
 			if param.ReadOnly {
+				text := canvasTreeReadOnlyParamText(param, state.AlignmentParams)
+				module.AddItem(textBlock(text), maxInt(1, len(splitSidebarLines(text))), 0, false)
 				continue
 			}
 			primitive, field, height := c.controlForParam(param, state.AlignmentParams, func(value string) {
@@ -1286,6 +1358,10 @@ func (c *canvasTreePanelPrimitive) buildAlignPage() (*buttonFlex, []canvasTreePa
 					next.AlignmentParams = map[string]string{}
 				}
 				next.AlignmentParams[param.ID] = value
+				if canvasTreeParamMayAffectVisibility(param.ID) {
+					c.panel.State = next
+					c.rebuildUI()
+				}
 				c.applyState(next)
 			})
 			module.AddItem(primitive, height, 0, false)
@@ -1300,14 +1376,14 @@ func (c *canvasTreePanelPrimitive) buildConversionPage() (*buttonFlex, []canvasT
 	body := newButtonFlex()
 	module := newButtonFlex()
 	module.SetBorder(true)
-	module.SetTitle(" Conversion settings ")
+	module.SetTitle(" Sequence mode ")
 	module.SetTitleAlign(tview.AlignCenter)
 	setFocusBorder(module.Box, true)
 	attachFocusBorder(module.Box)
-	module.AddItem(textBlock("Set the target sequence mode and decide how rows with a different detected sequence kind are handled before MEGA alignment."), 3, 0, false)
-	fields := make([]canvasTreePanelField, 0, 5)
+	module.AddItem(textBlock("Choose which MEGA alignment surface this run uses. PHgo does not pre-convert, validate, repair, or filter biological sequences; MEGA runtime handles the computation and reports any failures."), 4, 0, false)
+	fields := make([]canvasTreePanelField, 0, 3)
 
-	module.AddItem(sectionHeader("Target mode"), 1, 0, false)
+	module.AddItem(sectionHeader("MEGA sequence mode"), 1, 0, false)
 	for _, option := range []struct {
 		value string
 		label string
@@ -1331,29 +1407,8 @@ func (c *canvasTreePanelPrimitive) buildConversionPage() (*buttonFlex, []canvasT
 		fields = append(fields, canvasTreePanelField{primitive: box, group: 0})
 	}
 
-	module.AddItem(sectionHeader("Mismatched rows"), 1, 0, false)
-	for _, option := range []struct {
-		value string
-		label string
-	}{
-		{canvasTreeActionConvert, "Convert"},
-		{canvasTreeActionSkip, "Skip"},
-	} {
-		value := option.value
-		box := newCheckboxModule(option.label, func() bool {
-			return strings.EqualFold(c.currentState().ConversionAction, value)
-		}, func() {
-			next := c.currentState()
-			next.ConversionAction = value
-			next.CurrentControl = 0
-			c.applyState(next)
-		})
-		module.AddItem(box, 1, 0, false)
-		fields = append(fields, canvasTreePanelField{primitive: box, group: 0})
-	}
-
-	module.AddItem(sectionHeader("Skip cleanup"), 1, 0, false)
-	skipBox := newCheckboxModule("When skipping or conversion fails, also unselect skipped rows", func() bool {
+	module.AddItem(sectionHeader("Runtime-reported skipped rows"), 1, 0, false)
+	skipBox := newCheckboxModule("If MEGA reports skipped rows, also unselect them when continuing", func() bool {
 		return c.currentState().ConversionSkipUnselect
 	}, func() {
 		next := c.currentState()
@@ -1387,16 +1442,18 @@ func (c *canvasTreePanelPrimitive) applyConversionTarget(state *CanvasTreePanelS
 		c.panel.AlignmentMethods = methods
 		if !canvasTreePanelMethodAvailable(methods, state.AlignmentMethod) {
 			state.AlignmentMethod = strings.TrimSpace(methods[0].ID)
-			state.AlignmentParams = map[string]string{}
-			canvasTreeSetDefaults(state.AlignmentParams, methods[0])
+		}
+		if i := canvasTreeMethodIndex(methods, state.AlignmentMethod); i >= 0 {
+			state.AlignmentParams = canvasTreeMethodDefaults(methods[i])
 		}
 	}
 	if methods := c.panel.TreeByTarget[target]; len(methods) > 0 {
 		c.panel.TreeMethods = methods
 		if !canvasTreePanelMethodAvailable(methods, state.TreeMethod) {
 			state.TreeMethod = strings.TrimSpace(methods[0].ID)
-			state.TreeParams = map[string]string{}
-			canvasTreeSetDefaults(state.TreeParams, methods[0])
+		}
+		if i := canvasTreeMethodIndex(methods, state.TreeMethod); i >= 0 {
+			state.TreeParams = canvasTreeMethodDefaults(methods[i])
 		}
 	}
 }
@@ -1423,7 +1480,7 @@ func (c *canvasTreePanelPrimitive) buildTreePage() (*buttonFlex, []canvasTreePan
 		next := c.currentState()
 		next.TreeMethod = id
 		if i := canvasTreeMethodIndex(c.panel.TreeMethods, id); i >= 0 {
-			canvasTreeSetDefaults(next.TreeParams, c.panel.TreeMethods[i])
+			next.TreeParams = canvasTreeMethodDefaults(c.panel.TreeMethods[i])
 		}
 		next.CurrentControl = 2
 		c.panel.State = next
@@ -1439,7 +1496,12 @@ func (c *canvasTreePanelPrimitive) buildTreePage() (*buttonFlex, []canvasTreePan
 				module.AddItem(sectionHeader(firstNonEmptyText(param.Label, "Parameters")), 1, 0, false)
 				continue
 			}
+			if !canvasTreeParamVisible(param, state.TreeParams) {
+				continue
+			}
 			if param.ReadOnly {
+				text := canvasTreeReadOnlyParamText(param, state.TreeParams)
+				module.AddItem(textBlock(text), maxInt(1, len(splitSidebarLines(text))), 0, false)
 				continue
 			}
 			primitive, field, height := c.controlForParam(param, state.TreeParams, func(value string) {
@@ -1448,6 +1510,10 @@ func (c *canvasTreePanelPrimitive) buildTreePage() (*buttonFlex, []canvasTreePan
 					next.TreeParams = map[string]string{}
 				}
 				next.TreeParams[param.ID] = value
+				if canvasTreeParamMayAffectVisibility(param.ID) {
+					c.panel.State = next
+					c.rebuildUI()
+				}
 				c.applyState(next)
 			})
 			module.AddItem(primitive, height, 0, false)
@@ -1460,6 +1526,69 @@ func (c *canvasTreePanelPrimitive) buildTreePage() (*buttonFlex, []canvasTreePan
 	}
 	body.AddItem(module, 0, 1, true)
 	return body, fields
+}
+
+func canvasTreeParamVisible(param CanvasTreeParameter, params map[string]string) bool {
+	id := strings.ToLower(strings.TrimSpace(param.ID))
+	switch id {
+	case "gamma_parameter", "discrete_gamma_categories":
+		return strings.Contains(strings.ToLower(canvasTreeParamByID(params, "rates_among_sites")), "gamma")
+	case "number_of_initial_trees":
+		return strings.Contains(strings.ToLower(canvasTreeParamByID(params, "initial_tree_for_ml")), "multiple")
+	case "initial_tree_file":
+		return strings.Contains(strings.ToLower(canvasTreeParamByID(params, "initial_tree_for_ml")), "use tree from file")
+	case "bootstrap_replicates":
+		value := strings.ToLower(canvasTreeParamByID(params, "phylogeny_test"))
+		return strings.Contains(value, "bootstrap")
+	case "site_coverage_cutoff":
+		return strings.Contains(strings.ToLower(canvasTreeParamByID(params, "gaps_missing_data")), "partial")
+	case "initial_trees_random_addition":
+		method := strings.ToLower(canvasTreeParamByID(params, "mp_search_method"))
+		return !(strings.Contains(method, "min-mini") || strings.Contains(method, "max-mini") || strings.Contains(method, "branch-&-bound"))
+	case "mp_search_level":
+		method := strings.ToLower(canvasTreeParamByID(params, "mp_search_method"))
+		return !strings.Contains(method, "max-mini") && !strings.Contains(method, "branch-&-bound")
+	case "number_of_threads":
+		if strings.TrimSpace(canvasTreeParamByID(params, "ml_heuristic_method")) != "" {
+			return true
+		}
+		return strings.Contains(strings.ToLower(canvasTreeParamByID(params, "phylogeny_test")), "bootstrap")
+	default:
+		return true
+	}
+}
+
+func canvasTreeParamByID(params map[string]string, id string) string {
+	if params == nil {
+		return ""
+	}
+	for key, value := range params {
+		if strings.EqualFold(strings.TrimSpace(key), strings.TrimSpace(id)) {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func canvasTreeReadOnlyParamText(param CanvasTreeParameter, params map[string]string) string {
+	label := firstNonEmptyText(param.Label, param.ID)
+	value := canvasTreeParamValue(params, param)
+	if strings.TrimSpace(value) == "" {
+		value = param.Default
+	}
+	if strings.TrimSpace(value) == "" {
+		return label
+	}
+	return label + ": " + strings.TrimSpace(value)
+}
+
+func canvasTreeParamMayAffectVisibility(id string) bool {
+	switch strings.ToLower(strings.TrimSpace(id)) {
+	case "rates_among_sites", "initial_tree_for_ml", "phylogeny_test", "gaps_missing_data", "mp_search_method":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *canvasTreePanelPrimitive) newDisplayNameDropDown(current string, onChange func(string)) *tview.DropDown {
@@ -1514,21 +1643,25 @@ func (c *canvasTreePanelPrimitive) newChoiceDropDown(label string, methods []Can
 
 func (c *canvasTreePanelPrimitive) controlForParam(param CanvasTreeParameter, params map[string]string, onChange func(string)) (tview.Primitive, canvasTreePanelField, int) {
 	value := canvasTreeParamValue(params, param)
+	if strings.EqualFold(strings.TrimSpace(param.ID), "guide_tree") || strings.EqualFold(strings.TrimSpace(param.ID), "initial_tree_file") {
+		label := firstNonEmptyText(param.Label, param.ID)
+		button := newActionButtonModule(label+"...", func() {
+			if c.editText == nil {
+				return
+			}
+			c.editText(label, canvasTreeParamValue(params, param), func(text string) {
+				onChange(strings.TrimSpace(text))
+			})
+		})
+		return button, canvasTreePanelField{primitive: button, group: 0}, 1
+	}
 	if len(param.Options) > 0 || strings.EqualFold(param.Kind, "picklist") {
 		if canvasTreeLooksBooleanOptions(param.Options) {
 			box := newCheckboxModule(firstNonEmptyText(param.Label, param.ID), func() bool {
-				current := strings.ToLower(strings.TrimSpace(canvasTreeParamValue(params, param)))
-				return current == "true" || current == "on" || current == "yes"
+				return canvasTreeCheckboxChecked(canvasTreeParamValue(params, param), param.Options)
 			}, func() {
-				current := strings.ToLower(strings.TrimSpace(canvasTreeParamValue(params, param)))
-				next := strings.TrimSpace(param.Options[0])
-				if current == strings.ToLower(strings.TrimSpace(param.Options[0])) {
-					next = strings.TrimSpace(param.Options[1])
-				}
-				if current == strings.ToLower(strings.TrimSpace(param.Options[1])) {
-					next = strings.TrimSpace(param.Options[0])
-				}
-				onChange(next)
+				checked := canvasTreeCheckboxChecked(canvasTreeParamValue(params, param), param.Options)
+				onChange(canvasTreeCheckboxValue(param.Options, !checked))
 			})
 			box.SetBorder(false)
 			return box, canvasTreePanelField{primitive: box, group: 0}, 1
@@ -1959,6 +2092,68 @@ func (c *checkboxModule) MouseHandler() func(action tview.MouseAction, event *tc
 				setFocus(c)
 			}
 			c.toggleChecked()
+			return true, nil
+		}
+		return false, nil
+	})
+}
+
+func newActionButtonModule(label string, action func()) *actionButtonModule {
+	return &actionButtonModule{Box: tview.NewBox(), label: strings.TrimSpace(label), action: action}
+}
+
+func (b *actionButtonModule) activate() {
+	if b == nil || b.action == nil {
+		return
+	}
+	b.action()
+}
+
+func (b *actionButtonModule) Draw(screen tcell.Screen) {
+	b.Box.DrawForSubclass(screen, b)
+	x, y, width, height := b.GetInnerRect()
+	if width <= 0 || height <= 0 {
+		return
+	}
+	style := tcell.StyleDefault.Foreground(tview.Styles.PrimaryTextColor).Background(tview.Styles.PrimitiveBackgroundColor)
+	if b.HasFocus() {
+		style = tcell.StyleDefault.Foreground(colorAction).Background(tview.Styles.PrimitiveBackgroundColor).Bold(true)
+	}
+	label := strings.TrimSpace(b.label)
+	if label == "" {
+		label = ButtonOpen
+	}
+	text := "[ " + label + " ]"
+	printStyledText(screen, x+1, y+height/2, maxInt(0, width-1), style, text)
+}
+
+func (b *actionButtonModule) InputHandler() func(event *tcell.EventKey, setFocus func(p tview.Primitive)) {
+	return b.WrapInputHandler(func(event *tcell.EventKey, setFocus func(p tview.Primitive)) {
+		if event == nil {
+			return
+		}
+		if event.Key() == tcell.KeyEnter || (event.Key() == tcell.KeyRune && event.Rune() == ' ') {
+			b.activate()
+		}
+	})
+}
+
+func (b *actionButtonModule) MouseHandler() func(action tview.MouseAction, event *tcell.EventMouse, setFocus func(p tview.Primitive)) (bool, tview.Primitive) {
+	return b.WrapMouseHandler(func(action tview.MouseAction, event *tcell.EventMouse, setFocus func(p tview.Primitive)) (bool, tview.Primitive) {
+		if event == nil || !b.InRect(event.Position()) {
+			return false, nil
+		}
+		if action == tview.MouseLeftDown {
+			if setFocus != nil {
+				setFocus(b)
+			}
+			return true, nil
+		}
+		if action == tview.MouseLeftClick {
+			if setFocus != nil {
+				setFocus(b)
+			}
+			b.activate()
 			return true, nil
 		}
 		return false, nil
@@ -2809,11 +3004,11 @@ func RunMultiLinePage(page MultiLinePage) (MultiLineResult, error) {
 		})
 	}
 	buttons.buttons = append(buttons.buttons, buttonSpec{
-		Label:    ButtonOpenFile,
-		Shortcut: ShortcutOpenFile,
-		Action:   openFile,
-		Visible:  page.AllowOpenFile,
-		Primary:  true,
+		Label:       ButtonOpenFile,
+		Shortcut:    ShortcutOpenFile,
+		Action:      openFile,
+		Visible:     page.AllowOpenFile,
+		Primary:     true,
 		LeftPrimary: true,
 	})
 	buttons.buttons = append(buttons.buttons, buttonSpec{
@@ -4860,9 +5055,16 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 	var rebuildContentLayout func()
 	var setTreeFocus func(bool)
 	editTreeText := func(title string, initial string, commit func(string)) {
-		input := newNameInputField(initial)
-		message := hintView("")
-		pasteStatus := newPasteStatus(func() { app.SetFocus(input) })
+		area := tview.NewTextArea().
+			SetText(initial, true).
+			SetPlaceholder("Paste guide tree text here, or drop/type a text file path.")
+		area.SetBorder(true)
+		area.SetTitle(" " + trimColon(title) + " ")
+		area.SetTitleAlign(tview.AlignCenter)
+		setFocusBorder(area.Box, true)
+		attachFocusBorder(area.Box)
+		areaFrame := clipPrimitive(area)
+		pasteStatus := newPasteStatus(func() { app.SetFocus(areaFrame) })
 		closeInputModal := func() {
 			modalOpen = false
 			modalText = nil
@@ -4884,32 +5086,91 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 				closeInputModal()
 				return
 			}
-			commit(strings.TrimSpace(input.GetText()))
+			input, err := pageInput(false, area.GetText())
+			if err != nil {
+				showInputFileError(pasteStatus, err)
+				return
+			}
+			commit(strings.TrimSpace(input.Text))
 			closeInputModal()
 		}
 		paste := func() {
-			runInputFieldPaste(app, input, pasteStatus)
+			runInlinePaste(app, pasteStatus, func(text string) {
+				if handler := area.PasteHandler(); handler != nil {
+					handler(text, func(p tview.Primitive) {
+						if p != nil {
+							app.SetFocus(p)
+						}
+					})
+				}
+			})
+		}
+		openFile := func() {
+			defaultDir := ""
+			if dir, err := appfs.ApplicationDir(); err == nil {
+				defaultDir = dir
+			}
+			pasteStatus.view.SetTextColor(tview.Styles.SecondaryTextColor)
+			pasteStatus.view.SetText("Opening file picker...")
+			var selected string
+			var openErr error
+			if !app.Suspend(func() {
+				selected, openErr = appfs.SelectFile(firstNonEmptyText(title, "Open guide tree"), defaultDir)
+			}) {
+				selected, openErr = appfs.SelectFile(firstNonEmptyText(title, "Open guide tree"), defaultDir)
+			}
+			if errors.Is(openErr, appfs.ErrFileSelectionCancelled) {
+				pasteStatus.view.SetText("")
+				app.SetFocus(areaFrame)
+				return
+			}
+			if openErr != nil {
+				pasteStatus.view.SetTextColor(colorMuted)
+				pasteStatus.view.SetText("Open failed: " + openErr.Error())
+				app.SetFocus(areaFrame)
+				return
+			}
+			area.SetText(selected, true)
+			pasteStatus.view.SetText("")
+			app.SetFocus(areaFrame)
 		}
 		box := newButtonFlex()
 		box.SetBorder(true)
 		box.SetTitle(" " + trimColon(title) + " ")
 		box.SetTitleAlign(tview.AlignCenter)
-		box.AddItem(input, 1, 0, true)
-		box.AddItem(message, 1, 0, false)
+		box.AddItem(textBlock("Guide tree text is passed to the MEGA runtime as the selected align option value. Dropped or opened text-file paths are read into this field on Apply."), 3, 0, false)
+		box.AddItem(areaFrame, 0, 1, true)
 		box.AddItem(pasteStatus.view, 1, 0, false)
 		buttons := modalButtons([]buttonSpec{
 			{Label: ButtonClose, Shortcut: ShortcutBack, Action: closeInputModal, Visible: true},
 			{Label: ButtonPaste, Shortcut: ShortcutPaste, Action: paste, Visible: true},
-		}, true, "Apply", ShortcutApply, func(NavAction) {}, confirmInput)
+			{Label: ButtonOpenFile, Shortcut: ShortcutOpenFile, Action: openFile, Visible: true, Primary: true, LeftPrimary: true},
+		}, true, "Apply", "Ctrl+Enter", func(NavAction) {}, confirmInput)
 		addButtonRow(box, buttons)
+		addHints(box, []string{"Space/Enter opens the guide tree editor button. Ctrl+Enter applies this text. Ctrl+F opens a system file picker."})
 		closeModal = closeInputModal
 		modalOpen = true
 		modalText = nil
 		helpModal = nil
 		detailModal = nil
-		aliasModalCapture = singleLineInputCapture(app, buttons, input)
-		setPageRoot(app, overlayRootOn(pageRoot, box, renameDialogWidth, renameDialogHeight))
-		app.SetFocus(input)
+		aliasModalCapture = func(event *tcell.EventKey) *tcell.EventKey {
+			if event == nil {
+				return nil
+			}
+			if buttonRowHandlesShortcut(buttons, event) {
+				return nil
+			}
+			if handler := area.InputHandler(); handler != nil {
+				handler(event, func(p tview.Primitive) {
+					if p != nil {
+						app.SetFocus(p)
+					}
+				})
+			}
+			return nil
+		}
+		setPageRoot(app, overlayRootOn(pageRoot, box, 84, 30))
+		app.SetFocus(areaFrame)
 	}
 	var runCanvasTreeActionForRow func(string, int, int)
 	treePanel = newCanvasTreePanelPrimitive(page.TreePanel, app, func(state CanvasTreePanelState) {

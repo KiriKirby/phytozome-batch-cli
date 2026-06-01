@@ -278,7 +278,6 @@ func TestWriteReadCanvasSnapshotRoundTrip(t *testing.T) {
 					CurrentControl:         0,
 					DisplayNameSource:      "label_name",
 					ConversionTarget:       string(phylo.ConversionTargetProtein),
-					ConversionAction:       string(phylo.ConversionActionConvert),
 					ConversionSkipUnselect: true,
 					AlignmentMethod:        "muscle",
 					TreeMethod:             "neighbor_joining",
@@ -356,5 +355,42 @@ func TestWriteReadCanvasSnapshotRoundTrip(t *testing.T) {
 	}
 	if out.SequenceCache == nil || len(out.SequenceCache.Entries) != 1 || out.SequenceCache.Entries[0].SequenceID != "AT2G37040.1" {
 		t.Fatalf("canvas sequence cache did not round-trip: %#v", out.SequenceCache)
+	}
+}
+
+func TestOlderSnapshotVersionKeepsLegacyTreeFlag(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "old-tree")
+	snapshot := Snapshot{
+		Context: ContextV2{
+			CreatedAt:     time.Now(),
+			FormatName:    FormatName,
+			FormatVersion: "2.6",
+			Database:      "tair",
+			Mode:          "canvas",
+			ResultKind:    "canvas-result",
+		},
+		Canvas: &CanvasResultV2{
+			Tree: &CanvasTreeV2{
+				PanelState: tui.CanvasTreePanelState{
+					EnabledEver:      true,
+					ConversionTarget: string(phylo.ConversionTargetProtein),
+					AlignmentMethod:  string(phylo.AlignmentMUSCLE),
+					AlignmentParams:  map[string]string{"legacy_alignment_param": "stale"},
+					TreeMethod:       string(phylo.TreeMaximumLikelihood),
+					TreeParams:       map[string]string{"legacy_tree_param": "stale"},
+				},
+			},
+		},
+	}
+	if err := WriteFile(path, snapshot); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	out, err := ReadFile(path + FileExtension)
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+	if !IsLegacyTreeSnapshot(out) {
+		t.Fatalf("snapshots below %s must stay legacy so tree params are reset to current MEGA defaults", FormatVersion)
 	}
 }

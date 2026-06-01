@@ -93,7 +93,7 @@ The current implementation has the main system-tree loop wired end to end:
 - Canvas table schema excludes source-row and includes editable `display_name`.
 - Display-name source dropdown never includes `display_name` or removed source-row.
 - Changing selected rows triggers recomputation.
-- Changing conversion, alignment, or tree parameters triggers recomputation.
+- Changing target mode, alignment, or tree parameters triggers recomputation.
 - Changing display names or display-name source after a successful compute does not trigger the runtime.
 - Viewer receives stable taxon IDs and metadata mapping.
 - Viewer maps duplicate/sanitized display labels into unique Reactree-facing names and applies the same names to Newick and FASTA.

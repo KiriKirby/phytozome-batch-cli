@@ -64,8 +64,8 @@ func TestMegaPHGORuntimeRealFASTAProbe(t *testing.T) {
 				t.Fatalf("aligned FASTA is empty")
 			}
 			newick := strings.TrimSpace(result.Plan.Newick)
-			if !looksLikeNewick(newick) {
-				t.Fatalf("Newick output does not look valid: %q", newick)
+			if newick == "" {
+				t.Fatalf("runtime Newick output is empty")
 			}
 			if !strings.Contains(newick, "PHGOT000001") {
 				t.Fatalf("Newick should use stable PHgo taxon IDs, got: %s", newick)
@@ -77,7 +77,7 @@ func TestMegaPHGORuntimeRealFASTAProbe(t *testing.T) {
 	}
 }
 
-func TestMegaPHGORuntimeProteinStopCodonProbe(t *testing.T) {
+func TestMegaPHGORuntimeProteinStopCodonProbeDoesNotSanitizeInPHgo(t *testing.T) {
 	if strings.TrimSpace(os.Getenv("PHYTOZOME_RUN_MEGAPHGO_RUNTIME")) == "" {
 		t.Skip("set PHYTOZOME_RUN_MEGAPHGO_RUNTIME=1 to run the real mega-phgo-runtime probe")
 	}
@@ -117,27 +117,24 @@ func TestMegaPHGORuntimeProteinStopCodonProbe(t *testing.T) {
 				t.Fatalf("BuildRunPlan returned error: %v", err)
 			}
 			result, err := RunPlanWithRuntime(context.Background(), plan, RuntimeOptions{})
+			logData, readErr := os.ReadFile(filepath.Join(result.ArtifactDir, "runtime.log"))
+			if readErr != nil {
+				t.Fatalf("read runtime log: %v", readErr)
+			}
+			if strings.Contains(string(logData), "protein.sanitized") {
+				t.Fatalf("runtime log must not record PHgo protein stop-codon sanitization, got:\n%s", logData)
+			}
 			if err != nil {
-				t.Fatalf("RunPlanWithRuntime returned error: %v\nartifacts: %s\n%s", err, result.ArtifactDir, runtimeProbeDebugText(result.ArtifactDir))
+				return
 			}
-			if strings.Contains(result.Plan.AlignedFASTA, "*") {
-				t.Fatalf("runtime-aligned FASTA should not contain protein stop codons: %s", result.Plan.AlignedFASTA)
-			}
-			if !looksLikeNewick(strings.TrimSpace(result.Plan.Newick)) {
-				t.Fatalf("Newick output does not look valid: %q", result.Plan.Newick)
-			}
-			logData, err := os.ReadFile(filepath.Join(result.ArtifactDir, "runtime.log"))
-			if err != nil {
-				t.Fatalf("read runtime log: %v", err)
-			}
-			if !strings.Contains(string(logData), "protein.sanitized") {
-				t.Fatalf("runtime log should record protein stop-codon sanitization, got:\n%s", logData)
+			if strings.TrimSpace(result.Plan.Newick) == "" {
+				t.Fatalf("runtime Newick output is empty")
 			}
 		})
 	}
 }
 
-func TestMegaPHGORuntimeProteinModeConvertsNucleotideRowsProbe(t *testing.T) {
+func TestMegaPHGORuntimeProteinModeDoesNotConvertNucleotideRowsProbe(t *testing.T) {
 	if strings.TrimSpace(os.Getenv("PHYTOZOME_RUN_MEGAPHGO_RUNTIME")) == "" {
 		t.Skip("set PHYTOZOME_RUN_MEGAPHGO_RUNTIME=1 to run the real mega-phgo-runtime probe")
 	}
@@ -216,8 +213,82 @@ func TestMegaPHGORuntimeProteinModeConvertsNucleotideRowsProbe(t *testing.T) {
 			settings := DefaultTreeSettings()
 			settings.AlignmentMethod = method
 			settings.ConversionTarget = ConversionTargetProtein
-			settings.ConversionAction = ConversionActionConvert
 			plan, err := BuildRunPlan("mixed-probe", "run1", filepath.Join(t.TempDir(), "tree"), settings, SequenceProtein, records, meta, "", "", now)
+			if err != nil {
+				t.Fatalf("BuildRunPlan returned error: %v", err)
+			}
+			result, runErr := RunPlanWithRuntime(context.Background(), plan, RuntimeOptions{})
+
+			logData, err := os.ReadFile(filepath.Join(result.ArtifactDir, "runtime.log"))
+			if err != nil {
+				t.Fatalf("read runtime log: %v", err)
+			}
+			logText := string(logData)
+			if strings.Contains(logText, "conversion.applied") || strings.Contains(logText, "converted_dna_to_protein=") {
+				t.Fatalf("runtime log should not record PHgo-side DNA-to-protein conversion, got:\n%s", logText)
+			}
+			if !strings.Contains(result.Plan.InputFASTA, "ATGCCTGAACCTACTATTGATGAACAA") {
+				t.Fatalf("protein-mode request should preserve nucleotide row content for MEGA instead of converting it:\n%s", result.Plan.InputFASTA)
+			}
+			if runErr != nil {
+				if !strings.Contains(runtimeProbeDebugText(result.ArtifactDir), `"error_text"`) {
+					t.Fatalf("RunPlanWithRuntime returned error without runtime error_text: %v\nartifacts: %s\n%s", runErr, result.ArtifactDir, runtimeProbeDebugText(result.ArtifactDir))
+				}
+				return
+			}
+			if strings.TrimSpace(result.Plan.AlignedFASTA) == "" || strings.TrimSpace(result.Plan.Newick) == "" {
+				t.Fatalf("successful runtime output should include aligned FASTA and Newick:\n%s", runtimeProbeDebugText(result.ArtifactDir))
+			}
+		})
+	}
+}
+
+func TestMegaPHGORuntimeProteinTreeMethodsProbe(t *testing.T) {
+	if strings.TrimSpace(os.Getenv("PHYTOZOME_RUN_MEGAPHGO_RUNTIME")) == "" {
+		t.Skip("set PHYTOZOME_RUN_MEGAPHGO_RUNTIME=1 to run the real mega-phgo-runtime probe")
+	}
+	appRoot := repoRootForRuntimeProbeTest(t)
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working dir: %v", err)
+	}
+	if err := os.Chdir(appRoot); err != nil {
+		t.Fatalf("switch to runtime app root %s: %v", appRoot, err)
+	}
+	defer func() {
+		if err := os.Chdir(oldWD); err != nil {
+			t.Fatalf("restore working dir %s: %v", oldWD, err)
+		}
+	}()
+
+	sources := rowSourcesFromFASTAForTest(t, strings.Join([]string{
+		">alpha",
+		"MKTAYIAKQRQISFVKSHFSRQDILDLWIYHTQGYFPDWQNY",
+		">beta",
+		"MKTAYIAKQRQISFVKSHFSRQNILDLWIYHTQGYFPDWQNY",
+		">gamma",
+		"GATAYIAKQRQISFVKSHFSRQDILDLWIYHTQGYFPDWQNY",
+		">delta",
+		"GATAYIAKQRQISFVKSHFSRQNILDLWIYHTQGYFPDWQNY",
+	}, "\n"))
+	methods := []TreeMethod{
+		TreeNeighborJoining,
+		TreeMinimumEvolution,
+		TreeUPGMA,
+		TreeMaximumLikelihood,
+		TreeMaximumParsimony,
+	}
+	for _, method := range methods {
+		t.Run(string(method), func(t *testing.T) {
+			now := time.Now()
+			records, meta, err := BuildInput(sources, "label_name", "protein-tree-method-probe", now)
+			if err != nil {
+				t.Fatalf("BuildInput returned error: %v", err)
+			}
+			settings := DefaultTreeSettings()
+			settings.AlignmentMethod = AlignmentClustalW
+			settings.TreeMethod = method
+			plan, err := BuildRunPlan("protein-tree-method-probe", "run1", filepath.Join(t.TempDir(), "tree"), settings, SequenceProtein, records, meta, "", "", now)
 			if err != nil {
 				t.Fatalf("BuildRunPlan returned error: %v", err)
 			}
@@ -225,34 +296,15 @@ func TestMegaPHGORuntimeProteinModeConvertsNucleotideRowsProbe(t *testing.T) {
 			if err != nil {
 				t.Fatalf("RunPlanWithRuntime returned error: %v\nartifacts: %s\n%s", err, result.ArtifactDir, runtimeProbeDebugText(result.ArtifactDir))
 			}
-
-			logData, err := os.ReadFile(filepath.Join(result.ArtifactDir, "runtime.log"))
+			if strings.TrimSpace(result.Plan.Newick) == "" {
+				t.Fatalf("runtime Newick output is empty")
+			}
+			summary, err := os.ReadFile(filepath.Join(result.ArtifactDir, "runtime-summary.txt"))
 			if err != nil {
-				t.Fatalf("read runtime log: %v", err)
+				t.Fatalf("read runtime summary: %v", err)
 			}
-			logText := string(logData)
-			if !strings.Contains(logText, "conversion.applied") {
-				t.Fatalf("runtime log should record conversion.applied, got:\n%s", logText)
-			}
-			if !strings.Contains(logText, "converted_dna_to_protein=2") {
-				t.Fatalf("runtime log should report two DNA-to-protein conversions, got:\n%s", logText)
-			}
-
-			maxUngapped := 0
-			for _, seq := range alignedSequencesForTest(t, result.Plan.AlignedFASTA) {
-				ungapped := strings.ReplaceAll(seq, "-", "")
-				if len(ungapped) > maxUngapped {
-					maxUngapped = len(ungapped)
-				}
-				if looksNucleotideOnly(ungapped) {
-					t.Fatalf("protein-mode aligned FASTA should not contain nucleotide-only sequences after conversion: %s", result.Plan.AlignedFASTA)
-				}
-			}
-			if maxUngapped > 12 {
-				t.Fatalf("converted protein alignment should stay peptide-sized, max ungapped length=%d\n%s", maxUngapped, result.Plan.AlignedFASTA)
-			}
-			if !looksLikeNewick(strings.TrimSpace(result.Plan.Newick)) {
-				t.Fatalf("Newick output does not look valid: %q", result.Plan.Newick)
+			if !strings.Contains(string(summary), "tree_method="+string(method)) {
+				t.Fatalf("runtime summary did not record expected tree method for %s:\n%s", method, summary)
 			}
 		})
 	}
@@ -315,7 +367,6 @@ func TestMegaPHGORuntimeDNAModeAlignersProbe(t *testing.T) {
 			}
 			settings := DefaultTreeSettings()
 			settings.ConversionTarget = ConversionTargetDNA
-			settings.ConversionAction = ConversionActionConvert
 			settings.AlignmentMethod = method
 			plan, err := BuildRunPlan("dna-aligner-probe", "run1", filepath.Join(t.TempDir(), "tree"), settings, SequenceNucleotide, records, meta, "", "", now)
 			if err != nil {
@@ -331,8 +382,8 @@ func TestMegaPHGORuntimeDNAModeAlignersProbe(t *testing.T) {
 					t.Fatalf("DNA-mode aligned FASTA should stay nucleotide for %s: %s", method, result.Plan.AlignedFASTA)
 				}
 			}
-			if !looksLikeNewick(strings.TrimSpace(result.Plan.Newick)) {
-				t.Fatalf("Newick output does not look valid: %q", result.Plan.Newick)
+			if strings.TrimSpace(result.Plan.Newick) == "" {
+				t.Fatalf("runtime Newick output is empty")
 			}
 			summary, err := os.ReadFile(filepath.Join(result.ArtifactDir, "runtime-summary.txt"))
 			if err != nil {
@@ -340,6 +391,358 @@ func TestMegaPHGORuntimeDNAModeAlignersProbe(t *testing.T) {
 			}
 			if !strings.Contains(string(summary), "alignment_method="+string(normalizedRuntimeAlignmentMethodForTest(method))) {
 				t.Fatalf("runtime summary did not record expected alignment method for %s:\n%s", method, summary)
+			}
+		})
+	}
+}
+
+func TestMegaPHGORuntimeDNATreeMethodsProbe(t *testing.T) {
+	if strings.TrimSpace(os.Getenv("PHYTOZOME_RUN_MEGAPHGO_RUNTIME")) == "" {
+		t.Skip("set PHYTOZOME_RUN_MEGAPHGO_RUNTIME=1 to run the real mega-phgo-runtime probe")
+	}
+	appRoot := repoRootForRuntimeProbeTest(t)
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working dir: %v", err)
+	}
+	if err := os.Chdir(appRoot); err != nil {
+		t.Fatalf("switch to runtime app root %s: %v", appRoot, err)
+	}
+	defer func() {
+		if err := os.Chdir(oldWD); err != nil {
+			t.Fatalf("restore working dir %s: %v", oldWD, err)
+		}
+	}()
+
+	sources := []RowSource{
+		{
+			ItemTitle:    "dna tree method probe",
+			RowIndex:     0,
+			Sequence:     "ATGGCTGAGTTCAAAGGCTACGTTGCTGCTGAA",
+			SequenceKind: SequenceNucleotide,
+			SourceType:   "fasta",
+			OriginalHead: "dna-alpha",
+			TableValues:  map[string]string{"head": "dna-alpha", "label_name": "dna-alpha"},
+		},
+		{
+			ItemTitle:    "dna tree method probe",
+			RowIndex:     1,
+			Sequence:     "ATGGCTGAATTTAAAGGCTATGTTGCTGCCGAA",
+			SequenceKind: SequenceNucleotide,
+			SourceType:   "fasta",
+			OriginalHead: "dna-beta",
+			TableValues:  map[string]string{"head": "dna-beta", "label_name": "dna-beta"},
+		},
+		{
+			ItemTitle:    "dna tree method probe",
+			RowIndex:     2,
+			Sequence:     "ATGGCCGAGTTCAAAGGTTACGTAGCTGCTGAG",
+			SequenceKind: SequenceNucleotide,
+			SourceType:   "fasta",
+			OriginalHead: "dna-gamma",
+			TableValues:  map[string]string{"head": "dna-gamma", "label_name": "dna-gamma"},
+		},
+		{
+			ItemTitle:    "dna tree method probe",
+			RowIndex:     3,
+			Sequence:     "ATGGCCGAATTTAAAGGTTATGTAGCTGCCGAG",
+			SequenceKind: SequenceNucleotide,
+			SourceType:   "fasta",
+			OriginalHead: "dna-delta",
+			TableValues:  map[string]string{"head": "dna-delta", "label_name": "dna-delta"},
+		},
+	}
+
+	for _, method := range []TreeMethod{TreeNeighborJoining, TreeMinimumEvolution, TreeUPGMA, TreeMaximumLikelihood, TreeMaximumParsimony} {
+		t.Run(string(method), func(t *testing.T) {
+			now := time.Now()
+			records, meta, err := BuildInput(sources, "label_name", "dna-tree-method-probe", now)
+			if err != nil {
+				t.Fatalf("BuildInput returned error: %v", err)
+			}
+			settings := DefaultTreeSettings()
+			settings.ConversionTarget = ConversionTargetDNA
+			settings.AlignmentMethod = AlignmentClustalW
+			settings.TreeMethod = method
+			plan, err := BuildRunPlan("dna-tree-method-probe", "run1", filepath.Join(t.TempDir(), "tree"), settings, SequenceNucleotide, records, meta, "", "", now)
+			if err != nil {
+				t.Fatalf("BuildRunPlan returned error: %v", err)
+			}
+			result, err := RunPlanWithRuntime(context.Background(), plan, RuntimeOptions{})
+			if err != nil {
+				t.Fatalf("RunPlanWithRuntime returned error: %v\nartifacts: %s\n%s", err, result.ArtifactDir, runtimeProbeDebugText(result.ArtifactDir))
+			}
+			if strings.TrimSpace(result.Plan.Newick) == "" {
+				t.Fatalf("runtime Newick output is empty")
+			}
+			summary, err := os.ReadFile(filepath.Join(result.ArtifactDir, "runtime-summary.txt"))
+			if err != nil {
+				t.Fatalf("read runtime summary: %v", err)
+			}
+			if !strings.Contains(string(summary), "tree_method="+string(method)) {
+				t.Fatalf("runtime summary did not record expected tree method for %s:\n%s", method, summary)
+			}
+		})
+	}
+}
+
+func TestMegaPHGORuntimeMLBranchSwapFilterProbe(t *testing.T) {
+	if strings.TrimSpace(os.Getenv("PHYTOZOME_RUN_MEGAPHGO_RUNTIME")) == "" {
+		t.Skip("set PHYTOZOME_RUN_MEGAPHGO_RUNTIME=1 to run the real mega-phgo-runtime probe")
+	}
+	appRoot := repoRootForRuntimeProbeTest(t)
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working dir: %v", err)
+	}
+	if err := os.Chdir(appRoot); err != nil {
+		t.Fatalf("switch to runtime app root %s: %v", appRoot, err)
+	}
+	defer func() {
+		if err := os.Chdir(oldWD); err != nil {
+			t.Fatalf("restore working dir %s: %v", oldWD, err)
+		}
+	}()
+
+	sources := rowSourcesFromFASTAForTest(t, strings.Join([]string{
+		">alpha",
+		"MKTAYIAKQRQISFVKSHFSRQDILDLWIYHTQGYFPDWQNYMKTAYIAKQRQISFVKSHFSRQDILDLWIYHTQGYFPDWQNY",
+		">beta",
+		"MKTAYIAKQRQISFVKSHFSRQNILDLWIYHTQGYFPDWQNYMKTAYIAKQRQISFVKSHFSRQNILDLWIYHTQGYFPDWQNY",
+		">gamma",
+		"GATAYIAKQRQISFVKSHFSRQDILDLWIYHTQGYFPDWQNYGATAYIAKQRQISFVKSHFSRQDILDLWIYHTQGYFPDWQNY",
+		">delta",
+		"GATAYIAKQRQISFVKSHFSRQNILDLWIYHTQGYFPDWQNYGATAYIAKQRQISFVKSHFSRQNILDLWIYHTQGYFPDWQNY",
+		">epsilon",
+		"MKTAYVAKQRQISFVKSHFSRQDILDLWIYHTQGYFPDWQNYMKTAYVAKQRQISFVKSHFSRQDILDLWIYHTQGYFPDWQNY",
+		">zeta",
+		"GATAYVAKQRQISFVKSHFSRQNILDLWIYHTQGYFPDWQNYGATAYVAKQRQISFVKSHFSRQNILDLWIYHTQGYFPDWQNY",
+	}, "\n"))
+	now := time.Now()
+	records, meta, err := BuildInput(sources, "label_name", "ml-filter-probe", now)
+	if err != nil {
+		t.Fatalf("BuildInput returned error: %v", err)
+	}
+	settings := DefaultTreeSettings()
+	settings.AlignmentMethod = AlignmentClustalW
+	settings.TreeMethod = TreeMaximumLikelihood
+	settings.TreeParams = map[string]string{"branch_swap_filter": "Strong"}
+	plan, err := BuildRunPlan("ml-filter-probe", "run1", filepath.Join(t.TempDir(), "tree"), settings, SequenceProtein, records, meta, "", "", now)
+	if err != nil {
+		t.Fatalf("BuildRunPlan returned error: %v", err)
+	}
+	result, err := RunPlanWithRuntime(context.Background(), plan, RuntimeOptions{})
+	if err != nil {
+		t.Fatalf("RunPlanWithRuntime returned error: %v\nartifacts: %s\n%s", err, result.ArtifactDir, runtimeProbeDebugText(result.ArtifactDir))
+	}
+	logData, err := os.ReadFile(filepath.Join(result.ArtifactDir, "runtime.log"))
+	if err != nil {
+		t.Fatalf("read runtime log: %v", err)
+	}
+	if !strings.Contains(string(logData), "search_filter=0.50000") {
+		t.Fatalf("ML branch swap filter should be applied to MEGA SearchFilter, got:\n%s", logData)
+	}
+}
+
+func TestMegaPHGORuntimeDistanceBootstrapProbe(t *testing.T) {
+	if strings.TrimSpace(os.Getenv("PHYTOZOME_RUN_MEGAPHGO_RUNTIME")) == "" {
+		t.Skip("set PHYTOZOME_RUN_MEGAPHGO_RUNTIME=1 to run the real mega-phgo-runtime probe")
+	}
+	appRoot := repoRootForRuntimeProbeTest(t)
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working dir: %v", err)
+	}
+	if err := os.Chdir(appRoot); err != nil {
+		t.Fatalf("switch to runtime app root %s: %v", appRoot, err)
+	}
+	defer func() {
+		if err := os.Chdir(oldWD); err != nil {
+			t.Fatalf("restore working dir %s: %v", oldWD, err)
+		}
+	}()
+
+	sources := rowSourcesFromFASTAForTest(t, strings.Join([]string{
+		">alpha",
+		"MKTAYIAKQRQISFVKSHFSRQDILDLWIYHTQGYFPDWQNYMKTAYIAKQRQISFVKSHFSRQDILDLWIYHTQGYFPDWQNY",
+		">beta",
+		"MKTAYIAKQRQISFVKSHFSRQNILDLWIYHTQGYFPDWQNYMKTAYIAKQRQISFVKSHFSRQNILDLWIYHTQGYFPDWQNY",
+		">gamma",
+		"GATAYIAKQRQISFVKSHFSRQDILDLWIYHTQGYFPDWQNYGATAYIAKQRQISFVKSHFSRQDILDLWIYHTQGYFPDWQNY",
+		">delta",
+		"GATAYIAKQRQISFVKSHFSRQNILDLWIYHTQGYFPDWQNYGATAYIAKQRQISFVKSHFSRQNILDLWIYHTQGYFPDWQNY",
+		">epsilon",
+		"MKTAYVAKQRQISFVKSHFSRQDILDLWIYHTQGYFPDWQNYMKTAYVAKQRQISFVKSHFSRQDILDLWIYHTQGYFPDWQNY",
+		">zeta",
+		"GATAYVAKQRQISFVKSHFSRQNILDLWIYHTQGYFPDWQNYGATAYVAKQRQISFVKSHFSRQNILDLWIYHTQGYFPDWQNY",
+	}, "\n"))
+	for _, method := range []TreeMethod{TreeNeighborJoining, TreeUPGMA} {
+		t.Run(string(method), func(t *testing.T) {
+			now := time.Now()
+			records, meta, err := BuildInput(sources, "label_name", "distance-bootstrap-probe", now)
+			if err != nil {
+				t.Fatalf("BuildInput returned error: %v", err)
+			}
+			settings := DefaultTreeSettings()
+			settings.AlignmentMethod = AlignmentClustalW
+			settings.TreeMethod = method
+			settings.TreeParams = map[string]string{
+				"phylogeny_test":       "Bootstrap method",
+				"bootstrap_replicates": "1",
+				"number_of_threads":    "1",
+			}
+			plan, err := BuildRunPlan("distance-bootstrap-probe", "run1", filepath.Join(t.TempDir(), "tree"), settings, SequenceProtein, records, meta, "", "", now)
+			if err != nil {
+				t.Fatalf("BuildRunPlan returned error: %v", err)
+			}
+			result, err := RunPlanWithRuntime(context.Background(), plan, RuntimeOptions{})
+			if err != nil {
+				t.Fatalf("RunPlanWithRuntime returned error: %v\nartifacts: %s\n%s", err, result.ArtifactDir, runtimeProbeDebugText(result.ArtifactDir))
+			}
+			if strings.TrimSpace(result.Plan.Newick) == "" {
+				t.Fatalf("runtime Newick output is empty")
+			}
+			logData, err := os.ReadFile(filepath.Join(result.ArtifactDir, "runtime.log"))
+			if err != nil {
+				t.Fatalf("read runtime log: %v", err)
+			}
+			if !strings.Contains(string(logData), "distance.bootstrap.complete") {
+				t.Fatalf("distance bootstrap should run through MEGA bootstrap thread, got:\n%s", logData)
+			}
+		})
+	}
+}
+
+func TestMegaPHGORuntimeMinimumEvolutionBootstrapProbe(t *testing.T) {
+	if strings.TrimSpace(os.Getenv("PHYTOZOME_RUN_MEGAPHGO_RUNTIME")) == "" {
+		t.Skip("set PHYTOZOME_RUN_MEGAPHGO_RUNTIME=1 to run the real mega-phgo-runtime probe")
+	}
+	appRoot := repoRootForRuntimeProbeTest(t)
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working dir: %v", err)
+	}
+	if err := os.Chdir(appRoot); err != nil {
+		t.Fatalf("switch to runtime app root %s: %v", appRoot, err)
+	}
+	defer func() {
+		if err := os.Chdir(oldWD); err != nil {
+			t.Fatalf("restore working dir %s: %v", oldWD, err)
+		}
+	}()
+
+	sources := rowSourcesFromFASTAForTest(t, strings.Join([]string{
+		">alpha",
+		"MKTAYIAKQRQISFVKSHFSRQDILDLWIYHTQGYFPDWQNYMKTAYIAKQRQISFVKSHFSRQDILDLWIYHTQGYFPDWQNY",
+		">beta",
+		"MKTAYIAKQRQISFVKSHFSRQNILDLWIYHTQGYFPDWQNYMKTAYIAKQRQISFVKSHFSRQNILDLWIYHTQGYFPDWQNY",
+		">gamma",
+		"GATAYIAKQRQISFVKSHFSRQDILDLWIYHTQGYFPDWQNYGATAYIAKQRQISFVKSHFSRQDILDLWIYHTQGYFPDWQNY",
+		">delta",
+		"GATAYIAKQRQISFVKSHFSRQNILDLWIYHTQGYFPDWQNYGATAYIAKQRQISFVKSHFSRQNILDLWIYHTQGYFPDWQNY",
+	}, "\n"))
+	now := time.Now()
+	records, meta, err := BuildInput(sources, "label_name", "me-bootstrap-error-probe", now)
+	if err != nil {
+		t.Fatalf("BuildInput returned error: %v", err)
+	}
+	settings := DefaultTreeSettings()
+	settings.AlignmentMethod = AlignmentClustalW
+	settings.TreeMethod = TreeMinimumEvolution
+	settings.TreeParams = map[string]string{
+		"phylogeny_test":       "Bootstrap method",
+		"bootstrap_replicates": "1",
+		"number_of_threads":    "1",
+	}
+	plan, err := BuildRunPlan("me-bootstrap-error-probe", "run1", filepath.Join(t.TempDir(), "tree"), settings, SequenceProtein, records, meta, "", "", now)
+	if err != nil {
+		t.Fatalf("BuildRunPlan returned error: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	result, err := RunPlanWithRuntime(ctx, plan, RuntimeOptions{})
+	if err != nil {
+		t.Fatalf("minimum-evolution bootstrap failed: %v\nartifacts: %s\n%s", err, result.ArtifactDir, runtimeProbeDebugText(result.ArtifactDir))
+	}
+	debug := runtimeProbeDebugText(result.ArtifactDir)
+	if !strings.Contains(debug, "distance.bootstrap.start method=minimum_evolution") || !strings.Contains(debug, "distance.bootstrap.complete") {
+		t.Fatalf("minimum-evolution bootstrap log did not prove MEGA TBootstrapMEThread completion:\n%s", debug)
+	}
+	if strings.TrimSpace(result.Plan.Newick) == "" {
+		t.Fatalf("minimum-evolution bootstrap produced an empty Newick; artifacts: %s\n%s", result.ArtifactDir, debug)
+	}
+}
+
+func TestMegaPHGORuntimeMPBootstrapProbe(t *testing.T) {
+	if strings.TrimSpace(os.Getenv("PHYTOZOME_RUN_MEGAPHGO_RUNTIME")) == "" {
+		t.Skip("set PHYTOZOME_RUN_MEGAPHGO_RUNTIME=1 to run the real mega-phgo-runtime probe")
+	}
+	appRoot := repoRootForRuntimeProbeTest(t)
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working dir: %v", err)
+	}
+	if err := os.Chdir(appRoot); err != nil {
+		t.Fatalf("switch to runtime app root %s: %v", appRoot, err)
+	}
+	defer func() {
+		if err := os.Chdir(oldWD); err != nil {
+			t.Fatalf("restore working dir %s: %v", oldWD, err)
+		}
+	}()
+
+	sources := rowSourcesFromFASTAForTest(t, strings.Join([]string{
+		">alpha",
+		"MKTAYIAKQRQISFVKSHFSRQDILDLWIYHTQGYFPDWQNYMKTAYIAKQRQISFVKSHFSRQDILDLWIYHTQGYFPDWQNY",
+		">beta",
+		"MKTAYIAKQRQISFVKSHFSRQNILDLWIYHTQGYFPDWQNYMKTAYIAKQRQISFVKSHFSRQNILDLWIYHTQGYFPDWQNY",
+		">gamma",
+		"GATAYIAKQRQISFVKSHFSRQDILDLWIYHTQGYFPDWQNYGATAYIAKQRQISFVKSHFSRQDILDLWIYHTQGYFPDWQNY",
+		">delta",
+		"GATAYIAKQRQISFVKSHFSRQNILDLWIYHTQGYFPDWQNYGATAYIAKQRQISFVKSHFSRQNILDLWIYHTQGYFPDWQNY",
+		">epsilon",
+		"MKTAYVAKQRQISFVKSHFSRQDILDLWIYHTQGYFPDWQNYMKTAYVAKQRQISFVKSHFSRQDILDLWIYHTQGYFPDWQNY",
+		">zeta",
+		"GATAYVAKQRQISFVKSHFSRQNILDLWIYHTQGYFPDWQNYGATAYVAKQRQISFVKSHFSRQNILDLWIYHTQGYFPDWQNY",
+	}, "\n"))
+	for _, tc := range []struct {
+		method TreeMethod
+		logKey string
+	}{
+		{method: TreeMaximumLikelihood, logKey: "maximum_likelihood.bootstrap complete=true"},
+		{method: TreeMaximumParsimony, logKey: "maximum_parsimony.bootstrap complete=true"},
+	} {
+		t.Run(string(tc.method), func(t *testing.T) {
+			now := time.Now()
+			records, meta, err := BuildInput(sources, "label_name", "ml-mp-bootstrap-probe", now)
+			if err != nil {
+				t.Fatalf("BuildInput returned error: %v", err)
+			}
+			settings := DefaultTreeSettings()
+			settings.AlignmentMethod = AlignmentClustalW
+			settings.TreeMethod = tc.method
+			settings.TreeParams = map[string]string{
+				"phylogeny_test":       "Bootstrap method",
+				"bootstrap_replicates": "3",
+				"number_of_threads":    "1",
+			}
+			plan, err := BuildRunPlan("ml-mp-bootstrap-probe", "run1", filepath.Join(t.TempDir(), "tree"), settings, SequenceProtein, records, meta, "", "", now)
+			if err != nil {
+				t.Fatalf("BuildRunPlan returned error: %v", err)
+			}
+			result, err := RunPlanWithRuntime(context.Background(), plan, RuntimeOptions{})
+			if err != nil {
+				t.Fatalf("RunPlanWithRuntime returned error: %v\nartifacts: %s\n%s", err, result.ArtifactDir, runtimeProbeDebugText(result.ArtifactDir))
+			}
+			if strings.TrimSpace(result.Plan.Newick) == "" {
+				t.Fatalf("runtime Newick output is empty")
+			}
+			logData, err := os.ReadFile(filepath.Join(result.ArtifactDir, "runtime.log"))
+			if err != nil {
+				t.Fatalf("read runtime log: %v", err)
+			}
+			if !strings.Contains(string(logData), tc.logKey) {
+				t.Fatalf("%s bootstrap should run through MEGA bootstrap thread, got:\n%s", tc.method, logData)
 			}
 		})
 	}

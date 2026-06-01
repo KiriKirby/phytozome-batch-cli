@@ -36,13 +36,13 @@ Canvas keeps at least 72 columns for the left-side list/table area. If the termi
 
 The Canvas list/table content layout must be rebuilt on every normal page refresh, not only when the tree panel is toggled. This keeps the left list and right table visible after creating the first Canvas item from an empty Canvas, after deleting the last row, and after switching between empty/non-empty Canvas tables.
 
-Panel pages are ordered so the data-preparation decision comes first:
+Panel pages are ordered so the data-mode decision comes first:
 
-- page 1: `Conversion settings`
+- page 1: `Target mode`
 - page 2: `Align settings`
 - page 3: `Tree settings`
 
-The default focused page is page 1. Conversion defaults are Protein mode, Convert mismatched rows, and unselect skipped/failed-conversion rows.
+The default focused page is page 1. Target defaults are Protein mode and unselect runtime-reported skipped/failed rows when the recovery dialog continues.
 
 Each module is drawn as a normal boxed TUI region with its own title, matching the visual language used by the existing complex parameter dialogs such as filter and family settings. Yellow is used only for focus and active accents; the panel must not become a custom dashboard or a full yellow block.
 
@@ -116,14 +116,14 @@ Ctrl+R
 
 The refresh action has a compute phase and a render phase as described in [PHgo Runtime Pipeline](./phgo-runtime-pipeline.md), then pushes the latest tree payload to the viewer service.
 
-## Conversion And Alignment Controls
+## Target And Alignment Controls
 
 The first page chooses the target data mode before alignment:
 
 - Protein mode: draw the tree from amino-acid sequences. This is the default lab workflow.
-- DNA mode: draw the tree from nucleotide sequences. Protein rows cannot be converted back to DNA and are skipped through the normal recovery flow.
+- DNA mode: draw the tree from nucleotide sequences. Protein rows are used as DNA only when a real nucleotide/CDS sequence is embedded in the row or resolved from source metadata; PHgo never reverse-translates protein into DNA.
 
-When a selected row does not match the target mode, Canvas either asks `mega-phgo-runtime` to convert it or skips it, depending on the mismatch setting. DNA-to-protein conversion is runtime-only and uses MEGA translation code; Go does not own a codon table.
+MEGA 12.1 GUI gates DNA, protein, and codon actions by the active data type. PHgo mirrors that behavior through the target-mode control and MEGA-backed runtime request. PHgo does not locally infer, convert, repair, or skip biological sequence content before runtime execution.
 
 The alignment method control is a dropdown at the top of the panel.
 
@@ -139,7 +139,7 @@ Parameter names, default values, allowed values, applicability, and help text co
 
 The panel edits the parameter values directly. When the user clicks `Refresh tree`, the current values are written into `runtime-request.json`. If a parameter is not exposed in the panel, the runtime request uses the registry default rather than a hidden hand-written value.
 
-The panel exposes alignment methods compatible with the current conversion target, not merely the raw selected row mix. The refresh pipeline repeats the compatibility check before launching `mega-phgo-runtime`, so restored snapshots or stale panel states cannot force an incompatible runtime request.
+The panel exposes alignment methods compatible with the current target mode, not merely the raw selected row mix. The refresh pipeline repeats the compatibility check before launching `mega-phgo-runtime`, so restored snapshots or stale panel states cannot force an incompatible runtime request.
 
 Recommended TUI controls:
 
@@ -197,9 +197,9 @@ Manual edits are authoritative until the user changes the display-name source dr
 
 ## Tree Method
 
-Tree inference method selection belongs in the TUI because it changes computation, not only display. It should sit in the same panel as the alignment controls if the first implementation needs it, but it must remain a computation control rather than a Reactree control.
+Tree inference method selection belongs in the TUI because it changes computation, not only display. It sits in the same panel as the alignment controls and remains a computation control rather than a Reactree control.
 
-The first implementation should only include verified runtime tree methods that are known to work with the selected input kind and registry definitions.
+The current implementation exposes the MEGA-runtime-backed tree methods that match the selected target mode and registry definitions: Neighbor-Joining, Minimum Evolution, UPGMA, Maximum Likelihood, and Maximum Parsimony.
 
 ## Initial Empty Preview
 
@@ -209,8 +209,8 @@ The viewer should show an empty state for the current Canvas session until the f
 
 ## Refresh And Relabeling
 
-Changing the display-name source dropdown or manually editing the `display_name` column is a preview-only change. It updates the Canvas table and the Reactree payload metadata but must not rerun `mega-phgo-runtime` when the selected rows, sequence content, conversion settings, alignment method/parameters, and tree method/parameters are unchanged.
+Changing the display-name source dropdown or manually editing the `display_name` column is a preview-only change. It updates the Canvas table and the Reactree payload metadata but must not rerun `mega-phgo-runtime` when the selected rows, sequence content, target mode, alignment method/parameters, and tree method/parameters are unchanged.
 
-Changing the selected rows, sequence content, conversion target/action, skipped-row unselect behavior, alignment method/parameters, or tree method/parameters is a computation change and requires a runtime refresh.
+Changing the selected rows, sequence content, target mode, skipped-row unselect behavior, alignment method/parameters, or tree method/parameters is a computation change and requires a runtime refresh.
 
 The first refresh in a new live Canvas session is always compute plus render. When a Canvas `.pgo` snapshot has just been opened, the restored payload may be displayed immediately, but the first user-triggered `Refresh tree` must still run a full `mega-phgo-runtime` compute pass before rendering.

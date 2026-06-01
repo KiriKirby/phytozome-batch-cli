@@ -6458,6 +6458,24 @@ func TestSelectedCanvasRowsInVisibleOrderUsesCanvasSortState(t *testing.T) {
 	}
 }
 
+func TestSelectedCanvasRowsForExportFiltersRowsWithoutExportSequence(t *testing.T) {
+	rows := selectedCanvasRowsInOrderForExport([]model.CanvasItem{{
+		Title:    "canvas 1",
+		Selected: []bool{true, true, true},
+		Rows: []model.CanvasRow{
+			{RowNumber: 1, Kind: model.CanvasKindFasta, FASTA: &model.QuerySequenceSource{Annotation: "empty"}},
+			{RowNumber: 2, Kind: model.CanvasKindFasta, FASTA: &model.QuerySequenceSource{Annotation: "protein", ProteinSequence: "MPEPTIDE"}},
+			{RowNumber: 3, Kind: model.CanvasKindKeyword, KeywordRow: &model.KeywordResultRow{LabelName: "missing"}},
+		},
+	}})
+	if len(rows) != 1 {
+		t.Fatalf("export rows = %#v, want only sequence-ready row", rows)
+	}
+	if rows[0].Row.RowNumber != 2 {
+		t.Fatalf("export row number = %d, want 2", rows[0].Row.RowNumber)
+	}
+}
+
 func TestApplyCanvasHeaderModePhgoAlwaysBuildsCanvasHeader(t *testing.T) {
 	selected := []canvasSelectedRow{{
 		ItemTitle: "1",
@@ -6829,6 +6847,55 @@ func TestExportCanvasSelectionsAllRowsIncludesUncheckedRows(t *testing.T) {
 	}, "\n")
 	if got != want {
 		t.Fatalf("all-row canvas FASTA = %q\nwant %q", got, want)
+	}
+}
+
+func TestExportCanvasSelectionsPlainFastaSkipsRowsWithoutExportSequence(t *testing.T) {
+	outputDir := t.TempDir()
+	w := NewBlastWizard(io.Discard)
+	state := canvasLaunchState{
+		Items: []model.CanvasItem{{
+			Title:    "1",
+			Selected: []bool{true, true},
+			Rows: []model.CanvasRow{
+				{
+					RowNumber: 1,
+					Kind:      model.CanvasKindFasta,
+					FASTA: &model.QuerySequenceSource{
+						Annotation: "empty",
+					},
+				},
+				{
+					RowNumber: 2,
+					Kind:      model.CanvasKindFasta,
+					FASTA: &model.QuerySequenceSource{
+						Annotation: "ready",
+						Sequence:   "MPEPTIDE",
+					},
+				},
+			},
+		}},
+	}
+	err := w.exportCanvasSelections(context.Background(), state, exportSettings{
+		BaseName:        "canvas_ready_only",
+		OutputDir:       outputDir,
+		WriteText:       true,
+		FastaHeaderMode: model.FastaHeaderModeOriginal,
+	})
+	if err != nil {
+		t.Fatalf("exportCanvasSelections returned error: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(outputDir, "canvas_ready_only.fasta"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	got := strings.ReplaceAll(strings.TrimSpace(string(data)), "\r\n", "\n")
+	want := strings.Join([]string{
+		">ready",
+		"MPEPTIDE",
+	}, "\n")
+	if got != want {
+		t.Fatalf("plain canvas FASTA = %q\nwant %q", got, want)
 	}
 }
 
