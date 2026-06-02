@@ -161,7 +161,10 @@ dialog files.
   Artifact reuse rules.
 - `internal/workflow/canvas.go`
   Canvas row selection, target mode handling, runtime execution, viewer update,
-  and converted FASTA export.
+  compute-versus-render refresh gating, tree runtime/viewer progress modals,
+  and Canvas FASTA export. The old "converted FASTA" Canvas export is removed
+  from the UI because PHgo no longer performs pre-alignment biological
+  conversion outside the MEGA runtime.
 - `internal/workflow/session_snapshot.go`
 - `internal/sessionsnapshot/`
   `.pgo` snapshot save/open contract.

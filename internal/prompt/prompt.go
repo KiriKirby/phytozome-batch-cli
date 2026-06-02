@@ -3482,7 +3482,6 @@ func (p *Prompter) CanvasSaveSettings(defaultBaseName string, backTarget error) 
 		WriteExcel:          false,
 		WriteRawExcel:       false,
 		ShowWriteText:       true,
-		ShowConvertedFasta:  true,
 		ShowAllRowsFasta:    true,
 		ShowWriteExcel:      false,
 		ShowWriteRawExcel:   false,
@@ -3503,7 +3502,7 @@ func (p *Prompter) CanvasSaveSettings(defaultBaseName string, backTarget error) 
 		BaseName:            sanitizeFileName(result.FileName),
 		WriteSession:        result.WriteSession,
 		WriteText:           result.WriteText,
-		WriteConvertedFasta: result.WriteConvertedFasta,
+		WriteConvertedFasta: false,
 		WriteAllRows:        result.WriteAllRows,
 		FastaHeaderMode:     model.NormalizeFastaHeaderMode(model.FastaHeaderMode(result.FastaHeaderMode), result.UsePhgoHeader),
 		UsePhgoHeader:       result.UsePhgoHeader,
@@ -3511,7 +3510,7 @@ func (p *Prompter) CanvasSaveSettings(defaultBaseName string, backTarget error) 
 	p.lastExportSettings.BaseName = settings.BaseName
 	p.lastExportSettings.WriteSession = settings.WriteSession
 	p.lastExportSettings.WriteText = settings.WriteText
-	p.lastExportSettings.WriteConvertedFasta = settings.WriteConvertedFasta
+	p.lastExportSettings.WriteConvertedFasta = false
 	p.lastExportSettings.WriteAllRows = settings.WriteAllRows
 	p.lastExportSettings.WriteExcel = false
 	p.lastExportSettings.WriteRawExcel = false
@@ -6916,7 +6915,7 @@ func (p *Prompter) ExportSettingsWithOptions(label string, allowFolder bool, all
 		WriteReport:           result.WriteReport,
 		WriteSession:          result.WriteSession,
 		WriteText:             result.WriteText,
-		WriteConvertedFasta:   result.WriteConvertedFasta,
+		WriteConvertedFasta:   false,
 		WriteAllRows:          result.WriteAllRows,
 		WriteExcel:            result.WriteExcel,
 		WriteRawExcel:         result.WriteRawExcel,

@@ -107,7 +107,7 @@ func (w *BlastWizard) runCanvasMode(ctx context.Context, state canvasLaunchState
 				OutputDir:           outputDir,
 				WriteSession:        saveSettings.WriteSession,
 				WriteText:           saveSettings.WriteText,
-				WriteConvertedFasta: saveSettings.WriteConvertedFasta,
+				WriteConvertedFasta: false,
 				WriteAllRows:        saveSettings.WriteAllRows,
 				FastaHeaderMode:     model.NormalizeFastaHeaderMode(saveSettings.FastaHeaderMode, saveSettings.UsePhgoHeader),
 				UsePhgoHeader:       model.NormalizeFastaHeaderMode(saveSettings.FastaHeaderMode, saveSettings.UsePhgoHeader) == model.FastaHeaderModePhgo,
@@ -221,7 +221,7 @@ func (w *BlastWizard) runCanvasMode(ctx context.Context, state canvasLaunchState
 			item.Selected = nextSelected
 			updateCanvasItemSubtitle(item)
 		case "open_tree_tools":
-			if err := w.ensureCanvasTreeRuntimeInteractive(ctx); err != nil {
+			if err := w.openCanvasTreeToolsWithProgress(ctx); err != nil {
 				w.collapseCanvasTreePanel()
 				if infoErr := w.showInfo("System tree", err.Error(), prompt.ErrBackToDatabaseSelection); infoErr != nil {
 					return infoErr
@@ -229,13 +229,7 @@ func (w *BlastWizard) runCanvasMode(ctx context.Context, state canvasLaunchState
 				continue
 			}
 		case "open_tree_viewer":
-			if err := w.ensureCanvasTreeRuntimeInteractive(ctx); err != nil {
-				if infoErr := w.showInfo("System tree", err.Error(), prompt.ErrBackToDatabaseSelection); infoErr != nil {
-					return infoErr
-				}
-				continue
-			}
-			if err := w.openCanvasTreeViewer(ctx); err != nil {
+			if err := w.openCanvasTreeViewerWithProgress(ctx); err != nil {
 				w.collapseCanvasTreePanel()
 				if infoErr := w.showInfo("System tree", err.Error(), prompt.ErrBackToDatabaseSelection); infoErr != nil {
 					return infoErr
@@ -243,7 +237,7 @@ func (w *BlastWizard) runCanvasMode(ctx context.Context, state canvasLaunchState
 				continue
 			}
 		case "refresh_tree":
-			if err := w.ensureCanvasTreeRuntimeInteractive(ctx); err != nil {
+			if err := w.ensureCanvasTreeRuntimeWithProgress(ctx, "Preparing system tree refresh", "Checking the bundled MEGA runtime before refreshing the system tree..."); err != nil {
 				if infoErr := w.showInfo("System tree", err.Error(), prompt.ErrBackToDatabaseSelection); infoErr != nil {
 					return infoErr
 				}
@@ -251,7 +245,7 @@ func (w *BlastWizard) runCanvasMode(ctx context.Context, state canvasLaunchState
 			}
 			if err := w.refreshCanvasTreeInteractive(ctx, &state, selection.TreeSettings); err != nil {
 				if megaphgo.IsMissingToolsError(err) {
-					if runtimeErr := w.ensureCanvasTreeRuntimeInteractive(ctx); runtimeErr != nil {
+					if runtimeErr := w.ensureCanvasTreeRuntimeWithProgress(ctx, "Retrying MEGA runtime check", "Rechecking the bundled MEGA runtime before retrying the system tree refresh..."); runtimeErr != nil {
 						err = runtimeErr
 					} else if retryErr := w.refreshCanvasTreeInteractive(ctx, &state, selection.TreeSettings); retryErr == nil {
 						continue
@@ -332,6 +326,63 @@ func (w *BlastWizard) ensureCanvasTreeRuntimeInteractive(ctx context.Context) er
 		return w.ensureCanvasTreeRuntime(ctx)
 	}
 	return megaphgo.EnsureRuntimeAvailable()
+}
+
+func (w *BlastWizard) ensureCanvasTreeRuntimeWithProgress(ctx context.Context, title string, description string) error {
+	if w.suppressTaskModals {
+		return w.ensureCanvasTreeRuntimeInteractive(ctx)
+	}
+	_, err := tui.RunProgressTaskValueContext(tui.TaskPage{
+		Path:        w.tuiPath("Startup", "Explore", "Canvas", "Tree tools"),
+		Title:       title,
+		Description: description,
+		Initial:     "Checking bundled MEGA runtime...",
+		Total:       1,
+		CancelError: prompt.ErrBackToRowSelection,
+	}, func(taskCtx context.Context, update func(int, string)) (struct{}, error) {
+		progress := safeProgress(update)
+		progress(0, "Checking bundled MEGA runtime...")
+		if err := w.ensureCanvasTreeRuntimeInteractive(taskCtx); err != nil {
+			return struct{}{}, err
+		}
+		progress(1, "Bundled MEGA runtime is ready.")
+		return struct{}{}, nil
+	})
+	return err
+}
+
+func (w *BlastWizard) openCanvasTreeToolsWithProgress(ctx context.Context) error {
+	return w.ensureCanvasTreeRuntimeWithProgress(ctx, "Opening system tree tools", "Checking the bundled MEGA runtime before opening the system tree settings panel.")
+}
+
+func (w *BlastWizard) openCanvasTreeViewerWithProgress(ctx context.Context) error {
+	if w.suppressTaskModals {
+		if err := w.ensureCanvasTreeRuntimeInteractive(ctx); err != nil {
+			return err
+		}
+		return w.openCanvasTreeViewer(ctx)
+	}
+	_, err := tui.RunProgressTaskValueContext(tui.TaskPage{
+		Path:        w.tuiPath("Startup", "Explore", "Canvas", "Tree viewer"),
+		Title:       "Opening system tree preview",
+		Description: "Checking the bundled MEGA runtime, preparing the local Reactree viewer, and opening the preview.",
+		Initial:     "Checking bundled MEGA runtime...",
+		Total:       2,
+		CancelError: prompt.ErrBackToRowSelection,
+	}, func(taskCtx context.Context, update func(int, string)) (struct{}, error) {
+		progress := safeProgress(update)
+		progress(0, "Checking bundled MEGA runtime...")
+		if err := w.ensureCanvasTreeRuntimeInteractive(taskCtx); err != nil {
+			return struct{}{}, err
+		}
+		progress(1, "Preparing local Reactree viewer...")
+		if err := w.openCanvasTreeViewer(taskCtx); err != nil {
+			return struct{}{}, err
+		}
+		progress(2, "System tree preview opened.")
+		return struct{}{}, nil
+	})
+	return err
 }
 
 func (w *BlastWizard) refreshCanvasTree(ctx context.Context, state canvasLaunchState, settings phylo.TreeSettings) error {
@@ -2096,9 +2147,6 @@ func canvasExportCompleteMessage(settings exportSettings) string {
 	if settings.WriteText {
 		lines = append(lines, "Canvas FASTA export saved to "+settings.OutputDir+".")
 	}
-	if settings.WriteConvertedFasta {
-		lines = append(lines, "Canvas converted FASTA export saved to "+settings.OutputDir+".")
-	}
 	if settings.WriteSession {
 		lines = append(lines, "Canvas snapshot saved to "+settings.OutputDir+".")
 	}
@@ -2109,10 +2157,9 @@ func canvasExportCompleteMessage(settings exportSettings) string {
 }
 
 func (w *BlastWizard) exportCanvasSelections(ctx context.Context, state canvasLaunchState, settings exportSettings) error {
-	if !settings.WriteText && !settings.WriteConvertedFasta && !settings.WriteSession {
+	if !settings.WriteText && !settings.WriteSession {
 		return nil
 	}
-	selectedRows := w.selectedCanvasRowsInCurrentOrder(state.Items, settings.WriteAllRows)
 	if settings.WriteText {
 		exportRows := w.selectedCanvasRowsInCurrentOrderForExport(state.Items, settings.WriteAllRows)
 		if len(exportRows) == 0 {
@@ -2130,87 +2177,12 @@ func (w *BlastWizard) exportCanvasSelections(ctx context.Context, state canvasLa
 			return err
 		}
 	}
-	if settings.WriteConvertedFasta {
-		if len(selectedRows) == 0 {
-			return fmt.Errorf("no selected canvas rows are available for converted FASTA export")
-		}
-		records, err := w.canvasConvertedSequenceRecordsForExport(ctx, state, selectedRows, settings.TreeSettings, settings.fastaHeaderMode())
-		if err != nil {
-			return err
-		}
-		textPath := filepath.Join(settings.OutputDir, settings.BaseName+"_converted.fasta")
-		if err := withSpinner(w.out, "Writing converted canvas FASTA file...", func() error {
-			return export.WriteProteinSequencesText(textPath, records)
-		}); err != nil {
-			return err
-		}
-	}
 	if settings.WriteSession {
 		if err := w.writeCanvasSessionSnapshot(state, settings); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func (w *BlastWizard) canvasConvertedSequenceRecordsForExport(ctx context.Context, state canvasLaunchState, selectedRows []canvasSelectedRow, treeSettings phylo.TreeSettings, headerMode model.FastaHeaderMode) ([]model.ProteinSequenceRecord, error) {
-	if err := w.ensureCanvasTreeRuntimeInteractive(ctx); err != nil {
-		return nil, err
-	}
-	result, err := withSpinnerValue(w.out, "Converting selected canvas FASTA records with PHgo tree settings...", prompt.ErrBackToRowSelection, func(taskCtx context.Context) (phylo.RunResult, error) {
-		return w.buildCanvasTreeArtifacts(taskCtx, state, selectedRows, treeSettings)
-	})
-	if err != nil {
-		return nil, err
-	}
-	sequences, err := canvasConvertedSequencesFromAlignedFASTA(result.Plan.AlignedFASTA)
-	if err != nil {
-		return nil, err
-	}
-	if len(sequences) != len(selectedRows) {
-		return nil, fmt.Errorf("converted FASTA contains %d sequence(s) for %d selected row(s)", len(sequences), len(selectedRows))
-	}
-	records, err := w.canvasSequenceRecordsForExport(ctx, selectedRows)
-	if err != nil {
-		return nil, err
-	}
-	records = applyCanvasHeaderMode(records, selectedRows, headerMode)
-	for i := range records {
-		if i >= len(sequences) {
-			break
-		}
-		records[i].Sequence = sanitizeSequence(sequences[i])
-	}
-	return records, nil
-}
-
-func canvasConvertedSequencesFromAlignedFASTA(alignedFASTA string) ([]string, error) {
-	lines := strings.Split(strings.ReplaceAll(alignedFASTA, "\r\n", "\n"), "\n")
-	sequences := make([]string, 0)
-	var current strings.Builder
-	flush := func() {
-		if current.Len() == 0 {
-			return
-		}
-		sequences = append(sequences, strings.ReplaceAll(current.String(), "-", ""))
-		current.Reset()
-	}
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, ">") {
-			flush()
-			continue
-		}
-		current.WriteString(line)
-	}
-	flush()
-	if len(sequences) == 0 {
-		return nil, fmt.Errorf("converted FASTA export could not read any runtime FASTA sequences")
-	}
-	return sequences, nil
 }
 
 func (w *BlastWizard) selectedCanvasRowsInCurrentOrder(items []model.CanvasItem, includeUnchecked bool) []canvasSelectedRow {

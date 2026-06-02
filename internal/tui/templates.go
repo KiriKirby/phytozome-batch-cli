@@ -2302,7 +2302,6 @@ type ExportSettingsPage struct {
 	WriteExcel             bool
 	WriteRawExcel          bool
 	ShowWriteText          bool
-	ShowConvertedFasta     bool
 	ShowWriteExcel         bool
 	ShowWriteRawExcel      bool
 	ShowFastaHeaderMode    bool
@@ -2322,7 +2321,6 @@ type ExportSettingsResult struct {
 	WriteReport           bool
 	WriteSession          bool
 	WriteText             bool
-	WriteConvertedFasta   bool
 	WriteExcel            bool
 	WriteRawExcel         bool
 	WriteAllRows          bool
@@ -7338,14 +7336,12 @@ func RunExportSettingsModal(page ExportSettingsPage) (ExportSettingsResult, erro
 	attachFocusBorder(sessionBox.Box)
 
 	writeText := page.WriteText
-	writeConvertedFasta := false
 	writeAllRows := false
 	writeExcel := page.WriteExcel
 	writeRawExcel := page.WriteRawExcel
 	fastaHeaderMode := normalizeTUIFastaHeaderMode(page.FastaHeaderMode, page.UsePhgoHeader)
 	prependOnlyFirstQuery := page.PrependOnlyFirstQuery
 	outputTextBox := newCheckboxModule("Write FASTA file", func() bool { return writeText }, func() { writeText = !writeText })
-	outputConvertedBox := newCheckboxModule("Write converted FASTA file", func() bool { return writeConvertedFasta }, func() { writeConvertedFasta = !writeConvertedFasta })
 	outputExcelBox := newCheckboxModule("Write Excel file", func() bool { return writeExcel }, func() { writeExcel = !writeExcel })
 	outputRawBox := newCheckboxModule("Write raw Excel and raw FASTA files", func() bool { return writeRawExcel }, func() { writeRawExcel = !writeRawExcel })
 	prependFirstBox := newCheckboxModule("FASTA query records: prepend first query only", func() bool { return prependOnlyFirstQuery }, func() { prependOnlyFirstQuery = !prependOnlyFirstQuery })
@@ -7368,13 +7364,12 @@ func RunExportSettingsModal(page ExportSettingsPage) (ExportSettingsResult, erro
 	fastaHeaderDropDown.SetFieldBackgroundColor(colorPanel)
 	fastaHeaderDropDown.SetFieldTextColor(tview.Styles.PrimaryTextColor)
 	fastaHeaderDropDown.SetLabelColor(tview.Styles.SecondaryTextColor)
-	for _, box := range []*checkboxModule{outputTextBox, outputConvertedBox, outputAllRowsBox, outputExcelBox, outputRawBox, prependFirstBox} {
+	for _, box := range []*checkboxModule{outputTextBox, outputAllRowsBox, outputExcelBox, outputRawBox, prependFirstBox} {
 		box.SetBorder(false)
 	}
 
 	showFileModule := !page.AllowFolder || !page.AllowEmptyFile
 	showWriteText := page.ShowWriteText || (!page.ShowWriteExcel && !page.ShowWriteRawExcel && !page.ShowFastaHeaderMode)
-	showConvertedFasta := page.ShowConvertedFasta
 	showAllRowsFasta := page.ShowAllRowsFasta
 	showWriteExcel := page.ShowWriteExcel
 	showWriteRawExcel := page.ShowWriteRawExcel
@@ -7397,9 +7392,6 @@ func RunExportSettingsModal(page ExportSettingsPage) (ExportSettingsResult, erro
 	}
 	if showWriteText {
 		fields = append(fields, exportModule{primitive: outputTextBox, group: 2})
-	}
-	if showConvertedFasta {
-		fields = append(fields, exportModule{primitive: outputConvertedBox, group: 2})
 	}
 	if showAllRowsFasta {
 		fields = append(fields, exportModule{primitive: outputAllRowsBox, group: 2})
@@ -7442,7 +7434,6 @@ func RunExportSettingsModal(page ExportSettingsPage) (ExportSettingsResult, erro
 		result.WriteReport = writeReport
 		result.WriteSession = writeSession
 		result.WriteText = writeText
-		result.WriteConvertedFasta = writeConvertedFasta
 		result.WriteAllRows = writeAllRows
 		result.WriteExcel = writeExcel
 		result.WriteRawExcel = writeRawExcel
@@ -7551,17 +7542,13 @@ func RunExportSettingsModal(page ExportSettingsPage) (ExportSettingsResult, erro
 	if showWriteText && showWriteExcel && showWriteRawExcel {
 		outputHelp = "FASTA exports selected peptide sequences. Excel exports selected rows.\nRaw exports every table row to _raw.xlsx, and also writes _raw.fasta when FASTA export is enabled."
 	} else if showWriteText && !showWriteExcel && !showWriteRawExcel {
-		outputHelp = "FASTA exports all selected canvas sequences in the current canvas order. Converted FASTA uses the current tree settings."
+		outputHelp = "FASTA exports all selected canvas sequences in the current canvas order."
 	}
 	outputHelpHeight := minInt(3, maxInt(2, textViewLineCount(outputHelp)))
 	outputGroup.AddItem(textBlock(outputHelp), outputHelpHeight, 0, false)
 	outputGroupHeight := outputHelpHeight
 	if showWriteText {
 		outputGroup.AddItem(outputTextBox, 1, 0, false)
-		outputGroupHeight++
-	}
-	if showConvertedFasta {
-		outputGroup.AddItem(outputConvertedBox, 1, 0, false)
 		outputGroupHeight++
 	}
 	if showAllRowsFasta {

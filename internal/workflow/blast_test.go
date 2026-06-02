@@ -6601,17 +6601,6 @@ func TestApplyCanvasHeaderModeMinimalUsesAvailableIDs(t *testing.T) {
 	}
 }
 
-func TestCanvasConvertedSequencesFromAlignedFASTARemovesGaps(t *testing.T) {
-	got, err := canvasConvertedSequencesFromAlignedFASTA(">PHGOT000001\nM-PEP\nTIDE\n>PHGOT000002\nATG-C\n")
-	if err != nil {
-		t.Fatalf("canvasConvertedSequencesFromAlignedFASTA returned error: %v", err)
-	}
-	want := []string{"MPEPTIDE", "ATGC"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("converted sequences = %#v, want %#v", got, want)
-	}
-}
-
 func TestExportCanvasSelectionsWritesMixedCanvasRowsAsOnePhgoFasta(t *testing.T) {
 	outputDir := t.TempDir()
 
@@ -6896,6 +6885,36 @@ func TestExportCanvasSelectionsPlainFastaSkipsRowsWithoutExportSequence(t *testi
 	}, "\n")
 	if got != want {
 		t.Fatalf("plain canvas FASTA = %q\nwant %q", got, want)
+	}
+}
+
+func TestExportCanvasSelectionsIgnoresRemovedConvertedFastaOption(t *testing.T) {
+	outputDir := t.TempDir()
+	w := NewBlastWizard(io.Discard)
+	state := canvasLaunchState{
+		Items: []model.CanvasItem{{
+			Title:    "1",
+			Selected: []bool{true},
+			Rows: []model.CanvasRow{{
+				RowNumber: 1,
+				Kind:      model.CanvasKindFasta,
+				FASTA: &model.QuerySequenceSource{
+					Annotation: "ready",
+					Sequence:   "MPEPTIDE",
+				},
+			}},
+		}},
+	}
+	err := w.exportCanvasSelections(context.Background(), state, exportSettings{
+		BaseName:            "canvas_removed_converted",
+		OutputDir:           outputDir,
+		WriteConvertedFasta: true,
+	})
+	if err != nil {
+		t.Fatalf("exportCanvasSelections returned error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, "canvas_removed_converted_converted.fasta")); !os.IsNotExist(err) {
+		t.Fatalf("removed converted FASTA export should not write a file, stat err=%v", err)
 	}
 }
 

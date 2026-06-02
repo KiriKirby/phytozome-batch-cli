@@ -113,10 +113,26 @@ and fixes applied.
   source-resolution errors surface instead of becoming empty records.
 - 2026-06-02: Final Canvas boundary pass split normal FASTA export from tree
   input selection: plain FASTA export still filters to export-ready rows, while
-  tree refresh and converted FASTA keep the checked row set intact for
-  `mega-phgo-runtime`. `canvasTreeRowSourcesWithSkippedForSettings` now returns
-  nucleotide resolver and source-construction errors directly instead of
-  replacing them with empty records.
+  tree refresh keeps the checked row set intact for `mega-phgo-runtime`.
+  `canvasTreeRowSourcesWithSkippedForSettings` now returns nucleotide resolver
+  and source-construction errors directly instead of replacing them with empty
+  records.
+- 2026-06-02: Removed the old Canvas "converted FASTA" export from the UI and
+  runtime path. It was export-only post-processing over aligned FASTA, not a
+  MEGA GUI-equivalent conversion workflow.
+- 2026-06-02: Added task/progress wrappers for Canvas tree panel open, preview
+  open, refresh runtime preflight, and missing-tool retry preflight so runtime
+  checks and viewer startup no longer leave an unlabelled black wait screen.
+- 2026-06-02: Fixed kind-normalized alignment settings so exact protein
+  variants such as `clustalw_protein` preserve edited MEGA parameters. This
+  keeps alignment/tree fingerprints sensitive to real parameter changes and
+  prevents accidental render-only reuse after a compute input changes.
+- 2026-06-02: Added and ran a desktop FASTA runtime matrix probe over
+  `C:\Users\wangsychn\Desktop\4CL_other_yt2_0.fasta` and
+  `C:\Users\wangsychn\Desktop\4CL_other.fasta`: Protein mode covers ClustalW
+  and MUSCLE against all five tree methods; DNA mode covers ClustalW, MUSCLE,
+  ClustalW Codons, and MUSCLE Codons against all five tree methods. PHgo does
+  not modify the source files.
 - 2026-06-02: Closed runtime/viewer final checks: cancellation before request
   writing and during runtime execution is tested, viewer sessions are isolated
   by session ID, Windows runtime packaging rules are source-checked, and

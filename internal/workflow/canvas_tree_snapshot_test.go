@@ -250,7 +250,7 @@ func TestCloseCanvasTreeViewerStopsCanvasScopedServer(t *testing.T) {
 func TestReuseLastCanvasTreePlanDoesNotBiologicallyValidateAlignment(t *testing.T) {
 	w := NewBlastWizard(nil)
 	now := time.Now()
-	settings := phylo.DefaultTreeSettings()
+	settings := phylo.NormalizeTreeSettingsForKind(phylo.DefaultTreeSettings(), phylo.SequenceProtein)
 	records := []phylo.InputRecord{
 		{TaxonID: "PHGOT000001", DisplayName: "DNA row", Sequence: "ATGCGTATGCGT", SequenceKind: phylo.SequenceNucleotide, RowFingerprint: "dna"},
 		{TaxonID: "PHGOT000002", DisplayName: "Protein row", Sequence: "MPEPTIDE", SequenceKind: phylo.SequenceProtein, RowFingerprint: "protein"},
@@ -275,6 +275,73 @@ func TestReuseLastCanvasTreePlanDoesNotBiologicallyValidateAlignment(t *testing.
 	}
 	if !strings.Contains(reused.Plan.AlignedFASTA, "ATGCGTATGCGT") {
 		t.Fatalf("reused alignment was unexpectedly changed: %#v", reused.Plan.AlignedFASTA)
+	}
+}
+
+func TestReuseLastCanvasTreePlanRejectsComputeInputChanges(t *testing.T) {
+	w := NewBlastWizard(nil)
+	now := time.Now()
+	settings := phylo.NormalizeTreeSettingsForKind(phylo.DefaultTreeSettings(), phylo.SequenceProtein)
+	records := []phylo.InputRecord{
+		{TaxonID: "PHGOT000001", DisplayName: "PAL1", Sequence: "MPEPTIDE", SequenceKind: phylo.SequenceProtein, RowFingerprint: "row-1"},
+		{TaxonID: "PHGOT000002", DisplayName: "PAL2", Sequence: "MSECOND", SequenceKind: phylo.SequenceProtein, RowFingerprint: "row-2"},
+	}
+	meta := phylo.Metadata{SchemaVersion: 1, GeneratedAt: now, DisplayNameSource: "label_name", Records: records}
+	aligned := ">PHGOT000001\nMPEPTIDE\n>PHGOT000002\nMSECOND\n"
+	newick := "(PHGOT000001,PHGOT000002);"
+	last, err := phylo.BuildRunPlan("canvas", "old", t.TempDir(), settings, phylo.SequenceProtein, records, meta, aligned, newick, now)
+	if err != nil {
+		t.Fatalf("BuildRunPlan last: %v", err)
+	}
+	w.canvasTreeLastPlan = last
+
+	renamed := append([]phylo.InputRecord(nil), records...)
+	renamed[0].DisplayName = "PAL display"
+	renamedMeta := meta
+	renamedMeta.Records = renamed
+	renamedPlan, err := phylo.BuildRunPlan("canvas", "renamed", t.TempDir(), settings, phylo.SequenceProtein, renamed, renamedMeta, "", "", now)
+	if err != nil {
+		t.Fatalf("BuildRunPlan renamed: %v", err)
+	}
+	if _, ok, err := w.reuseLastCanvasTreePlan(renamedPlan, renamed, renamedMeta, now); err != nil {
+		t.Fatalf("reuse renamed returned error: %v", err)
+	} else if !ok {
+		t.Fatalf("display-name-only change should reuse runtime artifacts")
+	}
+
+	paramSettings := settings
+	paramSettings.AlignmentParams = make(map[string]string, len(settings.AlignmentParams))
+	for key, value := range settings.AlignmentParams {
+		paramSettings.AlignmentParams[key] = value
+	}
+	paramSettings.AlignmentParams["multiple_gap_opening_penalty"] = "12"
+	if got := paramSettings.AlignmentParams["multiple_gap_opening_penalty"]; got != "12" {
+		t.Fatalf("test setup alignment param = %q, want 12", got)
+	}
+	paramPlan, err := phylo.BuildRunPlan("canvas", "param", t.TempDir(), paramSettings, phylo.SequenceProtein, records, meta, "", "", now)
+	if err != nil {
+		t.Fatalf("BuildRunPlan param: %v", err)
+	}
+	if got := paramPlan.Settings.AlignmentParams["multiple_gap_opening_penalty"]; got != "12" {
+		t.Fatalf("param plan alignment param = %q, want 12", got)
+	}
+	if reused, ok, err := w.reuseLastCanvasTreePlan(paramPlan, records, meta, now); err != nil {
+		t.Fatalf("reuse param returned error: %v", err)
+	} else if ok {
+		t.Fatalf("alignment parameter change reused artifacts instead of full compute: %#v", reused)
+	}
+
+	selectionChanged := records[:1]
+	selectionMeta := meta
+	selectionMeta.Records = selectionChanged
+	selectionPlan, err := phylo.BuildRunPlan("canvas", "selection", t.TempDir(), settings, phylo.SequenceProtein, selectionChanged, selectionMeta, "", "", now)
+	if err != nil {
+		t.Fatalf("BuildRunPlan selection: %v", err)
+	}
+	if reused, ok, err := w.reuseLastCanvasTreePlan(selectionPlan, selectionChanged, selectionMeta, now); err != nil {
+		t.Fatalf("reuse selection returned error: %v", err)
+	} else if ok {
+		t.Fatalf("selection change reused artifacts instead of full compute: %#v", reused)
 	}
 }
 
@@ -680,6 +747,24 @@ func TestEnsureCanvasTreeRuntimeInteractiveUsesInjectedChecker(t *testing.T) {
 	}
 	if !errors.Is(err, want) {
 		t.Fatalf("ensureCanvasTreeRuntimeInteractive error = %v, want %v", err, want)
+	}
+}
+
+func TestOpenCanvasTreeToolsWithProgressChecksRuntime(t *testing.T) {
+	w := NewBlastWizard(nil)
+	w.suppressTaskModals = true
+	want := errors.New("runtime missing")
+	calls := 0
+	w.ensureCanvasTreeRuntime = func(context.Context) error {
+		calls++
+		return want
+	}
+	err := w.openCanvasTreeToolsWithProgress(context.Background())
+	if calls != 1 {
+		t.Fatalf("runtime checker calls = %d, want 1", calls)
+	}
+	if !errors.Is(err, want) {
+		t.Fatalf("openCanvasTreeToolsWithProgress error = %v, want %v", err, want)
 	}
 }
 

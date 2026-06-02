@@ -107,6 +107,18 @@ func TestNormalizeTreeSettingsForKindChoosesCompatibleMethodVariant(t *testing.T
 	}
 }
 
+func TestNormalizeTreeSettingsForKindPreservesExactVariantParams(t *testing.T) {
+	settings := NormalizeTreeSettingsForKind(DefaultTreeSettings(), SequenceProtein)
+	settings.AlignmentParams["multiple_gap_opening_penalty"] = "12"
+	normalized := NormalizeTreeSettingsForKind(settings, SequenceProtein)
+	if normalized.AlignmentMethod != AlignmentMethod("clustalw_protein") {
+		t.Fatalf("protein alignment method = %q", normalized.AlignmentMethod)
+	}
+	if got := normalized.AlignmentParams["multiple_gap_opening_penalty"]; got != "12" {
+		t.Fatalf("protein variant alignment param = %q, want 12", got)
+	}
+}
+
 func TestNormalizeTreeSettingsForKindFallsBackToDefaultTreeMethod(t *testing.T) {
 	settings := NormalizeTreeSettingsForKind(TreeSettings{TreeMethod: TreeMethod("stale")}, SequenceProtein)
 	if settings.TreeMethod != DefaultTreeMethod {

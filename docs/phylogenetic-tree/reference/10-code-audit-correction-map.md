@@ -182,7 +182,7 @@ Closure:
   `canvasRowHasSequenceForExport`.
 - [x] Normal Canvas FASTA export uses
   `selectedCanvasRowsInCurrentOrderForExport`, keeping export-readiness
-  filtering out of tree refresh and converted FASTA runtime input.
+  filtering out of tree refresh runtime input.
 - [x] Empty selected records are preserved through `InputFASTA`; the empty
   record header remains visible to MEGA runtime instead of disappearing.
 - [x] Missing non-resolvable sequence payloads become explicit empty selected
@@ -268,7 +268,15 @@ Current behavior:
 - Display-name-only refresh can reuse runtime artifacts when compute
   fingerprints match.
 - Snapshot restore does not biologically validate aligned FASTA payloads.
-- Converted FASTA export derives from runtime aligned FASTA and strips `-`.
+- The old Canvas "converted FASTA" export was removed from the UI/runtime path
+  because it was export-only post-processing over aligned FASTA, not a MEGA
+  GUI-equivalent conversion workflow.
+- Canvas tree panel open, preview open, refresh preflight, and missing-tool
+  retry preflight now use task/progress modals before runtime checks or viewer
+  startup.
+- Exact kind-specific alignment variants preserve edited MEGA parameters during
+  normalization, so protein ClustalW/MUSCLE parameter changes remain compute
+  fingerprint inputs and force full runtime refresh.
 
 Required corrections:
 
@@ -276,7 +284,9 @@ Required corrections:
 | --- | --- |
 | Snapshot open | Restore artifacts/payload without recomputing; first explicit refresh recomputes |
 | Reuse | Require manifest plus canonical runtime artifacts; never use artifact scanning that can pick `input.fasta` |
-| Converted FASTA export | Keep documented as export-only post-processing, not tree computation or biological conversion |
+| Converted FASTA export | Removed from Canvas export UI/runtime path because PHgo must not insert a non-MEGA conversion step |
+| Loading dialogs | Tree panel, preview, refresh preflight, and missing-tool retry preflight run through task/progress UI |
+| Parameter reuse | Alignment/tree parameter changes must alter compute fingerprints; only display-name changes may render-only reuse |
 | Display names | Preview-only changes must not alter alignment/tree fingerprints |
 
 ## 7. Immediate Fix Order

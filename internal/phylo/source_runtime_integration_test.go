@@ -77,6 +77,103 @@ func TestMegaPHGORuntimeRealFASTAProbe(t *testing.T) {
 	}
 }
 
+func TestMegaPHGORuntimeDesktopFASTAMatrixProbe(t *testing.T) {
+	if strings.TrimSpace(os.Getenv("PHYTOZOME_RUN_MEGAPHGO_RUNTIME")) == "" || strings.TrimSpace(os.Getenv("PHYTOZOME_MEGAPHGO_DESKTOP_MATRIX")) == "" {
+		t.Skip("set PHYTOZOME_RUN_MEGAPHGO_RUNTIME=1 and PHYTOZOME_MEGAPHGO_DESKTOP_MATRIX=1 to run the desktop FASTA matrix probe")
+	}
+	paths := desktopMatrixFASTAPathsForTest()
+	if env := strings.TrimSpace(os.Getenv("PHYTOZOME_MEGAPHGO_FASTA")); env != "" {
+		paths = []string{env}
+	}
+	appRoot := repoRootForRuntimeProbeTest(t)
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working dir: %v", err)
+	}
+	if err := os.Chdir(appRoot); err != nil {
+		t.Fatalf("switch to runtime app root %s: %v", appRoot, err)
+	}
+	defer func() {
+		if err := os.Chdir(oldWD); err != nil {
+			t.Fatalf("restore working dir %s: %v", oldWD, err)
+		}
+	}()
+	treeMethods := []TreeMethod{TreeNeighborJoining, TreeMinimumEvolution, TreeUPGMA, TreeMaximumLikelihood, TreeMaximumParsimony}
+	cases := []struct {
+		name           string
+		kind           SequenceKind
+		target         ConversionTarget
+		alignments     []AlignmentMethod
+		requireSuccess bool
+	}{
+		{name: "protein", kind: SequenceProtein, target: ConversionTargetProtein, alignments: []AlignmentMethod{AlignmentClustalW, AlignmentMUSCLE}, requireSuccess: true},
+		{name: "dna", kind: SequenceNucleotide, target: ConversionTargetDNA, alignments: []AlignmentMethod{AlignmentClustalW, AlignmentMUSCLE, AlignmentClustalWCodons, AlignmentMUSCLECodons}},
+	}
+	for _, path := range paths {
+		path := path
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read desktop FASTA %s: %v", path, err)
+		}
+		sources := rowSourcesFromFASTAForTest(t, string(data))
+		if len(sources) < 2 {
+			t.Fatalf("desktop FASTA %s should contain at least two records, got %d", path, len(sources))
+		}
+		if len(sources) > 4 {
+			sources = append([]RowSource(nil), sources[:4]...)
+		}
+		sequencesAreDNA := true
+		for _, source := range sources {
+			sequencesAreDNA = sequencesAreDNA && looksNucleotideOnly(source.Sequence)
+		}
+		for _, tc := range cases {
+			tc := tc
+			requireSuccess := tc.requireSuccess || (tc.kind == SequenceNucleotide && sequencesAreDNA)
+			t.Run(filepath.Base(path)+"/"+tc.name, func(t *testing.T) {
+				for _, alignment := range tc.alignments {
+					alignment := alignment
+					for _, treeMethod := range treeMethods {
+						treeMethod := treeMethod
+						t.Run(string(alignment)+"/"+string(treeMethod), func(t *testing.T) {
+							now := time.Now()
+							records, meta, err := BuildInput(sources, "label_name", "desktop-matrix-probe", now)
+							if err != nil {
+								t.Fatalf("BuildInput returned error: %v", err)
+							}
+							settings := DefaultTreeSettings()
+							settings.ConversionTarget = tc.target
+							settings.AlignmentMethod = alignment
+							settings.TreeMethod = treeMethod
+							settings.TreeParams = map[string]string{
+								"phylogeny_test":    "None",
+								"number_of_threads": "1",
+							}
+							plan, err := BuildRunPlan("desktop-matrix-probe", "run1", filepath.Join(t.TempDir(), "tree"), settings, tc.kind, records, meta, "", "", now)
+							if err != nil {
+								t.Fatalf("BuildRunPlan returned error: %v", err)
+							}
+							result, err := RunPlanWithRuntime(context.Background(), plan, RuntimeOptions{})
+							if err != nil {
+								if requireSuccess {
+									t.Fatalf("RunPlanWithRuntime returned error: %v\nartifacts: %s\n%s", err, result.ArtifactDir, runtimeProbeDebugText(result.ArtifactDir))
+								}
+								debug := runtimeProbeDebugText(result.ArtifactDir)
+								if strings.TrimSpace(result.ArtifactDir) == "" || !strings.Contains(debug, `"error_text"`) {
+									t.Fatalf("runtime error should keep artifacts and runtime error_text, err=%v\nartifacts: %s\n%s", err, result.ArtifactDir, debug)
+								}
+								return
+							}
+							if strings.TrimSpace(result.Plan.AlignedFASTA) == "" || strings.TrimSpace(result.Plan.Newick) == "" {
+								t.Fatalf("successful runtime output should include aligned FASTA and Newick:\n%s", runtimeProbeDebugText(result.ArtifactDir))
+							}
+						})
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestMegaPHGORuntimeProteinStopCodonProbeDoesNotSanitizeInPHgo(t *testing.T) {
 	if strings.TrimSpace(os.Getenv("PHYTOZOME_RUN_MEGAPHGO_RUNTIME")) == "" {
 		t.Skip("set PHYTOZOME_RUN_MEGAPHGO_RUNTIME=1 to run the real mega-phgo-runtime probe")
@@ -801,6 +898,13 @@ func repoRootForRuntimeProbeTest(t *testing.T) string {
 			t.Fatalf("could not find repo root from %s", dir)
 		}
 		dir = parent
+	}
+}
+
+func desktopMatrixFASTAPathsForTest() []string {
+	return []string{
+		`C:\Users\wangsychn\Desktop\4CL_other_yt2_0.fasta`,
+		`C:\Users\wangsychn\Desktop\4CL_other.fasta`,
 	}
 }
 

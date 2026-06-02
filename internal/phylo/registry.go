@@ -170,6 +170,8 @@ func NormalizeTreeSettings(settings TreeSettings) TreeSettings {
 func NormalizeTreeSettingsForKind(settings TreeSettings, kind SequenceKind) TreeSettings {
 	hadAlignmentParams := len(settings.AlignmentParams) > 0
 	hadTreeParams := len(settings.TreeParams) > 0
+	originalAlignmentMethod := settings.AlignmentMethod
+	originalAlignmentParams := settings.AlignmentParams
 	settings = NormalizeTreeSettings(settings)
 	if alignDef, ok := MethodDefinitionForAlignmentKind(settings.AlignmentMethod, kind); ok {
 		previousMethod := settings.AlignmentMethod
@@ -186,6 +188,14 @@ func NormalizeTreeSettingsForKind(settings TreeSettings, kind SequenceKind) Tree
 			settings.AlignmentParams = DefaultParams(defs[0])
 		} else {
 			settings.AlignmentParams = mergeDefaultParams(defs[0], settings.AlignmentParams)
+		}
+	}
+	if hadAlignmentParams {
+		if alignDef, ok := MethodDefinitionForAlignmentKind(originalAlignmentMethod, kind); ok &&
+			strings.EqualFold(strings.TrimSpace(string(originalAlignmentMethod)), strings.TrimSpace(alignDef.ID)) &&
+			paramsMatchDefinition(alignDef, originalAlignmentParams) {
+			settings.AlignmentMethod = AlignmentMethod(strings.TrimSpace(alignDef.ID))
+			settings.AlignmentParams = mergeDefaultParams(alignDef, originalAlignmentParams)
 		}
 	}
 	if treeDef, ok := MethodDefinitionForTreeKind(settings.TreeMethod, kind); ok {
