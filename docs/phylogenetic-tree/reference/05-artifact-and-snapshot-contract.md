@@ -174,7 +174,9 @@ workflow continuity; a `.pgv` preserves a viewer session.
 
 Reader contract:
 
-- The browser viewer reads local `.pgv` files through `parseViewerSnapshot`.
+- Standalone tree-browser sessions read local `.pgv` files through
+  `parseViewerSnapshot`; the Canvas viewer page does not expose a local `.pgv`
+  open button.
 - The reader rejects invalid JSON, unknown `format`, unsupported
   `schema_version`, and missing payload objects.
 - Opening a `.pgv` restores `payload` and `viewer_state` in the browser only.

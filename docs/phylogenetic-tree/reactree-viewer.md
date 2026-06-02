@@ -34,10 +34,11 @@ Current implementation note:
 
 - The first shippable viewer service is hosted by the Go tree subsystem while preserving the same HTTP/SSE contract.
 - Its browser page is a bundled `tree-viewer` React application built with Vite and `reactreejs`.
-- The React app accepts Newick plus metadata, maps stable taxon IDs to `display_name`, passes aligned FASTA into Reactree's alignment panel, and relies on Reactree's own toolbar for layout, search, editing, and SVG/PNG/PDF/Newick export.
+- The React app accepts Newick plus metadata, applies MEGA Tree Explorer's default midpoint-root plus balanced-shape display ordering, maps stable taxon IDs to `display_name`, passes aligned FASTA into Reactree's alignment panel, and relies on Reactree's own toolbar for layout, search, editing, and SVG/PNG/PDF/Newick export.
 - Before data enters Reactree, the adapter converts `display_name` values into Reactree-safe labels by removing Newick-breaking punctuation/whitespace and adding deterministic stable-taxon suffixes when two display names would collide after sanitization. The same collision-safe label map is applied to both Newick leaves and aligned FASTA headers so the tree and alignment panel stay synchronized.
 - The Go service embeds the built static assets under `internal/phylo/viewer_assets` and serves them locally. It does not use a CDN or remote website.
 - The page supports an empty initial state and updates automatically through Server-Sent Events after `Refresh tree`.
+- Canvas live sessions do not expose a top-right local `.pgv` open button. `.pgv` files are opened through the standalone tree-browser workflow so Canvas preview state cannot drift away from the current PHgo payload.
 - The page intentionally has no PHgo hero/header/status card, no notice strip, no rounded outer viewer card, and no extra empty-state chrome. Before the first rendered tree, the browser page may be visually blank.
 - Errors and warnings are shown as modal dialogs. Informational helper text should not occupy permanent page space.
 - The Reactree component fills the full browser viewport. The tree canvas uses a white background and Reactree's blue light-theme accent colors.

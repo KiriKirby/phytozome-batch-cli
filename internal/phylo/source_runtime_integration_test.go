@@ -174,6 +174,74 @@ func TestMegaPHGORuntimeDesktopFASTAMatrixProbe(t *testing.T) {
 	}
 }
 
+func TestMegaPHGORuntimeDesktop4CLProteinClustalWMLOrderProbe(t *testing.T) {
+	if strings.TrimSpace(os.Getenv("PHYTOZOME_RUN_MEGAPHGO_RUNTIME")) == "" || strings.TrimSpace(os.Getenv("PHYTOZOME_MEGAPHGO_4CL_ML_ORDER")) == "" {
+		t.Skip("set PHYTOZOME_RUN_MEGAPHGO_RUNTIME=1 and PHYTOZOME_MEGAPHGO_4CL_ML_ORDER=1 to run the desktop 4CL ML order probe")
+	}
+	fastaPath := strings.TrimSpace(os.Getenv("PHYTOZOME_MEGAPHGO_FASTA"))
+	if fastaPath == "" {
+		fastaPath = `C:\Users\wangsychn\Desktop\4CL_other_yt2_0.fasta`
+	}
+	data, err := os.ReadFile(fastaPath)
+	if err != nil {
+		t.Fatalf("read desktop FASTA %s: %v", fastaPath, err)
+	}
+	sources := rowSourcesFromFASTAForTest(t, string(data))
+	if len(sources) < 2 {
+		t.Fatalf("desktop FASTA should contain at least two records, got %d", len(sources))
+	}
+	appRoot := repoRootForRuntimeProbeTest(t)
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working dir: %v", err)
+	}
+	if err := os.Chdir(appRoot); err != nil {
+		t.Fatalf("switch to runtime app root %s: %v", appRoot, err)
+	}
+	defer func() {
+		if err := os.Chdir(oldWD); err != nil {
+			t.Fatalf("restore working dir %s: %v", oldWD, err)
+		}
+	}()
+
+	now := time.Now()
+	records, meta, err := BuildInput(sources, "label_name", "desktop-4cl-ml-order-probe", now)
+	if err != nil {
+		t.Fatalf("BuildInput returned error: %v", err)
+	}
+	settings := DefaultTreeSettings()
+	settings.ConversionTarget = ConversionTargetProtein
+	settings.AlignmentMethod = AlignmentClustalW
+	settings.TreeMethod = TreeMaximumLikelihood
+	settings.TreeParams = map[string]string{
+		"phylogeny_test":    "None",
+		"number_of_threads": "1",
+	}
+	baseDir := filepath.Join(t.TempDir(), "tree")
+	if strings.TrimSpace(os.Getenv("PHYTOZOME_KEEP_MEGAPHGO_PROBE")) != "" {
+		baseDir = filepath.Join(os.TempDir(), "phgo-megaphgo-4cl-ml-order-"+now.Format("20060102-150405.000000000"))
+	}
+	plan, err := BuildRunPlan("desktop-4cl-ml-order-probe", "run1", baseDir, settings, SequenceProtein, records, meta, "", "", now)
+	if err != nil {
+		t.Fatalf("BuildRunPlan returned error: %v", err)
+	}
+	result, err := RunPlanWithRuntime(context.Background(), plan, RuntimeOptions{})
+	if err != nil {
+		t.Fatalf("RunPlanWithRuntime returned error: %v\nartifacts: %s\n%s", err, result.ArtifactDir, runtimeProbeDebugText(result.ArtifactDir))
+	}
+	order := leafOrderFromNewickForTest(result.Plan.Newick)
+	idToLabel := map[string]string{}
+	for _, record := range result.Plan.Metadata.Records {
+		idToLabel[record.TaxonID] = record.DisplayName
+	}
+	t.Logf("artifact_dir=%s", result.ArtifactDir)
+	t.Logf("input_order=%s", strings.Join(displayOrderForTest(result.Plan.Metadata.Records), " | "))
+	t.Logf("newick_leaf_order=%s", strings.Join(labelOrderForTest(order, idToLabel), " | "))
+	if strings.TrimSpace(result.Plan.AlignedFASTA) == "" || strings.TrimSpace(result.Plan.Newick) == "" {
+		t.Fatalf("successful runtime output should include aligned FASTA and Newick:\n%s", runtimeProbeDebugText(result.ArtifactDir))
+	}
+}
+
 func TestMegaPHGORuntimeProteinStopCodonProbeDoesNotSanitizeInPHgo(t *testing.T) {
 	if strings.TrimSpace(os.Getenv("PHYTOZOME_RUN_MEGAPHGO_RUNTIME")) == "" {
 		t.Skip("set PHYTOZOME_RUN_MEGAPHGO_RUNTIME=1 to run the real mega-phgo-runtime probe")
@@ -994,4 +1062,78 @@ func looksNucleotideOnly(sequence string) bool {
 		}
 	}
 	return true
+}
+
+func leafOrderFromNewickForTest(newick string) []string {
+	var out []string
+	var token strings.Builder
+	inQuote := false
+	flush := func() {
+		value := strings.TrimSpace(token.String())
+		token.Reset()
+		if value == "" {
+			return
+		}
+		if strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'") && len(value) >= 2 {
+			value = strings.ReplaceAll(value[1:len(value)-1], "''", "'")
+		}
+		if strings.ContainsAny(value, "()") {
+			return
+		}
+		out = append(out, value)
+	}
+	for _, ch := range newick {
+		switch ch {
+		case '\'':
+			inQuote = !inQuote
+			token.WriteRune(ch)
+		case ':':
+			if !inQuote {
+				flush()
+				token.Reset()
+				continue
+			}
+			token.WriteRune(ch)
+		case ',', ')', ';':
+			if !inQuote {
+				if token.Len() > 0 {
+					flush()
+				}
+				continue
+			}
+			token.WriteRune(ch)
+		case '(':
+			if !inQuote {
+				token.Reset()
+				continue
+			}
+			token.WriteRune(ch)
+		default:
+			if token.Len() == 0 && (ch == '-' || ch == '.' || (ch >= '0' && ch <= '9')) {
+				continue
+			}
+			token.WriteRune(ch)
+		}
+	}
+	return out
+}
+
+func displayOrderForTest(records []InputRecord) []string {
+	out := make([]string, 0, len(records))
+	for _, record := range records {
+		out = append(out, strings.TrimSpace(record.DisplayName))
+	}
+	return out
+}
+
+func labelOrderForTest(ids []string, idToLabel map[string]string) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if label := strings.TrimSpace(idToLabel[id]); label != "" {
+			out = append(out, label)
+			continue
+		}
+		out = append(out, id)
+	}
+	return out
 }

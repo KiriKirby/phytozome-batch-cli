@@ -88,38 +88,6 @@ textarea {
   background: #ffffff;
 }
 
-.viewer-tools {
-  position: fixed;
-  top: 8px;
-  right: 8px;
-  z-index: 50;
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  pointer-events: auto;
-}
-
-.viewer-tools button {
-  min-height: 28px;
-  border: 1px solid var(--clr-border);
-  border-radius: 6px;
-  padding: 4px 10px;
-  background: rgba(255, 255, 255, 0.94);
-  color: var(--clr-text-primary);
-  cursor: pointer;
-  font-weight: 600;
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.12);
-}
-
-.viewer-tools button:hover {
-  border-color: var(--clr-primary-a20);
-  color: var(--clr-primary-a0);
-}
-
-.viewer-file-input {
-  display: none;
-}
-
 .viewer-stage,
 .viewer-stage * {
   user-select: none !important;
