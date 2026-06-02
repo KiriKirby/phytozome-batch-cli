@@ -604,20 +604,35 @@ func (w *BlastWizard) canvasTreeViewerTitle() string {
 	return "canvas"
 }
 
+type browserCommandStarter func(name string, args ...string) error
+
 func openBrowserURL(ctx context.Context, rawURL string) error {
+	return openBrowserURLWithStarter(ctx, rawURL, startBrowserCommand)
+}
+
+func openBrowserURLWithStarter(ctx context.Context, rawURL string, starter browserCommandStarter) error {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
 		return fmt.Errorf("tree viewer URL is empty")
 	}
-	var cmd *exec.Cmd
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if starter == nil {
+		starter = startBrowserCommand
+	}
 	switch runtime.GOOS {
 	case "windows":
-		cmd = exec.CommandContext(ctx, "rundll32", "url.dll,FileProtocolHandler", rawURL)
+		return starter("rundll32", "url.dll,FileProtocolHandler", rawURL)
 	case "darwin":
-		cmd = exec.CommandContext(ctx, "open", rawURL)
+		return starter("open", rawURL)
 	default:
-		cmd = exec.CommandContext(ctx, "xdg-open", rawURL)
+		return starter("xdg-open", rawURL)
 	}
+}
+
+func startBrowserCommand(name string, args ...string) error {
+	cmd := exec.Command(name, args...)
 	return cmd.Start()
 }
 

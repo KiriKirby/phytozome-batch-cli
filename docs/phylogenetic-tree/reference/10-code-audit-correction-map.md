@@ -274,6 +274,9 @@ Current behavior:
 - Canvas tree panel open, preview open, refresh preflight, and missing-tool
   retry preflight now use task/progress modals before runtime checks or viewer
   startup.
+- Canvas/Explore tree viewer browser launch is detached from short-lived task
+  modal contexts, so the progress modal closing cannot kill the OS browser
+  launcher before the preview opens.
 - Exact kind-specific alignment variants preserve edited MEGA parameters during
   normalization, so protein ClustalW/MUSCLE parameter changes remain compute
   fingerprint inputs and force full runtime refresh.
@@ -286,6 +289,7 @@ Required corrections:
 | Reuse | Require manifest plus canonical runtime artifacts; never use artifact scanning that can pick `input.fasta` |
 | Converted FASTA export | Removed from Canvas export UI/runtime path because PHgo must not insert a non-MEGA conversion step |
 | Loading dialogs | Tree panel, preview, refresh preflight, and missing-tool retry preflight run through task/progress UI |
+| Browser launch | System browser launch honors pre-start cancellation but is not owned by the task-modal context after launch starts |
 | Parameter reuse | Alignment/tree parameter changes must alter compute fingerprints; only display-name changes may render-only reuse |
 | Display names | Preview-only changes must not alter alignment/tree fingerprints |
 

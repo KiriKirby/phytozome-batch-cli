@@ -123,6 +123,10 @@ and fixes applied.
 - 2026-06-02: Added task/progress wrappers for Canvas tree panel open, preview
   open, refresh runtime preflight, and missing-tool retry preflight so runtime
   checks and viewer startup no longer leave an unlabelled black wait screen.
+- 2026-06-02: Fixed preview browser launch after adding progress wrappers:
+  browser launcher processes are now detached from the short-lived task-modal
+  context, while cancellation is still honored before launch starts. This keeps
+  the preview dialog from flashing closed without opening the system browser.
 - 2026-06-02: Fixed kind-normalized alignment settings so exact protein
   variants such as `clustalw_protein` preserve edited MEGA parameters. This
   keeps alignment/tree fingerprints sensitive to real parameter changes and

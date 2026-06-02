@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -765,6 +766,78 @@ func TestOpenCanvasTreeToolsWithProgressChecksRuntime(t *testing.T) {
 	}
 	if !errors.Is(err, want) {
 		t.Fatalf("openCanvasTreeToolsWithProgress error = %v, want %v", err, want)
+	}
+}
+
+func TestOpenBrowserURLStartsDetachedFromLaterContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	called := false
+	err := openBrowserURLWithStarter(ctx, "http://127.0.0.1:12345/sessions/canvas", func(name string, args ...string) error {
+		called = true
+		cancel()
+		if strings.TrimSpace(name) == "" {
+			t.Fatalf("browser command name is empty")
+		}
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "http://127.0.0.1:12345/sessions/canvas") {
+			t.Fatalf("browser command args do not contain viewer URL: %q", joined)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("openBrowserURLWithStarter returned error after starter cancellation: %v", err)
+	}
+	if !called {
+		t.Fatal("browser starter was not called")
+	}
+}
+
+func TestOpenBrowserURLRespectsCancellationBeforeStart(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	called := false
+	err := openBrowserURLWithStarter(ctx, "http://127.0.0.1:12345/sessions/canvas", func(name string, args ...string) error {
+		called = true
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("openBrowserURLWithStarter error = %v, want context.Canceled", err)
+	}
+	if called {
+		t.Fatal("browser starter should not run after pre-start cancellation")
+	}
+}
+
+func TestOpenBrowserURLRejectsEmptyURL(t *testing.T) {
+	err := openBrowserURLWithStarter(context.Background(), "  ", func(name string, args ...string) error {
+		t.Fatal("browser starter should not run for an empty URL")
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Fatalf("openBrowserURLWithStarter error = %v, want empty URL error", err)
+	}
+}
+
+func TestOpenBrowserURLRealLauncherProbe(t *testing.T) {
+	if strings.TrimSpace(os.Getenv("PHYTOZOME_OPEN_BROWSER_PROBE")) == "" {
+		t.Skip("set PHYTOZOME_OPEN_BROWSER_PROBE=1 to open the real system browser for a local viewer probe")
+	}
+	visited := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case visited <- struct{}{}:
+		default:
+		}
+		_, _ = w.Write([]byte("<html><title>PHgo browser probe</title><body>ok</body></html>"))
+	}))
+	defer server.Close()
+	if err := openBrowserURL(context.Background(), server.URL); err != nil {
+		t.Fatalf("openBrowserURL returned error: %v", err)
+	}
+	select {
+	case <-visited:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("system browser did not request the local probe URL %s", server.URL)
 	}
 }
 
