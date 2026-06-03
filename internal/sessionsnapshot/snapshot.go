@@ -154,6 +154,7 @@ type CanvasResultV2 struct {
 type CanvasTreeV2 struct {
 	PanelState       tui.CanvasTreePanelState `json:"panel_state"`
 	LastPayload      phylo.ViewerPayload      `json:"last_payload"`
+	ViewerState      json.RawMessage          `json:"viewer_state,omitempty"`
 	LastManifest     phylo.RunManifest        `json:"last_manifest"`
 	LastArtifactDir  string                   `json:"last_artifact_dir,omitempty"`
 	LastRunID        string                   `json:"last_run_id,omitempty"`

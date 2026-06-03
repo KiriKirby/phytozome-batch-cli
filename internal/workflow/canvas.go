@@ -9,6 +9,7 @@ package workflow
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -558,6 +559,7 @@ func (w *BlastWizard) closeCanvasTreeViewer() {
 		cancel()
 	}
 	w.canvasTreeLastPayload = phylo.ViewerPayload{}
+	w.canvasTreeViewerState = nil
 	w.canvasTreeLastPlan = phylo.RunPlan{}
 	w.canvasTreeForceCompute = false
 }
@@ -569,6 +571,11 @@ func (w *BlastWizard) openCanvasTreeViewer(ctx context.Context) error {
 	}
 	if !w.canvasTreeLastPayload.UpdatedAt.IsZero() || strings.TrimSpace(w.canvasTreeLastPayload.Newick) != "" {
 		if err := w.putCanvasTreeViewerPayload(ctx, server, w.canvasTreeLastPayload); err != nil {
+			return err
+		}
+	}
+	if len(w.canvasTreeViewerState) > 0 {
+		if err := putViewerState(ctx, server, w.canvasTreeSessionID(), w.canvasTreeViewerState); err != nil {
 			return err
 		}
 	}
@@ -1057,6 +1064,8 @@ func canvasTreeTableValues(row model.CanvasRow, fallback string) map[string]stri
 		"blast_geneid":    canvasRowColumnValue(row, "source_gene_id", fallback),
 	}
 	values[phylo.PHgoDisplayNameSource] = phylo.FormatPHgoLabel(values["species"], values["geneid"], values["label_name"])
+	values[phylo.YTDisplayNameSource] = phylo.FormatYTLabel(values["species"], values["geneid"], values["label_name"])
+	values[phylo.YTV2DisplayNameSource] = phylo.FormatYTV2Label(values["species"], values["geneid"], values["label_name"])
 	if phgoAlias := canvasRowColumnValue(row, "phgo_alias", fallback); phgoAlias != "" {
 		values["phgo_alias"] = phgoAlias
 	}
@@ -1166,6 +1175,18 @@ func canvasRowColumnValue(row model.CanvasRow, columnID string, fallback string)
 	switch columnID {
 	case phylo.PHgoDisplayNameSource:
 		return phylo.FormatPHgoLabel(
+			canvasRowColumnValue(row, "species", fallback),
+			canvasRowColumnValue(row, "gene_id", fallback),
+			canvasRowColumnValue(row, "label_name", fallback),
+		)
+	case phylo.YTDisplayNameSource:
+		return phylo.FormatYTLabel(
+			canvasRowColumnValue(row, "species", fallback),
+			canvasRowColumnValue(row, "gene_id", fallback),
+			canvasRowColumnValue(row, "label_name", fallback),
+		)
+	case phylo.YTV2DisplayNameSource:
+		return phylo.FormatYTV2Label(
 			canvasRowColumnValue(row, "species", fallback),
 			canvasRowColumnValue(row, "gene_id", fallback),
 			canvasRowColumnValue(row, "label_name", fallback),
@@ -1972,8 +1993,15 @@ func (w *BlastWizard) snapshotCanvasTreeState(currentItems ...[]model.CanvasItem
 	panelState := w.prompt.SnapshotCanvasTreePanelState(canvasStateKey("canvas"))
 	plan := w.canvasTreeLastPlan
 	payload := w.canvasTreeLastPayload
+	viewerState := json.RawMessage(append([]byte(nil), w.canvasTreeViewerState...))
 	if len(currentItems) > 0 {
 		payload, plan = syncCanvasTreeSnapshotPreview(payload, plan, w.selectedCanvasRowsInCurrentOrder(currentItems[0], false), panelState)
+	}
+	if server := w.canvasTreeViewer; server != nil {
+		if liveState, err := getViewerState(context.Background(), server, w.canvasTreeSessionID()); err == nil {
+			viewerState = liveState
+			w.canvasTreeViewerState = json.RawMessage(append([]byte(nil), liveState...))
+		}
 	}
 	if strings.TrimSpace(plan.BaseDir) == "" && !panelState.EnabledEver && strings.TrimSpace(panelState.DisplayNameSource) == "" {
 		return nil, nil, nil, nil
@@ -1981,6 +2009,7 @@ func (w *BlastWizard) snapshotCanvasTreeState(currentItems ...[]model.CanvasItem
 	tree := &sessionsnapshot.CanvasTreeV2{
 		PanelState:       panelState,
 		LastPayload:      payload,
+		ViewerState:      viewerState,
 		LastArtifactDir:  strings.TrimSpace(plan.BaseDir),
 		LastRunID:        strings.TrimSpace(plan.RunID),
 		LastAlignedFASTA: strings.TrimSpace(plan.AlignedFASTA),
@@ -2074,7 +2103,7 @@ func canvasTreeDisplayNameFromSource(row model.CanvasRow, fallback string, sourc
 		}
 	}
 	sourceColumn = strings.TrimSpace(sourceColumn)
-	if sourceColumn == phylo.PHgoDisplayNameSource {
+	if sourceColumn == phylo.PHgoDisplayNameSource || sourceColumn == phylo.YTDisplayNameSource || sourceColumn == phylo.YTV2DisplayNameSource {
 		if value := strings.TrimSpace(values[sourceColumn]); value != "" {
 			return value
 		}

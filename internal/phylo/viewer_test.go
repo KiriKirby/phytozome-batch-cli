@@ -98,6 +98,40 @@ func TestViewerAssetsEmbedReactreeApp(t *testing.T) {
 	}
 }
 
+func TestViewerAssetsInlinePDFExportBundle(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := NewViewerServer("127.0.0.1:0")
+	if err := server.Start(ctx); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	resp, err := http.Get(server.URL() + "/assets/index.js")
+	if err != nil {
+		t.Fatalf("asset request failed: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("index bundle status = %d", resp.StatusCode)
+	}
+	if len(body) == 0 {
+		t.Fatal("index bundle body is empty")
+	}
+	if !strings.Contains(resp.Header.Get("Content-Type"), "javascript") {
+		t.Fatalf("index bundle Content-Type = %q, want javascript", resp.Header.Get("Content-Type"))
+	}
+	bundle := string(body)
+	if !strings.Contains(bundle, "application/pdf") {
+		t.Fatal("index bundle should contain vector PDF export support")
+	}
+	if strings.Contains(bundle, "svg2pdf.es.min.js") {
+		t.Fatal("index bundle should not reference a runtime svg2pdf dynamic chunk")
+	}
+	if strings.Contains(bundle, "jspdf.es.min.js") {
+		t.Fatal("index bundle should not reference a runtime jspdf dynamic chunk")
+	}
+}
+
 func looksLikeViewerAppShell(html string) bool {
 	return strings.Contains(html, "<title>PHgo-Viewer</title>") &&
 		strings.Contains(html, `href="/phgo-icon.png"`) &&

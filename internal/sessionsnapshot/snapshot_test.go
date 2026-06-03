@@ -9,6 +9,7 @@ package sessionsnapshot
 
 import (
 	"archive/zip"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -288,6 +289,7 @@ func TestWriteReadCanvasSnapshotRoundTrip(t *testing.T) {
 					UpdatedAt:     time.Now(),
 					Newick:        "(PHGOT000001,PHGOT000002);",
 				},
+				ViewerState: json.RawMessage(`{"schema_version":2,"reactree":{"layout":"circular","fontFamily":"Georgia"}}`),
 				LastManifest: phylo.RunManifest{
 					SchemaVersion: 1,
 					Settings:      phylo.DefaultTreeSettings(),
@@ -346,6 +348,9 @@ func TestWriteReadCanvasSnapshotRoundTrip(t *testing.T) {
 	}
 	if out.Canvas.Tree == nil || out.Canvas.Tree.LastPayload.Newick == "" || out.Canvas.Tree.PanelState.AlignmentMethod != "muscle" {
 		t.Fatalf("canvas tree state did not round-trip: %#v", out.Canvas.Tree)
+	}
+	if string(out.Canvas.Tree.ViewerState) != `{"schema_version":2,"reactree":{"layout":"circular","fontFamily":"Georgia"}}` {
+		t.Fatalf("canvas tree viewer state mismatch: %s", out.Canvas.Tree.ViewerState)
 	}
 	if out.Canvas.Tree.LastManifest.SchemaVersion != 1 || out.Canvas.Tree.Fingerprints.Tree != "t" {
 		t.Fatalf("canvas tree manifest/fingerprints mismatch: %#v", out.Canvas.Tree)

@@ -166,7 +166,7 @@ export variant must be backed by MEGA runtime semantics.
 | --- | --- | --- |
 | Viewer service | `internal/phylo/viewer.go` | local session service |
 | Browser renderer | `tree-viewer/src/main.jsx` | Reactree-backed |
-| MEGA default display order | `tree-viewer/src/mega-display.js` | midpoint-root plus balanced-shape ordering before Reactree |
+| MEGA default display order | `tree-viewer/src/mega-display.js` | runtime-metadata-gated MEGA `TTreeList` Newick folding, `SetMaxLength`/`SearchMidPoint`/`ChangeRoot` when MEGA would allow midpoint rooting, then MEGA arrangement policy before Reactree |
 | Label map | `tree-viewer/src/labels.js` | stable ID to display-name mapping |
 | Newick quoted labels | `tree-viewer/scripts/patch-reactree-dpi.mjs` | patches parser/exporter |
 | Alignment panel | `tree-viewer/src/main.jsx`, CSS | displays aligned FASTA from runtime |
@@ -211,18 +211,39 @@ MEGA source anchors:
   `TTreeCustomControl.InitTree`, `SearchMidPoint`, and
   `MakeRootOnMidPoint`.
 - `_mega_source/MEGA12.1-source/TamuraFuncs/mtreeproc.pas`
-  `SortBranchByFigure`.
+  `SetMaxLength`, `ChangeRoot`, and `SortBranchByFigure`.
+- `_mega_source/MEGA12.1-source/TamuraFuncs/mtreelist.pas`
+  `ImportFromNewick` and `OutputNewickTree`.
 - `_mega_source/MEGA12.1-source/TreeEditor/mtreeviewform.lfm`
   `ActionBalancedTree.Checked = True`.
 - `_mega_source/MEGA12.1-source/TreeEditor/mtreeviewform.pas`
   `DecideRootOnMidpoint` and `InitForm`.
 
-For ordinary inferred NJ/ME/ML/MP trees, MEGA Tree Explorer defaults to rooting
-branch-length trees at the midpoint and sorting clusters for balanced shape.
+For ordinary inferred NJ/ME/UPGMA/ML/MP trees, MEGA Tree Explorer defaults are
+defined by TreeBox source behavior, not by a generic tree-layout library and not
+by screenshot-specific rotations. PHgo applies this adapter only when the viewer
+payload is explicitly marked as a MEGA PHgo runtime result. Standalone `.nwk`
+imports and `.pgv` snapshots without `tree_computation_source=mega-phgo-runtime`
+remain in their stored order.
+
+Runtime display policy matrix:
+
+| Source / Situation | MEGA Source Path | Viewer Policy |
+| --- | --- | --- |
+| Single inferred NJ tree | `DecideRootOnMidpoint` sets checked for `dtdoNJTree`; `InitForm` calls midpoint then balanced shape | import as MEGA `TTreeList`; when branch lengths exist, run one `SetMaxLength`/`SearchMidPoint`/`ChangeRoot` for the inferred unrooted tree even if the exported Newick happens to have a binary root shape; then `SortBranchByFigure` |
+| Single inferred ME tree | `dtdoMETree` follows the same Tree Explorer display actions | same as NJ |
+| Single inferred ML tree | `dtdoMLTree` follows the same Tree Explorer display actions | same as NJ; no second midpoint pass and no dataset-specific rotations |
+| Single inferred MP tree with branch lengths | `dtdoMPTree` enables midpoint, but `MakeRootOnMidPoint` only acts when branch lengths exist | same as NJ when branch lengths are present |
+| Single inferred MP topology-only tree | `MakeRootOnMidPoint` exits when `isBranchLength` is false | no midpoint; `SortBranchByFigure`; never invent branch lengths |
+| UPGMA | `dtdoUPGMATree` enables midpoint action, but rooted UPGMA data makes `MakeRootOnMidPoint` exit at `isRooted` | import as MEGA tree; keep rooted topology; arrange with `SortBranchByFigure` |
+| Multi-tree / multiple equally good trees | `InitForm` clears `ActionRootOnMidpoint`, clears balanced shape, and checks input order when `Tree.NoOfTrees > 1` | no midpoint; arrange with `SortBranchByOrder` / input order when payload metadata reports `tree_count > 1` |
+| Imported standalone Newick | import paths clear root-on-midpoint, balanced shape, and input-order actions | no PHgo MEGA inferred-tree adapter unless runtime metadata is present |
+
 The PHgo runtime artifact `tree.nwk` remains the raw MEGA runtime export; before
-passing the tree to Reactree, `tree-viewer/src/mega-display.js` applies the same
-display-only default. This is not a computation step and does not alter
-`tree.nwk`, `runtime-request.json`, or snapshot computation fingerprints.
+passing the tree to Reactree, `tree-viewer/src/mega-display.js` applies this
+display-only default according to the matrix. This is not a computation step and
+does not alter `tree.nwk`, `runtime-request.json`, or snapshot computation
+fingerprints.
 
 Canvas live sessions also discard saved Reactree `treeData/history` on payload
 load so stale browser reroot/flip state cannot hide the MEGA-default preview.

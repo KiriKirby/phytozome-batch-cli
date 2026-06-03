@@ -20,6 +20,7 @@
   --clr-error: #ef4444;
   --clr-error-bg: #fef2f2;
   --font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  --phgo-toolbar-control-height: 34px;
 }
 
 html,
@@ -142,40 +143,136 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  column-gap: 8px;
+  row-gap: 8px;
   min-width: 0;
   overflow: visible;
   padding-block: 6px;
-  row-gap: 6px;
 }
 
 .viewer-stage .Reactree_controlsRow > * {
-  min-width: 0;
+  flex: 0 0 auto;
+  min-width: max-content;
+  white-space: nowrap;
 }
 
 .viewer-stage .Reactree_sliderGroup {
-  flex: 0 1 auto;
-  min-width: 112px !important;
+  flex: 0 0 auto;
+  min-width: max-content !important;
+  height: var(--phgo-toolbar-control-height);
+  flex-wrap: nowrap;
+}
+
+.viewer-stage .phgo-fontPicker {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 228px;
+  max-width: min(42vw, 320px);
+  height: var(--phgo-toolbar-control-height);
+  padding: 0 10px;
+  border: 1px solid var(--clr-surface-a30);
+  border-radius: 10px;
+  background: var(--clr-surface-a10);
+}
+
+.viewer-stage .phgo-fontPickerLabel {
+  flex: 0 0 auto;
+  color: var(--clr-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.viewer-stage .phgo-fontSelect {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: calc(var(--phgo-toolbar-control-height) - 6px);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--clr-text-primary);
+  outline: none;
+}
+
+.Reactree_palettePopover {
+  width: max-content;
+  min-width: 0;
+  max-width: min(92vw, 300px);
+}
+
+.Reactree_paletteGrid {
+  grid-template-columns: repeat(4, 28px);
+  justify-content: center;
+}
+
+.Reactree_cladeEditor {
+  width: max-content !important;
+  min-width: 230px;
+  max-width: min(92vw, 300px);
+}
+
+.Reactree_cladeEditorSwatches {
+  max-width: 144px;
 }
 
 .viewer-stage .Reactree_sliderGroup input[type='range'] {
-  min-width: 56px;
-  max-width: min(128px, 28vw);
+  width: 118px;
+  min-width: 118px;
+  max-width: 118px;
 }
 
 .viewer-stage .Reactree_controlsRow .Reactree_sliderGroup[style*='min-width'] {
-  flex-basis: 172px;
+  flex-basis: auto;
 }
 
 .viewer-stage .Reactree_controlsRow .Reactree_spacer {
-  flex: 1 1 24px;
-  min-width: 12px;
+  flex: 1 1 32px;
+  min-width: 24px;
 }
 
 .viewer-stage .Reactree_controlsRow .Reactree_btnGroup,
-.viewer-stage .Reactree_controlsRow [style*='display: flex'] {
-  flex-wrap: wrap;
-  min-width: 0;
+.viewer-stage .Reactree_controlsRow > [style*='display: flex'] {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  min-width: max-content;
+  height: var(--phgo-toolbar-control-height);
+  align-items: stretch;
+}
+
+.viewer-stage .Reactree_btnGroup,
+.viewer-stage .Reactree_downloadGroup {
+  box-sizing: border-box;
+  height: var(--phgo-toolbar-control-height);
+  min-height: var(--phgo-toolbar-control-height);
+}
+
+.viewer-stage .Reactree_btnGroupItem,
+.viewer-stage .Reactree_fitBtn,
+.viewer-stage .Reactree_undoBtn,
+.viewer-stage .Reactree_rerootBtn,
+.viewer-stage .Reactree_colorBtn,
+.viewer-stage .Reactree_labelCycleBtn,
+.viewer-stage .Reactree_expandAllBtn,
+.viewer-stage .Reactree_alignLabelsBtn,
+.viewer-stage .Reactree_downloadBtn {
+  box-sizing: border-box;
+  min-height: var(--phgo-toolbar-control-height);
+  height: var(--phgo-toolbar-control-height);
+  align-items: center;
+}
+
+.viewer-stage .Reactree_btnGroupItem {
+  min-width: 42px;
+  justify-content: center;
+}
+
+.viewer-stage .Reactree_sliderIcon,
+.viewer-stage .Reactree_sliderLabel,
+.viewer-stage .Reactree_sliderVal {
+  flex: 0 0 auto;
 }
 
 .Reactree_downloadMenuDesc {

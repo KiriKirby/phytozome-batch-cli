@@ -65,6 +65,54 @@ func TestBuildInputUsesDisplayNameThenSourceThenHead(t *testing.T) {
 	}
 }
 
+func TestBuildInputUsesYTDisplayNameSource(t *testing.T) {
+	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
+	records, meta, err := BuildInput([]RowSource{{
+		ItemTitle:    "group 1",
+		RowIndex:     0,
+		Sequence:     "MPEPTIDE",
+		SourceType:   "keyword",
+		OriginalHead: "raw head",
+		TableValues: map[string]string{
+			"label_name":        "At4CL1",
+			YTDisplayNameSource: "At1G51680_At4CL1",
+		},
+	}}, YTDisplayNameSource, "session", now)
+	if err != nil {
+		t.Fatalf("BuildInput returned error: %v", err)
+	}
+	if len(records) != 1 || records[0].DisplayName != "At1G51680_At4CL1" {
+		t.Fatalf("YT display-name records = %#v", records)
+	}
+	if meta.DisplayNameSource != YTDisplayNameSource || meta.Records[0].DisplayName != "At1G51680_At4CL1" {
+		t.Fatalf("YT metadata = %#v", meta)
+	}
+}
+
+func TestBuildInputUsesYTV2DisplayNameSource(t *testing.T) {
+	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
+	records, meta, err := BuildInput([]RowSource{{
+		ItemTitle:    "group 1",
+		RowIndex:     0,
+		Sequence:     "MPEPTIDE",
+		SourceType:   "keyword",
+		OriginalHead: "raw head",
+		TableValues: map[string]string{
+			"label_name":          "At4CL1",
+			YTV2DisplayNameSource: "At1G51680_4CL1",
+		},
+	}}, YTV2DisplayNameSource, "session", now)
+	if err != nil {
+		t.Fatalf("BuildInput returned error: %v", err)
+	}
+	if len(records) != 1 || records[0].DisplayName != "At1G51680_4CL1" {
+		t.Fatalf("YT v2 display-name records = %#v", records)
+	}
+	if meta.DisplayNameSource != YTV2DisplayNameSource || meta.Records[0].DisplayName != "At1G51680_4CL1" {
+		t.Fatalf("YT v2 metadata = %#v", meta)
+	}
+}
+
 func TestBuildInputDoesNotInferBlankSequenceKind(t *testing.T) {
 	now := time.Date(2026, 5, 30, 1, 30, 0, 0, time.UTC)
 	records, _, err := BuildInput([]RowSource{
@@ -239,5 +287,14 @@ func TestBuildRunPlanProducesArtifacts(t *testing.T) {
 	artifact := plan.ToArtifactSet()
 	if artifact.Manifest.RuntimeRequest != "runtime-request.json" || artifact.Manifest.RuntimeResponse != "runtime-response.json" {
 		t.Fatalf("expected runtime-oriented artifact contract: %#v", artifact.Manifest)
+	}
+	if artifact.Payload.Metadata.TreeComputationSource != "mega-phgo-runtime" ||
+		artifact.Payload.Metadata.SequenceKind != SequenceProtein ||
+		artifact.Payload.Metadata.AlignmentMethod != plan.Settings.AlignmentMethod ||
+		artifact.Payload.Metadata.TreeMethod != plan.Settings.TreeMethod ||
+		artifact.Payload.Metadata.TreeCount != 1 ||
+		artifact.Payload.Metadata.TreeParams["phylogeny_test"] == "" ||
+		artifact.Payload.Metadata.AlignmentParams["pairwise_gap_opening_penalty"] == "" {
+		t.Fatalf("payload metadata missing MEGA runtime display semantics: %#v", artifact.Payload.Metadata)
 	}
 }

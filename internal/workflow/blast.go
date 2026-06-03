@@ -9,6 +9,7 @@ package workflow
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -129,6 +130,7 @@ type BlastWizard struct {
 	canvasTreeViewer       *phylo.ViewerServer
 	canvasTreeViewerCancel context.CancelFunc
 	canvasTreeLastPayload  phylo.ViewerPayload
+	canvasTreeViewerState  json.RawMessage
 	canvasTreeLastPlan     phylo.RunPlan
 	canvasTreeForceCompute bool
 	canvasTreeRefreshRun   func(context.Context, canvasLaunchState, phylo.TreeSettings) error

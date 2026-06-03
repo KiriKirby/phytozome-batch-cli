@@ -606,6 +606,7 @@ func (w *BlastWizard) hydrateCanvasRowSequenceData(items []model.CanvasItem) []m
 func (w *BlastWizard) restoreCanvasTreeSnapshot(tree sessionsnapshot.CanvasTreeV2, legacy bool) {
 	w.prompt.RestoreCanvasTreePanelState(canvasStateKey("canvas"), tree.PanelState)
 	w.canvasTreeLastPayload = phylo.ViewerPayload{}
+	w.canvasTreeViewerState = nil
 	w.canvasTreeLastPlan = phylo.RunPlan{}
 	w.canvasTreeForceCompute = false
 	baseDir := normalizeLegacyTreeArtifactPath(tree.LastArtifactDir)
@@ -683,6 +684,9 @@ func (w *BlastWizard) restoreCanvasTreeSnapshot(tree sessionsnapshot.CanvasTreeV
 	w.canvasTreeForceCompute = true
 	if hasPayload {
 		w.canvasTreeLastPayload = tree.LastPayload
+	}
+	if len(tree.ViewerState) > 0 && json.Valid(tree.ViewerState) {
+		w.canvasTreeViewerState = json.RawMessage(append([]byte(nil), tree.ViewerState...))
 	}
 	if legacy {
 		patched := tree.PanelState

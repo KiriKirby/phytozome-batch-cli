@@ -66,7 +66,7 @@ func BuildInput(records []RowSource, sourceColumn string, sessionID string, now 
 		if src.CanvasRow.DisplayNameLocked {
 			name = strings.TrimSpace(src.CanvasRow.DisplayName)
 		}
-		if name == "" && sourceColumn == PHgoDisplayNameSource {
+		if name == "" && (sourceColumn == PHgoDisplayNameSource || sourceColumn == YTDisplayNameSource || sourceColumn == YTV2DisplayNameSource) {
 			name = strings.TrimSpace(src.TableValues[sourceColumn])
 		}
 		if name == "" {
@@ -157,6 +157,14 @@ func BuildRunPlan(sessionID string, runID string, baseDir string, settings TreeS
 }
 
 func (p RunPlan) ToArtifactSet() ArtifactSet {
+	metadata := p.Metadata
+	metadata.TreeComputationSource = "mega-phgo-runtime"
+	metadata.SequenceKind = p.Kind
+	metadata.AlignmentMethod = p.Settings.AlignmentMethod
+	metadata.TreeMethod = p.Settings.TreeMethod
+	metadata.AlignmentParams = cloneStringMap(p.Settings.AlignmentParams)
+	metadata.TreeParams = cloneStringMap(p.Settings.TreeParams)
+	metadata.TreeCount = 1
 	manifest := RunManifest{
 		SchemaVersion:   1,
 		CreatedAt:       p.UpdatedAt,
@@ -176,13 +184,13 @@ func (p RunPlan) ToArtifactSet() ArtifactSet {
 	return ArtifactSet{
 		BaseDir:         p.BaseDir,
 		Manifest:        manifest,
-		Metadata:        p.Metadata,
+		Metadata:        metadata,
 		InputFASTA:      p.InputFASTA,
 		RuntimeRequest:  p.RuntimeRequest,
 		RuntimeResponse: p.RuntimeResponse,
 		AlignedFASTA:    p.AlignedFASTA,
 		Newick:          p.Newick,
-		Payload:         BuildPayload(p.SessionID, p.Records, p.Metadata, p.AlignedFASTA, p.Newick, p.UpdatedAt),
+		Payload:         BuildPayload(p.SessionID, p.Records, metadata, p.AlignedFASTA, p.Newick, p.UpdatedAt),
 	}
 }
 
@@ -268,6 +276,13 @@ func fingerprintRow(src RowSource, sourceColumn string) string {
 }
 
 func cloneTreeTableValues(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	return cloneStringMap(values)
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
 	if len(values) == 0 {
 		return nil
 	}

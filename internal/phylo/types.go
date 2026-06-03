@@ -4,6 +4,8 @@ import "time"
 
 const (
 	PHgoDisplayNameSource    = "phgo_label_format"
+	YTDisplayNameSource      = "yt_label_format"
+	YTV2DisplayNameSource    = "yt_v2_label_format"
 	DefaultDisplayNameSource = PHgoDisplayNameSource
 	DefaultAlignmentMethod   = AlignmentClustalW
 	DefaultTreeMethod        = TreeNeighborJoining
@@ -114,10 +116,17 @@ type InputRecord struct {
 }
 
 type Metadata struct {
-	SchemaVersion     int           `json:"schema_version"`
-	GeneratedAt       time.Time     `json:"generated_at"`
-	DisplayNameSource string        `json:"display_name_source"`
-	Records           []InputRecord `json:"records"`
+	SchemaVersion         int               `json:"schema_version"`
+	GeneratedAt           time.Time         `json:"generated_at"`
+	DisplayNameSource     string            `json:"display_name_source"`
+	TreeComputationSource string            `json:"tree_computation_source,omitempty"`
+	SequenceKind          SequenceKind      `json:"sequence_kind,omitempty"`
+	AlignmentMethod       AlignmentMethod   `json:"alignment_method,omitempty"`
+	TreeMethod            TreeMethod        `json:"tree_method,omitempty"`
+	AlignmentParams       map[string]string `json:"alignment_params,omitempty"`
+	TreeParams            map[string]string `json:"tree_params,omitempty"`
+	TreeCount             int               `json:"tree_count,omitempty"`
+	Records               []InputRecord     `json:"records"`
 }
 
 type ViewerPayload struct {

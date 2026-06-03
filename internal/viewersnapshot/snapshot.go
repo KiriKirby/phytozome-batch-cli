@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	Format        = "phgo-viewer-snapshot"
-	SchemaVersion = 1
+	Format           = "phgo-viewer-snapshot"
+	SchemaVersion    = 2
+	MinSchemaVersion = 1
 )
 
 type Snapshot struct {
@@ -71,7 +72,7 @@ func Decode(data []byte) (Snapshot, error) {
 	if snapshot.Format != Format {
 		return Snapshot{}, fmt.Errorf("unsupported PGV format %q", snapshot.Format)
 	}
-	if snapshot.SchemaVersion != SchemaVersion {
+	if snapshot.SchemaVersion < MinSchemaVersion || snapshot.SchemaVersion > SchemaVersion {
 		return Snapshot{}, fmt.Errorf("unsupported PGV schema version %d", snapshot.SchemaVersion)
 	}
 	if snapshot.Payload.SchemaVersion == 0 {

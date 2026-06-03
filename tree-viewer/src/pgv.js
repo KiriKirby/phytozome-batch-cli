@@ -1,7 +1,12 @@
+import { jsPDF } from 'jspdf';
+import 'svg2pdf.js';
+
 export const PGV_FORMAT = 'phgo-viewer-snapshot';
-export const PGV_SCHEMA_VERSION = 1;
+export const PGV_SCHEMA_VERSION = 2;
+export const PGV_MIN_SUPPORTED_SCHEMA_VERSION = 1;
 const DEFAULT_BITMAP_EXPORT_SCALE = 10;
 const MAX_BITMAP_EXPORT_PIXELS = 160_000_000;
+export const TRANSPARENT_EXPORT_BACKGROUND = 'transparent';
 
 export function buildViewerSnapshot(payload, viewerState) {
   return {
@@ -24,7 +29,11 @@ export function parseViewerSnapshot(text) {
   if (!snapshot || snapshot.format !== PGV_FORMAT) {
     throw new Error('PGV snapshot format is not recognized.');
   }
-  if (snapshot.schema_version !== PGV_SCHEMA_VERSION) {
+  if (
+    !Number.isInteger(snapshot.schema_version)
+    || snapshot.schema_version < PGV_MIN_SUPPORTED_SCHEMA_VERSION
+    || snapshot.schema_version > PGV_SCHEMA_VERSION
+  ) {
     throw new Error(`Unsupported PGV schema version: ${snapshot.schema_version}`);
   }
   if (!snapshot.payload || typeof snapshot.payload !== 'object') {
@@ -139,6 +148,14 @@ function bitmapExportScale(width, height) {
   return Math.max(1, Math.min(DEFAULT_BITMAP_EXPORT_SCALE, safeScale));
 }
 
+export function normalizeExportBackground(bgColor) {
+  const color = String(bgColor || '').trim();
+  if (!color || color.toLowerCase() === TRANSPARENT_EXPORT_BACKGROUND) {
+    return null;
+  }
+  return color;
+}
+
 async function rasterizeSVGToCanvas(svgString, width, height, bgColor) {
   const scale = bitmapExportScale(width, height);
   const canvas = document.createElement('canvas');
@@ -149,8 +166,13 @@ async function rasterizeSVGToCanvas(svgString, width, height, bgColor) {
     throw new Error('PNG export failed: 2D canvas context is unavailable.');
   }
   ctx.scale(scale, scale);
-  ctx.fillStyle = bgColor;
-  ctx.fillRect(0, 0, width, height);
+  const normalizedBackground = normalizeExportBackground(bgColor);
+  if (normalizedBackground) {
+    ctx.fillStyle = normalizedBackground;
+    ctx.fillRect(0, 0, width, height);
+  } else {
+    ctx.clearRect(0, 0, width, height);
+  }
   await new Promise((resolve, reject) => {
     const img = new Image();
     const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
@@ -200,10 +222,6 @@ async function exportSVG({ svgString, baseName }) {
 }
 
 async function exportPDF({ svgString, width, height, baseName }) {
-  const [{ jsPDF }] = await Promise.all([
-    import('jspdf'),
-    import('svg2pdf.js'),
-  ]);
   const mmW = width * 0.264583;
   const mmH = height * 0.264583;
   const doc = new jsPDF({

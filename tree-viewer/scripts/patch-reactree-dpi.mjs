@@ -297,7 +297,7 @@ const handleDownloadOriginal = `  const handleDownload = useCallback(async (form
     doc.save("phylotree.pdf");
   }, []);`;
 
-const handleDownloadPatched = `  const handleDownload = useCallback(async (format) => {
+const handleDownloadPatchedLegacy = `  const handleDownload = useCallback(async (format) => {
     if (!svgRef.current) return;
     const svgEl = svgRef.current;
     const width = svgEl.width?.baseVal?.value || svgEl.clientWidth || 800;
@@ -374,7 +374,81 @@ const handleDownloadPatched = `  const handleDownload = useCallback(async (forma
     doc.save("phylotree.pdf");
   }, []);`;
 
+const handleDownloadPatched = `  const handleDownload = useCallback(async (format) => {
+    if (!svgRef.current) return;
+    const svgEl = svgRef.current;
+    const width = svgEl.width?.baseVal?.value || svgEl.clientWidth || 800;
+    const height = svgEl.height?.baseVal?.value || svgEl.clientHeight || 600;
+    const clone = svgEl.cloneNode(true);
+    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    clone.setAttribute("width", String(width));
+    clone.setAttribute("height", String(height));
+    const svgString = new XMLSerializer().serializeToString(clone);
+    const exportTree = typeof window !== "undefined" ? window.__PHGO_EXPORT_TREE__ : null;
+    if (typeof exportTree === "function") {
+      try {
+        await exportTree({ format, svgString, width, height, baseName: "phylotree" });
+        return;
+      } catch (error) {
+        const reportError = typeof window !== "undefined" ? window.__PHGO_REPORT_EXPORT_ERROR__ : null;
+        if (typeof reportError === "function") {
+          reportError(error);
+          return;
+        }
+        throw error;
+      }
+    }
+    if (format === "svg") {
+      const blob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+      triggerDownload(URL.createObjectURL(blob), "phylotree.svg");
+      return;
+    }
+    const scale = 10;
+    const canvas = document.createElement("canvas");
+    canvas.width = width * scale;
+    canvas.height = height * scale;
+    const ctx = canvas.getContext("2d");
+    ctx.scale(scale, scale);
+    ctx.clearRect(0, 0, width, height);
+    await new Promise((resolve) => {
+      const img = new Image();
+      const svgBlob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+      const url = URL.createObjectURL(svgBlob);
+      img.onload = () => {
+        ctx.drawImage(img, 0, 0);
+        URL.revokeObjectURL(url);
+        resolve();
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve();
+      };
+      img.src = url;
+    });
+    if (format === "png") {
+      canvas.toBlob((blob) => {
+        if (blob) triggerDownload(URL.createObjectURL(blob), "phylotree.png");
+      }, "image/png");
+      return;
+    }
+    const { jsPDF } = await import("jspdf");
+    const mmW = width * 0.264583;
+    const mmH = height * 0.264583;
+    const doc = new jsPDF({
+      orientation: width >= height ? "l" : "p",
+      unit: "mm",
+      format: [mmW, mmH]
+    });
+    doc.addImage(canvas.toDataURL("image/png"), "PNG", 0, 0, mmW, mmH);
+    doc.save("phylotree.pdf");
+  }, []);`;
+
 const handleDownloadOriginalCJS = handleDownloadOriginal.replace(
+  '  const handleDownload = useCallback(async (format) => {',
+  '  const handleDownload = (0, import_react.useCallback)(async (format) => {',
+);
+
+const handleDownloadPatchedLegacyCJS = handleDownloadPatchedLegacy.replace(
   '  const handleDownload = useCallback(async (format) => {',
   '  const handleDownload = (0, import_react.useCallback)(async (format) => {',
 );
@@ -590,7 +664,12 @@ const zoomSliderBlock = `      /* @__PURE__ */ jsx2("div", { className: Reactree
           "\xD7"
         ] })
       ] })`;
-const zoomSliderInsertBlock = `${zoomSliderBlock},`;
+const fontPickerBlock = `      /* @__PURE__ */ jsxs2("div", { className: "phgo-fontPicker", children: [
+        /* @__PURE__ */ jsx2("span", { className: "phgo-fontPickerLabel", children: "Font" }),
+        /* @__PURE__ */ jsx2("select", { className: "phgo-fontSelect", value: fontFamily, onChange: (e) => setFontFamily(e.target.value), title: "Choose label font", children: fontOptions.map((family) => /* @__PURE__ */ jsx2("option", { value: family, children: family === DEFAULT_TREE_FONT_FAMILY ? "Default (system-ui)" : family }, family)) })
+      ] })`;
+const zoomSliderInsertBlock = `${fontPickerBlock},
+${zoomSliderBlock},`;
 const zoomSliderPatched = [
   '        )',
   '      ] }),',
@@ -969,13 +1048,23 @@ for (const file of files) {
   text = replaceAllRequired(text, '(d.data.name || "").replace(/_/g, " ")', 'displayTreeName(d.data.name)', 'Reactree display label preservation', file);
   text = replaceAllRequired(text, '(d.target.data.name || "").replace(/_/g, " ")', 'displayTreeName(d.target.data.name)', 'Reactree target label preservation', file);
   text = replaceAllRequired(text, '(node.name || "").replace(/_/g, " ")', 'displayTreeName(node.name)', 'Reactree search label preservation', file);
-  text = replaceAllRequired(
-    text,
-    isCJS ? handleDownloadOriginalCJS : handleDownloadOriginal,
-    isCJS ? handleDownloadPatchedCJS : handleDownloadPatched,
-    'Reactree export bridge',
-    file,
-  );
+  const exportBridgeOriginal = isCJS ? handleDownloadOriginalCJS : handleDownloadOriginal;
+  const exportBridgeLegacy = isCJS ? handleDownloadPatchedLegacyCJS : handleDownloadPatchedLegacy;
+  const exportBridgePatched = isCJS ? handleDownloadPatchedCJS : handleDownloadPatched;
+  if (text.includes(exportBridgePatched)) {
+    console.log(`Reactree export bridge already present: ${file}`);
+  } else if (text.includes(exportBridgeLegacy)) {
+    console.log(`Patched Reactree export bridge: ${file}`);
+    text = text.split(exportBridgeLegacy).join(exportBridgePatched);
+  } else {
+    text = replaceAllRequired(
+      text,
+      exportBridgeOriginal,
+      exportBridgePatched,
+      'Reactree export bridge',
+      file,
+    );
+  }
   text = replaceAllRequired(
     text,
     labelModeInitialPatched,
@@ -1371,6 +1460,35 @@ patchReactreeViewerStateMJS(join(packageRoot, 'dist', 'index.mjs'));
 function patchReactreeViewerPolishMJS(file) {
   let text = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
   const originalText = text;
+  const okabeItoPalette = `var PALETTE = [
+  { hex: "#0072b2", name: "Okabe-Ito Blue" },
+  { hex: "#e69f00", name: "Okabe-Ito Orange" },
+  { hex: "#009e73", name: "Okabe-Ito Bluish Green" },
+  { hex: "#d55e00", name: "Okabe-Ito Vermillion" },
+  { hex: "#cc79a7", name: "Okabe-Ito Reddish Purple" },
+  { hex: "#56b4e9", name: "Okabe-Ito Sky Blue" },
+  { hex: "#f0e442", name: "Okabe-Ito Yellow" },
+  { hex: "#000000", name: "Okabe-Ito Black" }
+];`;
+  const wcagAAAPalette = `var PALETTE = [
+  { hex: "#000000", name: "Black" },
+  { hex: "#2f4f4f", name: "DarkSlateGray" },
+  { hex: "#000080", name: "Navy" },
+  { hex: "#00008b", name: "DarkBlue" },
+  { hex: "#191970", name: "MidnightBlue" },
+  { hex: "#0000cd", name: "MediumBlue" },
+  { hex: "#0000ff", name: "Blue" },
+  { hex: "#4b0082", name: "Indigo" },
+  { hex: "#800080", name: "Purple" },
+  { hex: "#483d8b", name: "DarkSlateBlue" },
+  { hex: "#8b008b", name: "DarkMagenta" },
+  { hex: "#8b0000", name: "DarkRed" },
+  { hex: "#800000", name: "Maroon" },
+  { hex: "#8b4513", name: "SaddleBrown" },
+  { hex: "#a52a2a", name: "Brown" },
+  { hex: "#006400", name: "DarkGreen" }
+];`;
+  const legacyMegaTreeFontLine = '    const treeFontFamily = isMegaStyle ? "\\"Times New ' + 'Roman\\", Times, serif" : "system-ui, -apple-system, sans-serif";';
 
   for (const [original, replacement] of [
     ['    const scrollWrap = alnScrollWrapRef.current;\n    const visibleStartCol = scrollWrap ? Math.max(0, Math.floor(scrollWrap.scrollLeft / CELL_W) - 2) : 0;\n    const visibleEndCol = scrollWrap ? Math.min(maxLen, Math.ceil((scrollWrap.scrollLeft + scrollWrap.clientWidth) / CELL_W) + 2) : maxLen;\n    const paintX = visibleStartCol * CELL_W;\n    const paintW = Math.max(CELL_W, (visibleEndCol - visibleStartCol) * CELL_W);\n', ''],
@@ -1403,10 +1521,36 @@ function patchReactreeViewerPolishMJS(file) {
     console.log(`Patched ${description}: ${file}`);
   }
 
+  text = text.split(wcagAAAPalette).join(okabeItoPalette);
+  replaceOnce(
+    'var PALETTE = [\n  { hex: "#ef4444", name: "Red" },\n  { hex: "#f97316", name: "Orange" },\n  { hex: "#f59e0b", name: "Amber" },\n  { hex: "#84cc16", name: "Lime" },\n  { hex: "#10b981", name: "Emerald" },\n  { hex: "#14b8a6", name: "Teal" },\n  { hex: "#0ea5e9", name: "Sky" },\n  { hex: "#6366f1", name: "Indigo" },\n  { hex: "#8b5cf6", name: "Violet" },\n  { hex: "#ec4899", name: "Pink" },\n  { hex: "#64748b", name: "Slate" },\n  { hex: "#92400e", name: "Brown" }\n];',
+    okabeItoPalette,
+    'Reactree Okabe-Ito clade palette',
+  );
   replaceOnce(
     '  const [layout, setLayout] = useState(stringOr(initialSnapshot.layout, "rectangular"));',
     '  const [layout, setLayout] = useState(stringOr(initialSnapshot.layout, "rectangular"));\n  const [renderStyle, setRenderStyle] = useState(stringOr(initialSnapshot.renderStyle, "phgo"));',
     'Reactree PHgo/MEGA style state',
+  );
+  replaceOnce(
+    'function stringOr(value, fallback) {\n  return typeof value === "string" ? value : fallback;\n}\nfunction transformToSnapshot(transform) {',
+    'function stringOr(value, fallback) {\n  return typeof value === "string" ? value : fallback;\n}\nconst DEFAULT_TREE_FONT_FAMILY = "system-ui, -apple-system, sans-serif";\nconst FALLBACK_FONT_FAMILIES = [\n  "Arial",\n  "Helvetica",\n  "Verdana",\n  "Tahoma",\n  "Trebuchet MS",\n  "Georgia",\n  "Times New Roman",\n  "Courier New",\n  "Monaco",\n  "Arial Narrow"\n];\nfunction normalizeFontFamilyName(value) {\n  return typeof value === "string" ? value.trim() : "";\n}\nfunction buildFontOptions(values) {\n  const seen = /* @__PURE__ */ new Set();\n  const options = [];\n  const push = (family) => {\n    const trimmed = normalizeFontFamilyName(family);\n    if (!trimmed) return;\n    const key = trimmed.toLowerCase();\n    if (seen.has(key)) return;\n    seen.add(key);\n    options.push(trimmed);\n  };\n  push(DEFAULT_TREE_FONT_FAMILY);\n  Array.isArray(values) && values.forEach(push);\n  FALLBACK_FONT_FAMILIES.forEach(push);\n  if (options.length > 1) {\n    const [defaultFamily, ...rest] = options;\n    rest.sort((left, right) => left.localeCompare(right, void 0, { sensitivity: "base" }));\n    return [defaultFamily, ...rest];\n  }\n  return options;\n}\nasync function loadLocalFontFamilies(currentFontFamily) {\n  const discovered = [currentFontFamily];\n  if (typeof window !== "undefined" && typeof window.queryLocalFonts === "function") {\n    try {\n      const fonts = await window.queryLocalFonts();\n      fonts.forEach((font) => discovered.push(font?.family));\n    } catch {\n    }\n  }\n  if (typeof document !== "undefined" && document.fonts && typeof document.fonts.forEach === "function") {\n    try {\n      document.fonts.forEach((fontFace) => discovered.push(fontFace?.family));\n    } catch {\n    }\n  }\n  return buildFontOptions(discovered);\n}\nfunction transformToSnapshot(transform) {',
+    'Reactree font helper utilities',
+  );
+  replaceOnce(
+    '  const [fontScale, setFontScale] = useState(numberOr(initialSnapshot.fontScale, 1));',
+    '  const [fontScale, setFontScale] = useState(numberOr(initialSnapshot.fontScale, 1));\n  const [fontFamily, setFontFamily] = useState(stringOr(initialSnapshot.fontFamily, DEFAULT_TREE_FONT_FAMILY));\n  const [fontOptions, setFontOptions] = useState(() => buildFontOptions([stringOr(initialSnapshot.fontFamily, DEFAULT_TREE_FONT_FAMILY)]));',
+    'Reactree font picker state',
+  );
+  replaceOnce(
+    '  const fontScaleRef = useRef(1);\n  fontScaleRef.current = fontScale;\n  const strokeWidthRef = useRef(1.5);',
+    '  const fontScaleRef = useRef(1);\n  fontScaleRef.current = fontScale;\n  const fontFamilyRef = useRef(DEFAULT_TREE_FONT_FAMILY);\n  fontFamilyRef.current = fontFamily;\n  const strokeWidthRef = useRef(1.5);',
+    'Reactree font family ref',
+  );
+  replaceOnce(
+    '  const containerHRef = useRef(defaultHeight);\n  containerHRef.current = containerH;\n  const snapshotState = useCallback(() => {',
+    '  const containerHRef = useRef(defaultHeight);\n  containerHRef.current = containerH;\n  useEffect(() => {\n    let cancelled = false;\n    loadLocalFontFamilies(fontFamily).then((families) => {\n      if (cancelled) return;\n      setFontOptions((current) => {\n        const next = buildFontOptions([...current, ...families, fontFamily]);\n        if (next.length === current.length && next.every((family, idx) => family === current[idx])) {\n          return current;\n        }\n        return next;\n      });\n    }).catch(() => {\n    });\n    return () => {\n      cancelled = true;\n    };\n  }, [fontFamily]);\n  const snapshotState = useCallback(() => {',
+    'Reactree font family loader',
   );
   replaceOnce(
     '      layout,\n      treeType,',
@@ -1414,24 +1558,109 @@ function patchReactreeViewerPolishMJS(file) {
     'Reactree style snapshot field',
   );
   replaceOnce(
-    '  }, [treeData, history, layout, treeType, labelMode, alignLabels, truncateNames, showAlignment, containerH, hScale, vScale, fontScale, strokeWidth, colorOverrides, collapsedNodes, collapseLabels, activeColor, colorMode, rerootMode, flipMode, swapMode, searchOpen, searchQuery, searchMatchIdx, downloadOpen, downloadMenuPos, palettePos, cladeEditor, nodeInfo, theme]);',
-    '  }, [treeData, history, layout, renderStyle, treeType, labelMode, alignLabels, truncateNames, showAlignment, containerH, hScale, vScale, fontScale, strokeWidth, colorOverrides, collapsedNodes, collapseLabels, activeColor, colorMode, rerootMode, flipMode, swapMode, searchOpen, searchQuery, searchMatchIdx, downloadOpen, downloadMenuPos, palettePos, cladeEditor, nodeInfo, theme]);',
-    'Reactree style snapshot dependencies',
+    '      fontScale,\n      strokeWidth,',
+    '      fontScale,\n      fontFamily,\n      strokeWidth,',
+    'Reactree font snapshot field',
   );
-  replaceOnce(
-    '    setLayout(stringOr(snapshot.layout, "rectangular"));\n    setTreeType(stringOr(snapshot.treeType, "phylogram"));',
-    '    setLayout(stringOr(snapshot.layout, "rectangular"));\n    setRenderStyle(stringOr(snapshot.renderStyle, "phgo"));\n    setTreeType(stringOr(snapshot.treeType, "phylogram"));',
-    'Reactree style restore',
-  );
+  const snapshotDepsOriginal = '  }, [treeData, history, layout, treeType, labelMode, alignLabels, truncateNames, showAlignment, containerH, hScale, vScale, fontScale, strokeWidth, colorOverrides, collapsedNodes, collapseLabels, activeColor, colorMode, rerootMode, flipMode, swapMode, searchOpen, searchQuery, searchMatchIdx, downloadOpen, downloadMenuPos, palettePos, cladeEditor, nodeInfo, theme]);';
+  const snapshotDepsRenderStyle = '  }, [treeData, history, layout, renderStyle, treeType, labelMode, alignLabels, truncateNames, showAlignment, containerH, hScale, vScale, fontScale, strokeWidth, colorOverrides, collapsedNodes, collapseLabels, activeColor, colorMode, rerootMode, flipMode, swapMode, searchOpen, searchQuery, searchMatchIdx, downloadOpen, downloadMenuPos, palettePos, cladeEditor, nodeInfo, theme]);';
+  const snapshotDepsRuntimeFont = '  }, [treeData, history, layout, renderStyle, treeType, labelMode, alignLabels, truncateNames, showAlignment, containerH, hScale, vScale, fontScale, fontFamily, strokeWidth, colorOverrides, collapsedNodes, collapseLabels, activeColor, colorMode, rerootMode, flipMode, swapMode, searchOpen, searchQuery, searchMatchIdx, downloadOpen, downloadMenuPos, palettePos, cladeEditor, nodeInfo, theme]);';
+  if (!text.includes(snapshotDepsRuntimeFont)) {
+    if (text.includes(snapshotDepsOriginal)) {
+      replaceOnce(snapshotDepsOriginal, snapshotDepsRenderStyle, 'Reactree style snapshot dependencies');
+    }
+    if (text.includes(snapshotDepsRenderStyle)) {
+      replaceOnce(snapshotDepsRenderStyle, snapshotDepsRuntimeFont, 'Reactree font snapshot dependencies');
+    }
+    if (!text.includes(snapshotDepsRuntimeFont)) {
+      throw new Error(`Reactree snapshot dependencies anchor not found in ${file}`);
+    }
+  }
+  const snapshotRestoreOriginal = '    setLayout(stringOr(snapshot.layout, "rectangular"));\n    setTreeType(stringOr(snapshot.treeType, "phylogram"));';
+  const snapshotRestoreRenderStyle = '    setLayout(stringOr(snapshot.layout, "rectangular"));\n    setRenderStyle(stringOr(snapshot.renderStyle, "phgo"));\n    setTreeType(stringOr(snapshot.treeType, "phylogram"));';
+  const snapshotRestoreRuntimeFont = '    setLayout(stringOr(snapshot.layout, "rectangular"));\n    setRenderStyle(stringOr(snapshot.renderStyle, "phgo"));\n    setTreeType(stringOr(snapshot.treeType, "phylogram"));\n    setFontFamily(stringOr(snapshot.fontFamily, DEFAULT_TREE_FONT_FAMILY));';
+  if (!text.includes(snapshotRestoreRuntimeFont)) {
+    if (text.includes(snapshotRestoreOriginal)) {
+      replaceOnce(snapshotRestoreOriginal, snapshotRestoreRenderStyle, 'Reactree style restore');
+    }
+    if (text.includes(snapshotRestoreRenderStyle)) {
+      replaceOnce(snapshotRestoreRenderStyle, snapshotRestoreRuntimeFont, 'Reactree font restore');
+    }
+    if (!text.includes(snapshotRestoreRuntimeFont)) {
+      throw new Error(`Reactree snapshot restore anchor not found in ${file}`);
+    }
+  }
   replaceOnce(
     '    const isCircular = layout === "circular";',
     '    const isCircular = layout === "circular";\n    const isMegaStyle = renderStyle === "mega";',
     'Reactree style render flag',
   );
+  text = text.split(
+    '    const baseColor = isMegaStyle ? "#000000" : isDark ? "#cbd5e1" : "#475569";\n    const scaleColor = isMegaStyle ? "#000000" : isDark ? "#94a3b8" : "#64748b";\n    const branchLenColor = isMegaStyle ? "#000000" : isDark ? "#22d3ee" : "#0891b2";\n' + legacyMegaTreeFontLine,
+  ).join(
+    '    const baseColor = isMegaStyle ? "#000000" : isDark ? "#cbd5e1" : "#475569";\n    const scaleColor = isMegaStyle ? "#000000" : isDark ? "#94a3b8" : "#64748b";\n    const branchLenColor = isMegaStyle ? "#000000" : isDark ? "#22d3ee" : "#0891b2";\n    const treeFontFamily = fontFamily;',
+  );
+  const megaPaletteOriginal = '    const baseColor = isDark ? "#cbd5e1" : "#475569";\n    const scaleColor = isDark ? "#94a3b8" : "#64748b";\n    const branchLenColor = isDark ? "#22d3ee" : "#0891b2";';
+  const megaPaletteWithHardcodedFont = '    const baseColor = isMegaStyle ? "#000000" : isDark ? "#cbd5e1" : "#475569";\n    const scaleColor = isMegaStyle ? "#000000" : isDark ? "#94a3b8" : "#64748b";\n    const branchLenColor = isMegaStyle ? "#000000" : isDark ? "#22d3ee" : "#0891b2";\n    const treeFontFamily = "system-ui, -apple-system, sans-serif";';
+  const megaPaletteWithRuntimeFont = '    const baseColor = isMegaStyle ? "#000000" : isDark ? "#cbd5e1" : "#475569";\n    const scaleColor = isMegaStyle ? "#000000" : isDark ? "#94a3b8" : "#64748b";\n    const branchLenColor = isMegaStyle ? "#000000" : isDark ? "#22d3ee" : "#0891b2";\n    const treeFontFamily = fontFamily;';
+  if (!text.includes(megaPaletteWithRuntimeFont)) {
+    if (text.includes(megaPaletteOriginal)) {
+      replaceOnce(
+        megaPaletteOriginal,
+        megaPaletteWithRuntimeFont,
+        'Reactree MEGA palette and font',
+      );
+    } else if (text.includes(megaPaletteWithHardcodedFont)) {
+      replaceOnce(
+        megaPaletteWithHardcodedFont,
+        megaPaletteWithRuntimeFont,
+        'Reactree MEGA palette runtime font upgrade',
+      );
+    } else {
+      throw new Error(`Reactree MEGA palette and font anchor not found in ${file}`);
+    }
+  }
+  if (!text.includes('    const treeFontFamily = fontFamily;') && text.includes(legacyMegaTreeFontLine)) {
+    replaceOnce(
+      legacyMegaTreeFontLine,
+      '    const treeFontFamily = fontFamily;',
+      'Reactree MEGA font reset',
+    );
+  }
   replaceOnce(
-    '    const baseColor = isDark ? "#cbd5e1" : "#475569";\n    const scaleColor = isDark ? "#94a3b8" : "#64748b";\n    const branchLenColor = isDark ? "#22d3ee" : "#0891b2";',
-    '    const baseColor = isMegaStyle ? "#000000" : isDark ? "#cbd5e1" : "#475569";\n    const scaleColor = isMegaStyle ? "#000000" : isDark ? "#94a3b8" : "#64748b";\n    const branchLenColor = isMegaStyle ? "#000000" : isDark ? "#22d3ee" : "#0891b2";\n    const treeFontFamily = isMegaStyle ? "\\"Times New Roman\\", Times, serif" : "system-ui, -apple-system, sans-serif";',
-    'Reactree MEGA palette and font',
+    '    const { seqMap, maxLen } = pfasta;\n    const t = transformRef.current ?? d32.zoomIdentity;\n',
+    '    const { seqMap, maxLen } = pfasta;\n    const canvasFontFamily = fontFamilyRef.current;\n    const t = transformRef.current ?? d32.zoomIdentity;\n',
+    'Reactree alignment canvas font family state',
+  );
+  replaceAll(
+    '`400 ${numFs}px system-ui,-apple-system,sans-serif`',
+    '`400 ${numFs}px ${canvasFontFamily}`',
+    'Reactree alignment row number font',
+  );
+  replaceAll(
+    '`italic 500 ${fs}px system-ui,-apple-system,sans-serif`',
+    '`italic 500 ${fs}px ${canvasFontFamily}`',
+    'Reactree alignment label font',
+  );
+  replaceAll(
+    '`600 8.5px system-ui,-apple-system,sans-serif`',
+    '`600 8.5px ${canvasFontFamily}`',
+    'Reactree alignment header font',
+  );
+  replaceAll(
+    '`400 7.5px system-ui,-apple-system,sans-serif`',
+    '`400 7.5px ${canvasFontFamily}`',
+    'Reactree alignment index font',
+  );
+  replaceAll(
+    '"8.5px system-ui,-apple-system,sans-serif"',
+    '`8.5px ${canvasFontFamily}`',
+    'Reactree alignment axis font',
+  );
+  replaceOnce(
+    '    const treeFontFamily = "system-ui, -apple-system, sans-serif";',
+    '    const treeFontFamily = fontFamily;',
+    'Reactree tree font family state',
   );
   replaceAll(
     '.attr("stroke-opacity", 0.8)',
@@ -1472,6 +1701,11 @@ function patchReactreeViewerPolishMJS(file) {
     '        (sel) => sel.attr("x", alignLabels ? (d) => innerWidth - d.y + 10 : 12).attr("dy", "0.35em").attr("font-size", fontSize).attr("font-family", treeFontFamily).attr("font-style", isMegaStyle ? "normal" : "italic")',
     '        (sel) => sel.attr("x", alignLabels ? (d) => innerWidth - d.y + (isMegaStyle ? 4 : 10) : isMegaStyle ? 4 : 12).attr("dy", "0.35em").attr("font-size", fontSize).attr("font-family", treeFontFamily).attr("font-style", isMegaStyle ? "normal" : "italic")',
     'Reactree MEGA rectangular label gap',
+  );
+  replaceOnce(
+    '      if (alignLabels) {\n        const leaderColor = isMegaStyle ? "#000000" : isDark ? "rgba(148,163,184,0.35)" : "rgba(100,116,139,0.3)";\n        node.filter((d) => !d.children).append("line").attr("class", "leader-line").attr("x1", 8).attr("x2", (d) => innerWidth - d.y).attr("y1", 0).attr("y2", 0).attr("stroke", leaderColor).attr("stroke-width", 1).attr("stroke-dasharray", "2 3").style("pointer-events", "none");\n      }\n      addLeafLabels(',
+    '      if (alignLabels) {\n        const leaderColor = isMegaStyle ? "#000000" : isDark ? "rgba(148,163,184,0.35)" : "rgba(100,116,139,0.3)";\n        node.filter((d) => !d.children).append("line").attr("class", "leader-line").attr("x1", isMegaStyle ? 0 : 8).attr("x2", (d) => innerWidth - d.y + (isMegaStyle ? 4 : 0)).attr("y1", 0).attr("y2", 0).attr("stroke", leaderColor).attr("stroke-width", 1).attr("stroke-dasharray", isMegaStyle ? null : "2 3").style("pointer-events", "none");\n      }\n      if (isMegaStyle && !alignLabels) {\n        node.filter((d) => !d.children).append("line").attr("class", "terminal-label-line").attr("x1", 0).attr("x2", 4).attr("y1", 0).attr("y2", 0).attr("stroke", baseColor).attr("stroke-width", strokeWidth).attr("stroke-linecap", "square").style("pointer-events", "none");\n      }\n      addLeafLabels(',
+    'Reactree MEGA rectangular terminal label connector',
   );
   replaceOnce(
     '          if (!alignLabels) return d.x < Math.PI ? 12 : -12;\n          return d.x < Math.PI ? radius - d.y + 12 : -(radius - d.y) - 12;',
@@ -1519,10 +1753,24 @@ function patchReactreeViewerPolishMJS(file) {
     '        sb.append("text").attr("x", barPx / 2).attr("y", 16).attr("text-anchor", "middle").attr("font-size", "9.5px").attr("font-family", treeFontFamily).style("fill", scaleColor).text(formatTick(barLen));',
   );
   replaceOnce(
-    '  }, [treeData, containerH, hScale, vScale, fontScale, strokeWidth, layout, treeType, colorOverrides, theme, labelMode, alignLabels, truncateNames, collapsedNodes, collapseLabels, searchQuery, searchMatchIdx, showAlignment]);',
-    '  }, [treeData, containerH, hScale, vScale, fontScale, strokeWidth, layout, renderStyle, treeType, colorOverrides, theme, labelMode, alignLabels, truncateNames, collapsedNodes, collapseLabels, searchQuery, searchMatchIdx, showAlignment]);',
-    'Reactree style render dependencies',
+    '  }, [showAlignment, parsedFasta, containerH, vScale, fontScale, layout, drawAlnCanvas]);',
+    '  }, [showAlignment, parsedFasta, containerH, vScale, fontScale, fontFamily, layout, drawAlnCanvas]);',
+    'Reactree alignment redraw font dependency',
   );
+  const renderDepsOriginal = '  }, [treeData, containerH, hScale, vScale, fontScale, strokeWidth, layout, treeType, colorOverrides, theme, labelMode, alignLabels, truncateNames, collapsedNodes, collapseLabels, searchQuery, searchMatchIdx, showAlignment]);';
+  const renderDepsRenderStyle = '  }, [treeData, containerH, hScale, vScale, fontScale, strokeWidth, layout, renderStyle, treeType, colorOverrides, theme, labelMode, alignLabels, truncateNames, collapsedNodes, collapseLabels, searchQuery, searchMatchIdx, showAlignment]);';
+  const renderDepsRuntimeFont = '  }, [treeData, containerH, hScale, vScale, fontScale, fontFamily, strokeWidth, layout, renderStyle, treeType, colorOverrides, theme, labelMode, alignLabels, truncateNames, collapsedNodes, collapseLabels, searchQuery, searchMatchIdx, showAlignment]);';
+  if (!text.includes(renderDepsRuntimeFont)) {
+    if (text.includes(renderDepsOriginal)) {
+      replaceOnce(renderDepsOriginal, renderDepsRenderStyle, 'Reactree style render dependencies');
+    }
+    if (text.includes(renderDepsRenderStyle)) {
+      replaceOnce(renderDepsRenderStyle, renderDepsRuntimeFont, 'Reactree tree font render dependencies');
+    }
+    if (!text.includes(renderDepsRuntimeFont)) {
+      throw new Error(`Reactree render dependencies anchor not found in ${file}`);
+    }
+  }
   replaceOnce(
     '        }, title: "Circular", children: /* @__PURE__ */ jsx2(IconCirc, {}) })\n      ] }),\n      /* @__PURE__ */ jsx2("div", { className: Reactree_default.divider }),',
     '        }, title: "Circular", children: /* @__PURE__ */ jsx2(IconCirc, {}) })\n      ] }),\n      /* @__PURE__ */ jsx2("div", { className: Reactree_default.divider }),\n      /* @__PURE__ */ jsxs2("div", { className: Reactree_default.btnGroup, children: [\n        /* @__PURE__ */ jsx2("button", { className: `${Reactree_default.btnGroupItem} ${renderStyle === "phgo" ? Reactree_default.btnGroupActive : ""}`, onClick: () => setRenderStyle("phgo"), title: "PHgo style", children: "P" }),\n        /* @__PURE__ */ jsx2("button", { className: `${Reactree_default.btnGroupItem} ${renderStyle === "mega" ? Reactree_default.btnGroupActive : ""}`, onClick: () => setRenderStyle("mega"), title: "MEGA style", children: "M" })\n      ] }),\n      /* @__PURE__ */ jsx2("div", { className: Reactree_default.divider }),',

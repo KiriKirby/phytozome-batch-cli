@@ -4850,6 +4850,10 @@ func canvasRowColumnValue(row model.CanvasRow, columnID string, fallback string)
 	switch columnID {
 	case phylo.PHgoDisplayNameSource:
 		return canvasPHgoLabel(row, fallback)
+	case phylo.YTDisplayNameSource:
+		return canvasYTLabel(row, fallback)
+	case phylo.YTV2DisplayNameSource:
+		return canvasYTV2Label(row, fallback)
 	case "source_type":
 		switch row.Kind {
 		case model.CanvasKindFasta:
@@ -5178,6 +5182,22 @@ func applyCanvasDisplayNameSource(item *model.CanvasItem, sourceColumnID string)
 
 func canvasPHgoLabel(row model.CanvasRow, fallback string) string {
 	return phylo.FormatPHgoLabel(
+		canvasRowColumnValue(row, "species", fallback),
+		canvasRowColumnValue(row, "gene_id", fallback),
+		canvasRowColumnValue(row, "label_name", fallback),
+	)
+}
+
+func canvasYTLabel(row model.CanvasRow, fallback string) string {
+	return phylo.FormatYTLabel(
+		canvasRowColumnValue(row, "species", fallback),
+		canvasRowColumnValue(row, "gene_id", fallback),
+		canvasRowColumnValue(row, "label_name", fallback),
+	)
+}
+
+func canvasYTV2Label(row model.CanvasRow, fallback string) string {
+	return phylo.FormatYTV2Label(
 		canvasRowColumnValue(row, "species", fallback),
 		canvasRowColumnValue(row, "gene_id", fallback),
 		canvasRowColumnValue(row, "label_name", fallback),
@@ -5801,6 +5821,8 @@ func buildCanvasTreePanel(items []tui.BlastRunItem, canvasItems []model.CanvasIt
 			displayNames = append(displayNames, tui.Choice{Value: id, Label: firstNonEmptyText(strings.TrimSpace(column.Header), id)})
 		}
 		displayNames = append(displayNames, tui.Choice{Value: phylo.PHgoDisplayNameSource, Label: "PHgo label format"})
+		displayNames = append(displayNames, tui.Choice{Value: phylo.YTDisplayNameSource, Label: "YT label format"})
+		displayNames = append(displayNames, tui.Choice{Value: phylo.YTV2DisplayNameSource, Label: "YT v2 label format"})
 	}
 	if len(displayNames) == 0 {
 		displayNames = append(displayNames, tui.Choice{Value: phylo.DefaultDisplayNameSource, Label: "label_name"})

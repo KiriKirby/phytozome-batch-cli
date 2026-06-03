@@ -7,6 +7,8 @@ import { relabelFasta, relabelNewick } from './labels.js';
 import { megaDefaultDisplayNewick } from './mega-display.js';
 import { buildViewerSnapshot, installPHGOSaveBridge, saveTextFile, snapshotFilename } from './pgv.js';
 
+const VIEWER_STATE_SCHEMA_VERSION = 2;
+
 function sessionIDFromPath() {
   const parts = window.location.pathname.split('/').filter(Boolean);
   const index = parts.indexOf('sessions');
@@ -115,7 +117,7 @@ function App() {
 
   function handleViewerStateChange(state) {
     viewerStateRef.current = {
-      schema_version: 1,
+      schema_version: VIEWER_STATE_SCHEMA_VERSION,
       reactree: state || {},
       phgo: {
         split_percent: splitPercentRef.current,
@@ -138,7 +140,7 @@ function App() {
   async function handleViewerSnapshot(state) {
     try {
       const viewerState = {
-        schema_version: 1,
+        schema_version: VIEWER_STATE_SCHEMA_VERSION,
         reactree: state || viewerStateRef.current?.reactree || {},
         phgo: {
           ...(viewerStateRef.current?.phgo || {}),

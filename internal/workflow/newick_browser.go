@@ -400,3 +400,34 @@ func putViewerState(ctx context.Context, server *phylo.ViewerServer, sessionID s
 	}
 	return nil
 }
+
+func getViewerState(ctx context.Context, server *phylo.ViewerServer, sessionID string) (json.RawMessage, error) {
+	if server == nil {
+		return nil, fmt.Errorf("tree viewer server is unavailable")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL()+"/sessions/"+url.PathEscape(strings.TrimSpace(sessionID))+"/state", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := canvasTreeViewerClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("tree viewer state request failed: %s %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxViewerSnapshotBytes))
+	if err != nil {
+		return nil, err
+	}
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 {
+		return json.RawMessage(`{}`), nil
+	}
+	if !json.Valid(body) {
+		return nil, fmt.Errorf("tree viewer state response is not valid JSON")
+	}
+	return json.RawMessage(append([]byte(nil), body...)), nil
+}

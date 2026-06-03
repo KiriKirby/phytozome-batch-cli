@@ -273,6 +273,63 @@ func TestApplyCanvasDisplayNameSourceUsesPHgoLabelFormat(t *testing.T) {
 	}
 }
 
+func TestApplyCanvasDisplayNameSourceUsesYTLabelFormat(t *testing.T) {
+	item := model.CanvasItem{
+		Title: "fallback",
+		Rows: []model.CanvasRow{{
+			Kind: model.CanvasKindKeyword,
+			KeywordRow: &model.KeywordResultRow{
+				SourceDatabase: "ncbi",
+				Genome:         "Arabidopsis thaliana",
+				GeneLocus:      "At1G51680",
+				GeneIdentifier: "GeneID:841572",
+				LabelName:      "At4CL1",
+			},
+		}, {
+			Kind: model.CanvasKindKeyword,
+			KeywordRow: &model.KeywordResultRow{
+				SourceDatabase: "ncbi",
+				Genome:         "Panicum virgatum",
+				GeneLocus:      "Pavir.6KG154400",
+			},
+		}},
+	}
+	applyCanvasDisplayNameSource(&item, phylo.YTDisplayNameSource)
+	if got := item.Rows[0].DisplayName; got != "At1G51680_At4CL1" {
+		t.Fatalf("YT display name = %q", got)
+	}
+	if got := item.Rows[1].DisplayName; got != "Pavir.6KG154400" {
+		t.Fatalf("YT display name without label = %q", got)
+	}
+}
+
+func TestApplyCanvasDisplayNameSourceUsesYTV2LabelFormat(t *testing.T) {
+	item := model.CanvasItem{
+		Title: "fallback",
+		Rows: []model.CanvasRow{{
+			Kind: model.CanvasKindKeyword,
+			KeywordRow: &model.KeywordResultRow{
+				Genome:    "Arabidopsis thaliana",
+				GeneLocus: "At1G51680",
+				LabelName: "At4CL1",
+			},
+		}, {
+			Kind: model.CanvasKindKeyword,
+			KeywordRow: &model.KeywordResultRow{
+				Genome:    "Panicum virgatum",
+				GeneLocus: "Pavir.6KG154400",
+			},
+		}},
+	}
+	applyCanvasDisplayNameSource(&item, phylo.YTV2DisplayNameSource)
+	if got := item.Rows[0].DisplayName; got != "At1G51680_4CL1" {
+		t.Fatalf("YT v2 display name = %q", got)
+	}
+	if got := item.Rows[1].DisplayName; got != "Pavir.6KG154400" {
+		t.Fatalf("YT v2 display name without label = %q", got)
+	}
+}
+
 func TestCanvasKeywordFixedGeneIDPrefersGeneLocus(t *testing.T) {
 	item := model.CanvasItem{
 		Title: "1",
@@ -393,7 +450,7 @@ func TestBuildCanvasTreePanelFiltersCodonMethodsByConversionTarget(t *testing.T)
 	}
 }
 
-func TestBuildCanvasTreePanelIncludesPHgoDisplayNameSource(t *testing.T) {
+func TestBuildCanvasTreePanelIncludesFormattedDisplayNameSources(t *testing.T) {
 	item := model.CanvasItem{
 		Title:    "protein",
 		Kind:     model.CanvasKindKeyword,
@@ -409,14 +466,22 @@ func TestBuildCanvasTreePanelIncludesPHgoDisplayNameSource(t *testing.T) {
 		Rows:     rows,
 		Selected: []bool{true},
 	}}, []model.CanvasItem{item}, phylo.DefaultTreeSettings(), tui.CanvasTreePanelState{})
-	found := false
+	foundPHgo := false
+	foundYT := false
+	foundYTV2 := false
 	for _, choice := range panel.DisplayNameSources {
 		if choice.Value == phylo.PHgoDisplayNameSource && choice.Label == "PHgo label format" {
-			found = true
+			foundPHgo = true
+		}
+		if choice.Value == phylo.YTDisplayNameSource && choice.Label == "YT label format" {
+			foundYT = true
+		}
+		if choice.Value == phylo.YTV2DisplayNameSource && choice.Label == "YT v2 label format" {
+			foundYTV2 = true
 		}
 	}
-	if !found {
-		t.Fatalf("PHgo display source missing: %#v", panel.DisplayNameSources)
+	if !foundPHgo || !foundYT || !foundYTV2 {
+		t.Fatalf("formatted display sources missing: %#v", panel.DisplayNameSources)
 	}
 }
 

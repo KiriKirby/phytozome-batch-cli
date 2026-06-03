@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { megaDefaultDisplayNewick } from './mega-display.js';
+import { megaDefaultDisplayNewick, megaDefaultDisplayPolicy } from './mega-display.js';
 
 function leafOrder(newick) {
   const out = [];
@@ -11,7 +11,7 @@ function leafOrder(newick) {
     token = '';
     if (value) out.push(value.replace(/^'|'$/g, '').replace(/''/g, "'"));
   };
-  for (const ch of newick) {
+  for (const ch of String(newick || '')) {
     if (inLength) {
       if (ch === ',' || ch === ')' || ch === ';') inLength = false;
       else continue;
@@ -35,18 +35,81 @@ function leafOrder(newick) {
   return out;
 }
 
-const records = Array.from({ length: 50 }, (_, index) => ({
-  taxon_id: `PHGOT${String(index + 1).padStart(6, '0')}`,
-}));
+const records = ['A', 'B', 'C', 'D', 'E'].map((taxon_id) => ({ taxon_id }));
+const runtimeMeta = (tree_method, extra = {}) => ({
+  tree_computation_source: 'mega-phgo-runtime',
+  tree_method,
+  records,
+  ...extra,
+});
 
-const fourCLRuntimeNewick = '((((((((PHGOT000001:0.0,PHGOT000002:0.0):0.463503795174358,(PHGOT000007:0.0,PHGOT000008:0.0):38.0622541797108):0.266792349030512,(PHGOT000009:0.0,PHGOT000010:0.0):0.341992067254394):0.0109840854488917,(PHGOT000003:0.0,PHGOT000006:0.0):0.26610963525545):0.0938398806306155,((((PHGOT000004:0.0,PHGOT000005:0.0):0.204119745271361,((PHGOT000032:0.292386798384091,((PHGOT000035:0.00709611780181853,PHGOT000044:0.0125153751519047):0.0115797908156192,PHGOT000040:0.0196231849557014):0.101793863469761):0.0355970388102656,(PHGOT000047:0.0287857361908933,PHGOT000048:0.0374577391690999):0.163666582256145):0.158487698087843):0.0657311718991838,(PHGOT000012:0.0904017805177715,(((PHGOT000020:0.0266757206981329,PHGOT000022:0.0704382395666854):0.0186208757611033,PHGOT000026:0.0598283211292437):0.0684454568482466,PHGOT000029:0.119530054998639):0.0211674975409365):0.188078259873951):0.248089118426449,((((PHGOT000011:0.0843473633330152,(PHGOT000018:0.0554462912355607,PHGOT000024:0.0819870695746001):0.0849429943019808):0.0528078119500555,PHGOT000027:0.127464959261491):0.384316303068774,((((PHGOT000013:0.0713609512773796,((PHGOT000016:0.0337973817369215,PHGOT000021:0.0527073865214448):0.023255171677099,PHGOT000025:0.0670999898208581):0.0402242261562253):0.0898036425667752,PHGOT000014:0.0851771984968677):0.0296792748158258,PHGOT000017:0.0825671790155676):0.0393672551877586,PHGOT000028:0.105080294818535):0.181089892487791):0.11162077094662,(PHGOT000015:0.111021834629616,(PHGOT000019:0.0465284268178546,PHGOT000023:0.0308150660719136):0.107986863992906):0.313558828082361):0.106530014939277):0.0586979844394116):0.147146392531567,(((((PHGOT000034:0.0108600556602372,PHGOT000043:0.0250361141706659):0.0124430451060416,PHGOT000039:0.0193117196092793):0.0455376577892686,(PHGOT000036:0.0200460697262652,PHGOT000042:0.0187787526912177):0.0707725784453868):0.14329187356377,PHGOT000046:0.303572389875574):0.0692739814603305,(((PHGOT000037:0.0282637984814489,PHGOT000041:0.0121239135909573):0.0745155571576614,PHGOT000038:0.0719236452879916):0.133120775607667,(PHGOT000049:0.0996855204628938,PHGOT000050:0.0482487861294141):0.119243893594115):0.0263495471684498):0.0470112105842924):0.0662658097998991,(PHGOT000030:0.139028098063509,PHGOT000031:0.151826726880345):0.162092680067104):0.0339951813492294,PHGOT000045:0.414068439542437,PHGOT000033:0.503553043696326);';
+const inferredMethods = [
+  'neighbor_joining',
+  'minimum_evolution',
+  'upgma',
+  'maximum_likelihood',
+  'maximum_parsimony',
+];
 
+for (const method of inferredMethods) {
+  const policy = megaDefaultDisplayPolicy(runtimeMeta(method));
+  assert.equal(policy.applyAdapter, true, `${method} should use MEGA Tree Explorer adapter`);
+  assert.equal(policy.rootOnMidpoint, true, `${method} should enable Root on Midpoint action`);
+  assert.equal(policy.arrangeTaxa, 'balanced_shape', `${method} should default to balanced shape`);
+}
+
+const standaloneNewick = '(A:1,B:2,(C:3,D:4):5);';
+assert.equal(
+  megaDefaultDisplayNewick(standaloneNewick, { records }),
+  standaloneNewick,
+  'standalone imported Newick must not be rerooted or sorted as an inferred MEGA runtime tree',
+);
+
+const unrootedRuntimeNewick = '(A:1,B:2,(C:3,D:20):5,E:1);';
+const mlDisplay = megaDefaultDisplayNewick(unrootedRuntimeNewick, runtimeMeta('maximum_likelihood'));
+assert.notEqual(mlDisplay, unrootedRuntimeNewick, 'runtime ML tree should pass through MEGA default display adaptation');
+for (const method of ['neighbor_joining', 'minimum_evolution', 'maximum_likelihood']) {
+  assert.equal(
+    megaDefaultDisplayNewick(unrootedRuntimeNewick, runtimeMeta(method)),
+    mlDisplay,
+    `${method} should share the ordinary unrooted branch-length display path`,
+  );
+}
+
+const binaryRuntimeNewick = '((A:1,B:2):3,(C:4,D:20):5);';
+for (const method of ['neighbor_joining', 'minimum_evolution', 'maximum_likelihood']) {
+  assert.notEqual(
+    megaDefaultDisplayNewick(binaryRuntimeNewick, runtimeMeta(method)),
+    binaryRuntimeNewick,
+    `${method} should still apply MEGA inferred-tree midpoint display behavior when runtime Newick has a binary root shape`,
+  );
+}
+
+const rootedUPGMA = '((A:1,B:1):2,(C:1,D:1):2);';
 assert.deepEqual(
-  leafOrder(megaDefaultDisplayNewick(fourCLRuntimeNewick, { records })).slice(0, 5),
-  ['PHGOT000016', 'PHGOT000021', 'PHGOT000025', 'PHGOT000013', 'PHGOT000014'],
+  leafOrder(megaDefaultDisplayNewick(rootedUPGMA, runtimeMeta('upgma'))),
+  ['A', 'B', 'C', 'D'],
+  'rooted UPGMA Newick should keep its rooted topology and only apply default arrangement',
+);
+
+const topologyOnlyMP = '(A,B,(C,D),E);';
+const mpDisplay = megaDefaultDisplayNewick(topologyOnlyMP, runtimeMeta('maximum_parsimony'));
+assert.deepEqual(
+  leafOrder(mpDisplay),
+  ['A', 'B', 'C', 'D', 'E'],
+  'topology-only MP trees do not midpoint-root because MEGA MakeRootOnMidPoint exits without branch lengths',
+);
+assert.equal(mpDisplay.includes(':'), false, 'topology-only display must not invent branch lengths');
+
+const multiTreeDisplay = megaDefaultDisplayNewick(unrootedRuntimeNewick, runtimeMeta('maximum_likelihood', { tree_count: 2 }));
+assert.deepEqual(
+  leafOrder(multiTreeDisplay),
+  ['A', 'B', 'C', 'D', 'E'],
+  'MEGA multi-tree view disables midpoint rooting and arranges taxa by input order',
 );
 
 assert.equal(
-  megaDefaultDisplayNewick('(PHGOT000001,PHGOT000002);', { records: records.slice(0, 2) }),
-  '(PHGOT000001,PHGOT000002);',
+  megaDefaultDisplayPolicy({ tree_computation_source: 'manual-import', tree_method: 'maximum_likelihood' }).applyAdapter,
+  false,
+  'manual imports are not ordinary runtime inferred trees',
 );

@@ -81,6 +81,36 @@ func TestSnapshotCanvasTreeStateKeepsPanelWithoutRun(t *testing.T) {
 	}
 }
 
+func TestSnapshotCanvasTreeStateCapturesViewerState(t *testing.T) {
+	w := NewBlastWizard(nil)
+	w.prompt.RestoreCanvasTreePanelState(canvasStateKey("canvas"), treePanelForSnapshotTest())
+	ctx := context.Background()
+	server, _, err := w.ensureCanvasTreeViewer(ctx)
+	if err != nil {
+		t.Fatalf("ensureCanvasTreeViewer returned error: %v", err)
+	}
+	defer w.closeCanvasTreeViewer()
+
+	viewerState := json.RawMessage(`{"schema_version":2,"reactree":{"layout":"rectangular","fontFamily":"Georgia"}}`)
+	if err := putViewerState(ctx, server, w.canvasTreeSessionID(), viewerState); err != nil {
+		t.Fatalf("putViewerState returned error: %v", err)
+	}
+
+	tree, _, _, err := w.snapshotCanvasTreeState()
+	if err != nil {
+		t.Fatalf("snapshotCanvasTreeState returned error: %v", err)
+	}
+	if tree == nil {
+		t.Fatal("snapshotCanvasTreeState returned nil tree")
+	}
+	if string(tree.ViewerState) != string(viewerState) {
+		t.Fatalf("viewer state not captured: %s", tree.ViewerState)
+	}
+	if string(w.canvasTreeViewerState) != string(viewerState) {
+		t.Fatalf("wizard viewer state cache not updated: %s", w.canvasTreeViewerState)
+	}
+}
+
 func TestSnapshotCanvasTreeStateSyncsCurrentDisplayNamesWithoutRecompute(t *testing.T) {
 	w := NewBlastWizard(nil)
 	now := time.Now()
@@ -232,6 +262,9 @@ func TestCloseCanvasTreeViewerStopsCanvasScopedServer(t *testing.T) {
 	}
 	if !w.canvasTreeLastPayload.UpdatedAt.IsZero() || strings.TrimSpace(w.canvasTreeLastPayload.Newick) != "" {
 		t.Fatalf("viewer payload should be cleared after close: %#v", w.canvasTreeLastPayload)
+	}
+	if len(w.canvasTreeViewerState) != 0 {
+		t.Fatalf("viewer state should be cleared after close: %s", w.canvasTreeViewerState)
 	}
 	if strings.TrimSpace(w.canvasTreeLastPlan.BaseDir) != "" || strings.TrimSpace(w.canvasTreeLastPlan.SessionID) != "" {
 		t.Fatalf("viewer plan should be cleared after close: %#v", w.canvasTreeLastPlan)
@@ -560,6 +593,9 @@ func TestRestoreCanvasTreeSnapshotRestoresPayloadAndPlan(t *testing.T) {
 	}
 	if w.canvasTreeLastPlan.BaseDir == "" || w.canvasTreeLastPlan.RunID != "run1" {
 		t.Fatalf("plan not restored: %#v", w.canvasTreeLastPlan)
+	}
+	if !strings.Contains(string(w.canvasTreeViewerState), `"fontFamily":"Georgia"`) {
+		t.Fatalf("viewer state not restored: %s", w.canvasTreeViewerState)
 	}
 	if len(w.canvasTreeLastPlan.Records) != 1 || w.canvasTreeLastPlan.Records[0].DisplayName != "PAL display" {
 		t.Fatalf("plan records/metadata not restored: %#v", w.canvasTreeLastPlan.Records)
@@ -1796,6 +1832,7 @@ func treeSnapshotForTest(dir string, now time.Time) sessionsnapshot.CanvasTreeV2
 	return sessionsnapshot.CanvasTreeV2{
 		PanelState:       panel,
 		LastPayload:      phylo.ViewerPayload{SchemaVersion: 1, SessionID: "canvas", UpdatedAt: now, Newick: "(PHGOT000001);", AlignedFASTA: ">PHGOT000001\nMPEPTIDE\n", Metadata: meta},
+		ViewerState:      json.RawMessage(`{"schema_version":2,"reactree":{"layout":"rectangular","fontFamily":"Georgia"}}`),
 		LastManifest:     treeRunManifestForSnapshotTest(now),
 		LastArtifactDir:  dir,
 		LastRunID:        "run1",

@@ -46,3 +46,13 @@ func TestDecodeRejectsUnsupportedVersion(t *testing.T) {
 		t.Fatal("Decode returned nil error for unsupported version")
 	}
 }
+
+func TestDecodeAcceptsV1Snapshot(t *testing.T) {
+	got, err := Decode([]byte(`{"format":"phgo-viewer-snapshot","schema_version":1,"payload":{"schema_version":1,"newick":"(A,B);"},"viewer_state":{"schema_version":1}}`))
+	if err != nil {
+		t.Fatalf("Decode returned error for v1 snapshot: %v", err)
+	}
+	if got.SchemaVersion != 1 || got.Payload.Newick != "(A,B);" {
+		t.Fatalf("unexpected v1 snapshot decode: %#v", got)
+	}
+}
