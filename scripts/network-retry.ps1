@@ -13,8 +13,8 @@ function Invoke-WebRequestWithRetry {
         [Parameter(Mandatory = $true)]
         [string]$OutFile,
 
-        [int]$MaxAttempts = 4,
-        [int]$InitialDelaySeconds = 2
+        [int]$MaxAttempts = 8,
+        [int]$InitialDelaySeconds = 3
     )
 
     $attempt = 0
@@ -25,6 +25,7 @@ function Invoke-WebRequestWithRetry {
             Invoke-WebRequest -Uri $Uri -OutFile $OutFile
             return
         } catch {
+            Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
             if ($attempt -ge $MaxAttempts) {
                 throw
             }
