@@ -58,8 +58,30 @@ if ([string]::IsNullOrWhiteSpace($BuildVersion)) {
     $BuildVersion = "v" + (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
 }
 
+function Get-DirtyWorktreeLines {
+    return @(
+        git status --short --untracked-files=all |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_.Trim()) }
+    )
+}
+
+function Assert-CleanWorktree {
+    param(
+        [string]$Message
+    )
+
+    $dirty = Get-DirtyWorktreeLines
+    if ($dirty.Count -gt 0) {
+        throw $Message
+    }
+}
+
 Push-Location $repoRoot
 try {
+    if ($Publish) {
+        Assert-CleanWorktree "Refusing to publish from a dirty worktree. Commit or stash changes first."
+    }
+
     $resolvedRepo = (Resolve-Path -LiteralPath $repoRoot).Path
     $resolvedBin = [System.IO.Path]::GetFullPath($binDir)
     if (-not $resolvedBin.StartsWith($resolvedRepo, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -111,6 +133,19 @@ Website:
 
     Invoke-Checked "Release notes page sync" {
         powershell -NoProfile -ExecutionPolicy Bypass -File scripts\sync-release-notes-page.ps1 -PendingTitle $ReleaseTitle -PendingBody $ReleaseNotes -PendingTag $BuildVersion
+    }
+
+    if ($Publish) {
+        $pageStatus = @(
+            git status --short -- pages/nac.html pages/_vti_cnf/nac.html |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_.Trim()) }
+        )
+        if ($pageStatus.Count -gt 0) {
+            Invoke-Checked "Commit website changelog sync" {
+                git add -- pages/nac.html pages/_vti_cnf/nac.html
+                git commit -m "Sync website changelog for $BuildVersion"
+            }
+        }
     }
 
     Invoke-Checked "Windows WezTerm package" {
@@ -218,19 +253,7 @@ Website:
     $hashLines | Set-Content -LiteralPath "bin\SHA256SUMS.txt" -Encoding ASCII
 
     if ($Publish) {
-        $dirty = @(git status --short --untracked-files=all)
-        $blockingDirty = @(
-            $dirty | Where-Object {
-                $line = $_.Trim()
-                if ([string]::IsNullOrWhiteSpace($line)) {
-                    return $false
-                }
-                return -not ($line -match '(^|\s)pages([\\/]|$)')
-            }
-        )
-        if ($blockingDirty.Count -gt 0) {
-            throw "Refusing to publish from a dirty worktree outside pages/. Commit or stash changes first."
-        }
+        Assert-CleanWorktree "Refusing to publish because the worktree changed after packaging. Commit or stash changes first."
 
         $branch = (git branch --show-current).Trim()
         if ([string]::IsNullOrWhiteSpace($branch)) {
