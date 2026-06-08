@@ -189,9 +189,18 @@ try {
     $hashLines | Set-Content -LiteralPath "bin\SHA256SUMS.txt" -Encoding ASCII
 
     if ($Publish) {
-        $dirty = git status --short
-        if ($dirty) {
-            throw "Refusing to publish from a dirty worktree. Commit or stash changes first."
+        $dirty = @(git status --short --untracked-files=all)
+        $blockingDirty = @(
+            $dirty | Where-Object {
+                $line = $_.Trim()
+                if ([string]::IsNullOrWhiteSpace($line)) {
+                    return $false
+                }
+                return -not ($line -match '(^|\s)pages([\\/]|$)')
+            }
+        )
+        if ($blockingDirty.Count -gt 0) {
+            throw "Refusing to publish from a dirty worktree outside pages/. Commit or stash changes first."
         }
 
         $branch = (git branch --show-current).Trim()
