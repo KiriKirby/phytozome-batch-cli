@@ -39,6 +39,7 @@ type updateAssetSpec struct {
 	StripPrefix         string
 	RelaunchRelative    string
 	OutputRelative      string
+	VerifyRelative      []string
 	InstallRootFromExec func(string) (string, error)
 }
 
@@ -241,6 +242,12 @@ func updateAssetSpecFor(goos string, goarch string) (updateAssetSpec, error) {
 			ArchiveKind:      "zip",
 			RelaunchRelative: "phytozome-go.exe",
 			OutputRelative:   "output",
+			VerifyRelative: []string{
+				"phytozome-go.exe",
+				"phytozome-go-cleancache.bin",
+				"phytozome-go.bin",
+				"wezterm.bin",
+			},
 			InstallRootFromExec: func(cleanerPath string) (string, error) {
 				return filepath.Dir(strings.TrimSpace(cleanerPath)), nil
 			},
@@ -255,6 +262,13 @@ func updateAssetSpecFor(goos string, goarch string) (updateAssetSpec, error) {
 			StripPrefix:      "phytozome-go_linux_amd64_wezterm",
 			RelaunchRelative: "phytozome-go",
 			OutputRelative:   "output",
+			VerifyRelative: []string{
+				"phytozome-go",
+				"phytozome-go-cleancache.bin",
+				"phytozome-go.bin",
+				"wezterm",
+				"wezterm.AppImage",
+			},
 			InstallRootFromExec: func(cleanerPath string) (string, error) {
 				return filepath.Dir(strings.TrimSpace(cleanerPath)), nil
 			},
@@ -271,6 +285,12 @@ func updateAssetSpecFor(goos string, goarch string) (updateAssetSpec, error) {
 			StripPrefix:      "phytozome GO.app",
 			RelaunchRelative: "Contents/MacOS/phytozome-go",
 			OutputRelative:   "Contents/MacOS/output",
+			VerifyRelative: []string{
+				"Contents/MacOS/phytozome-go",
+				"Contents/MacOS/phytozome-go-cleancache.bin",
+				"Contents/MacOS/phytozome-go.bin",
+				"Contents/MacOS/wezterm",
+			},
 			InstallRootFromExec: func(cleanerPath string) (string, error) {
 				cleanerPath = filepath.Clean(strings.TrimSpace(cleanerPath))
 				if cleanerPath == "" {
@@ -587,14 +607,16 @@ func buildPowerShellUpdaterScript(plan stagedUpdatePlan, args []string) string {
 		startProcessLine += " -ArgumentList @(" + strings.Join(argList, ", ") + ")"
 	}
 
-	return fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+return fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 $ParentPid = %d
 $TargetDir = %s
 $StageDir = %s
 $Launcher = %s
 $WorkingDir = %s
 $OutputRelative = %s
+$VerifyRelative = @(%s)
 $LogPath = [Environment]::GetEnvironmentVariable(%s)
+$LastUpdateErrorEnvName = %s
 
 function Write-UpdateLog {
     param([string]$Message)
@@ -652,32 +674,93 @@ function Copy-PreservedOutputToStage {
     }
 }
 
+function Test-FilesMatch {
+    param(
+        [string]$LeftPath,
+        [string]$RightPath
+    )
+
+    if (-not (Test-Path -LiteralPath $LeftPath -PathType Leaf)) {
+        throw "missing expected file: $LeftPath"
+    }
+    if (-not (Test-Path -LiteralPath $RightPath -PathType Leaf)) {
+        throw "missing expected file: $RightPath"
+    }
+
+    $left = Get-Item -LiteralPath $LeftPath
+    $right = Get-Item -LiteralPath $RightPath
+    if ($left.Length -ne $right.Length) {
+        return $false
+    }
+
+    $leftHash = (Get-FileHash -LiteralPath $LeftPath -Algorithm SHA256).Hash
+    $rightHash = (Get-FileHash -LiteralPath $RightPath -Algorithm SHA256).Hash
+    return $leftHash -eq $rightHash
+}
+
+function Assert-KeyFilesUpdated {
+    param(
+        [string]$StageRoot,
+        [string]$TargetRoot,
+        [string[]]$RelativePaths
+    )
+
+    foreach ($relative in $RelativePaths) {
+        if ([string]::IsNullOrWhiteSpace($relative)) {
+            continue
+        }
+        $stagePath = Join-Path $StageRoot $relative
+        $targetPath = Join-Path $TargetRoot $relative
+        Write-UpdateLog ("verify key file: " + $relative)
+        if (-not (Test-FilesMatch -LeftPath $stagePath -RightPath $targetPath)) {
+            throw "updated file verification failed: $relative"
+        }
+    }
+}
+
 Write-UpdateLog ("updater start; parent pid=" + $ParentPid)
 while (Get-Process -Id $ParentPid -ErrorAction SilentlyContinue) {
     Start-Sleep -Milliseconds 200
 }
 Write-UpdateLog "parent exited"
 
+$UpdateSucceeded = $false
+$LastUpdateError = ''
 for ($i = 0; $i -lt 120; $i++) {
     try {
         Write-UpdateLog ("update attempt " + ($i + 1))
         Copy-PreservedOutputToStage -CurrentRoot $TargetDir -StageRoot $StageDir -RelativePath $OutputRelative
         Invoke-RobocopyMirror -Source $StageDir -Destination $TargetDir
+        Assert-KeyFilesUpdated -StageRoot $StageDir -TargetRoot $TargetDir -RelativePaths $VerifyRelative
         Remove-Item -LiteralPath $StageDir -Recurse -Force -ErrorAction SilentlyContinue
         Write-UpdateLog "stage directory removed"
+        $UpdateSucceeded = $true
         break
     } catch {
-        Write-UpdateLog ("update attempt failed: " + $_.Exception.Message)
-        if ($i -eq 119) { throw }
+        $LastUpdateError = $_.Exception.Message
+        Write-UpdateLog ("update attempt failed: " + $LastUpdateError)
+        if ($i -eq 119) { break }
         Start-Sleep -Seconds 1
     }
 }
 
+if (-not $UpdateSucceeded) {
+    if ([string]::IsNullOrWhiteSpace($LastUpdateError)) {
+        $LastUpdateError = 'unknown update failure'
+    }
+    [Environment]::SetEnvironmentVariable($LastUpdateErrorEnvName, $LastUpdateError, 'Process')
+    Write-UpdateLog ("launching after failed update: " + $Launcher)
+    %s
+    Write-UpdateLog "launch command returned after failed update"
+    exit 0
+}
+
+[Environment]::SetEnvironmentVariable($LastUpdateErrorEnvName, $null, 'Process')
 $env:%s = '1'
-Write-UpdateLog ("launching: " + $Launcher)
+Write-UpdateLog ("launching after successful update: " + $Launcher)
 %s
-Write-UpdateLog "launch command returned"
-`, os.Getpid(), psQuote(plan.InstallRoot), psQuote(plan.StageDir), psQuote(plan.RelaunchPath), psQuote(filepath.Dir(plan.RelaunchPath)), psQuote(plan.Spec.OutputRelative), psQuote(updateDebugLogEnv), skipBundlePreflightEnv, startProcessLine)
+Write-UpdateLog "launch command returned after successful update"
+`, os.Getpid(), psQuote(plan.InstallRoot), psQuote(plan.StageDir), psQuote(plan.RelaunchPath), psQuote(filepath.Dir(plan.RelaunchPath)), psQuote(plan.Spec.OutputRelative), strings.Join(psQuoteSlice(plan.Spec.VerifyRelative), ", "), psQuote(updateDebugLogEnv), psQuote(lastUpdateErrorEnv), startProcessLine, skipBundlePreflightEnv, startProcessLine)
 }
 
 func writeShellUpdater(plan stagedUpdatePlan, args []string) (string, error) {
@@ -717,6 +800,14 @@ preserve_output() {
   DEST="$STAGE_DIR/$OUTPUT_REL"
   mkdir -p "$DEST"
   cp -a "$SOURCE"/. "$DEST"/
+}
+
+func psQuoteSlice(values []string) []string {
+	quoted := make([]string, 0, len(values))
+	for _, value := range values {
+		quoted = append(quoted, psQuote(value))
+	}
+	return quoted
 }
 
 while kill -0 "$PARENT_PID" 2>/dev/null; do
@@ -784,6 +875,14 @@ func writeWindowsVBScriptLauncher(scriptPath string) (string, error) {
 
 func psQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
+func psQuoteSlice(values []string) []string {
+	quoted := make([]string, 0, len(values))
+	for _, value := range values {
+		quoted = append(quoted, psQuote(value))
+	}
+	return quoted
 }
 
 func vbsDoubleQuote(value string) string {

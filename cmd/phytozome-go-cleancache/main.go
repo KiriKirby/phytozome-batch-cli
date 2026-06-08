@@ -21,6 +21,7 @@ const licenseID = "CPAL-1.0"
 const skipBundlePreflightEnv = "PHGO_SKIP_BUNDLE_PREFLIGHT"
 const autoAcceptUpdateEnv = "PHGO_AUTO_ACCEPT_UPDATE"
 const updateDebugLogEnv = "PHGO_UPDATE_DEBUG_LOG"
+const lastUpdateErrorEnv = "PHGO_LAST_UPDATE_ERROR"
 const startupASCIIArt = `          _____                    _____                    _____                   _______
          /\    \                  /\    \                  /\    \                 /::\    \
         /::\    \                /::\____\                /::\    \               /::::\    \
@@ -54,6 +55,7 @@ func main() {
 
 func run() error {
 	printStartupNotice()
+	printLastUpdateErrorNotice()
 	if shouldSkipBundlePreflight() {
 		_, _ = fmt.Fprintln(os.Stdout)
 		_, _ = fmt.Fprintln(os.Stdout, "Bundle preflight skipped for relaunch.")
@@ -90,6 +92,16 @@ func printStartupNotice() {
 	_, _ = fmt.Fprintf(os.Stdout, "Author: %s\n", author)
 	_, _ = fmt.Fprintf(os.Stdout, "Repo:   %s\n", repoURL)
 	_, _ = fmt.Fprintf(os.Stdout, "License: %s (%s)\n", licenseName, licenseID)
+}
+
+func printLastUpdateErrorNotice() {
+	message := strings.TrimSpace(os.Getenv(lastUpdateErrorEnv))
+	if message == "" {
+		return
+	}
+	_, _ = fmt.Fprintln(os.Stdout)
+	_, _ = fmt.Fprintln(os.Stdout, "Previous update attempt did not fully apply.")
+	_, _ = fmt.Fprintf(os.Stdout, "Reason: %s\n", message)
 }
 
 func shouldSkipBundlePreflight() bool {
