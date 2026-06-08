@@ -622,6 +622,7 @@ This file tracks the intended shape of `phytozome GO` and its release packaging,
 - Do not reuse user-provided identifiers, species combinations, pathway panels, or research-specific examples in public documentation. When writing README examples, use fresh public examples that did not come from the user's prior workflow.
 - Keep screenshots and README images in a stable repository location such as `docs/images/`.
 - Whenever output paths, cache paths, batch behavior, or recovery commands change, update the README and this file in the same change.
+- Treat the repository-root `pages/` directory as protected user workspace content managed outside this project. Do not delete, clean, rewrite, move, or auto-generate files under `pages/`. If the user wants a normal repository upload/release push, include `pages/` as-is without trying to sanitize or restructure it, and never treat it as disposable build output.
 - Release packaging rules:
   - use the fixed release build template instead of hand-running ad hoc build commands:
     - Codex must directly use `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-codex.ps1`
