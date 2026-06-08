@@ -625,6 +625,7 @@ This file tracks the intended shape of `phytozome GO` and its release packaging,
 - Treat the repository-root `docs/` website files as first-class published site content. Do not delete, clean, sanitize, filter, or specially whitelist the website subtree during build/release work; keep the moved FrontPage-style site files under `docs/` together with the rest of the documentation tree, and keep release publishes subject to the same clean-worktree requirement as the rest of the repository.
 - `docs/nac.html` is the embedded website changelog page. Every release publish must sync GitHub release history into that page with the same flat paragraph format as the existing `test` sample: newest release first, every title/body line rendered with the same `<p>...</p>` style, and exactly one blank separator line between release entries.
 - The website favicon should use the small product icon variant. Keep `docs/favicon.png` aligned with `docs/logo3small.png`, and keep the homepage pointing at that favicon.
+- Keep GitHub Pages publishing compatible with the `docs/` website root: preserve `docs/.nojekyll`, and do not reintroduce broken git submodule/gitlink entries such as `.codex/tripal_blast` that can make Actions checkout fail before Pages builds even start.
 - Release packaging rules:
   - use the fixed release build template instead of hand-running ad hoc build commands:
     - Codex must directly use `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-codex.ps1`

@@ -2,13 +2,6 @@ name: Build mega-phgo-runtime
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - ".github/workflows/mega-phgo-runtime.yml"
-      - "_mega_source/MEGA12.1-source/PHgoRuntime/**"
-      - "assets/mega-phgo-runtime/**"
-      - "scripts/build-mega-phgo-runtime.ps1"
-      - "scripts/package-mega-phgo-runtime.ps1"
 
 permissions:
   contents: read
