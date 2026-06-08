@@ -632,6 +632,7 @@ This file tracks the intended shape of `phytozome GO` and its release packaging,
   - local development builds/tests must stay Windows-only; do not reintroduce Linux/macOS dev helper build entrypoints
   - do not write casual development executables into the repository root; keep generated build/test artifacts under `bin\`
   - `scripts\build-release.ps1` owns clearing `bin/`, rebuilding all supported release artifacts, validating package contents, extracting/verifying Windows icons, and writing `bin\SHA256SUMS.txt`
+  - release-time WezTerm asset downloads must tolerate transient upstream CDN/GitHub failures such as HTTP `504`; keep retry/backoff logic in the packaging path instead of treating one timeout as a hard release failure
   - keep release assets aligned with the actual executable names documented in the README
   - all desktop release assets should use the bundled `WezTerm` runtime model instead of shipping bare `linux` or `darwin` binaries
   - macOS release artifacts should be normal app bundles packaged as archives containing `phytozome GO.app`, not raw `darwin` executables

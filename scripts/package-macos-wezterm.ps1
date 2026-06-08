@@ -16,6 +16,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "wezterm-common.ps1")
+. (Join-Path $PSScriptRoot "network-retry.ps1")
 
 $repoRoot = Get-PhytozomeRepoRoot
 $release = Resolve-WezTermMacOSRelease $Version
@@ -35,7 +36,7 @@ if ($Prepare -or -not (Test-Path -LiteralPath $sourceAppDir -PathType Container)
     New-Item -ItemType Directory -Force -Path $assetDir | Out-Null
     if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) {
         $ProgressPreference = "SilentlyContinue"
-        Invoke-WebRequest -Uri $release.URL -OutFile $zipPath
+        Invoke-WebRequestWithRetry -Uri $release.URL -OutFile $zipPath
     }
     Remove-Item -LiteralPath $expandedDir -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path $expandedDir | Out-Null

@@ -12,6 +12,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "windows-wezterm-common.ps1")
+. (Join-Path $PSScriptRoot "network-retry.ps1")
 
 $repoRoot = Get-PhytozomeRepoRoot
 $cacheRoot = Get-WindowsWezTermCacheRoot $repoRoot
@@ -27,7 +28,7 @@ if ($Force) {
 }
 
 if (-not (Test-Path -LiteralPath $downloadZip -PathType Leaf)) {
-    Invoke-WebRequest -Uri $release.URL -OutFile $downloadZip
+    Invoke-WebRequestWithRetry -Uri $release.URL -OutFile $downloadZip
 }
 
 $needsExtract = $Force -or -not (Test-Path -LiteralPath $extractDir -PathType Container)

@@ -14,6 +14,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "wezterm-common.ps1")
+. (Join-Path $PSScriptRoot "network-retry.ps1")
 
 $repoRoot = Get-PhytozomeRepoRoot
 $release = Resolve-WezTermLinuxRelease $Version
@@ -29,7 +30,7 @@ $cleanCachePath = Join-Path $bundleDir "phytozome-go-cleancache.bin"
 if ($Prepare -or -not (Test-Path -LiteralPath $appImagePath -PathType Leaf)) {
     New-Item -ItemType Directory -Force -Path $assetDir | Out-Null
     $ProgressPreference = "SilentlyContinue"
-    Invoke-WebRequest -Uri $release.URL -OutFile $appImagePath
+    Invoke-WebRequestWithRetry -Uri $release.URL -OutFile $appImagePath
 }
 
 Remove-Item -LiteralPath $bundleDir -Recurse -Force -ErrorAction SilentlyContinue
