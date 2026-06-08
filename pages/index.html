@@ -2,37 +2,138 @@
 
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<script language="JavaScript">
+<!--
+function FP_swapImg() {//v1.0
+ var doc=document,args=arguments,elm,n; doc.$imgSwaps=new Array(); for(n=2; n<args.length;
+ n+=2) { elm=FP_getObjectByID(args[n]); if(elm) { doc.$imgSwaps[doc.$imgSwaps.length]=elm;
+ elm.$src=elm.src; elm.src=args[n+1]; } }
+}
+
+function FP_preloadImgs() {//v1.0
+ var d=document,a=arguments; if(!d.FP_imgs) d.FP_imgs=new Array();
+ for(var i=0; i<a.length; i++) { d.FP_imgs[i]=new Image; d.FP_imgs[i].src=a[i]; }
+}
+
+function FP_getObjectByID(id,o) {//v1.0
+ var c,el,els,f,m,n; if(!o)o=document; if(o.getElementById) el=o.getElementById(id);
+ else if(o.layers) c=o.layers; else if(o.all) el=o.all[id]; if(el) return el;
+ if(o.id==id || o.name==id) return o; if(o.childNodes) c=o.childNodes; if(c)
+ for(n=0; n<c.length; n++) { el=FP_getObjectByID(id,c[n]); if(el) return el; }
+ f=o.forms; if(f) for(n=0; n<f.length; n++) { els=f[n].elements;
+ for(m=0; m<els.length; m++){ el=FP_getObjectByID(id,els[n]); if(el) return el; } }
+ return null;
+}
+// -->
+</script>
+<title>Phytozome~goo!</title>
 </head>
 
-<body background="images/3.jpg">
+<body background="images/3.jpg" onload="FP_preloadImgs(/*url*/'images/button77.gif', /*url*/'images/button78.gif', /*url*/'images/buttonB1.gif', /*url*/'images/buttonB2.gif', /*url*/'images/buttonB4.gif', /*url*/'images/buttonB5.gif', /*url*/'images/buttonB7.gif', /*url*/'images/buttonB8.gif', /*url*/'images/buttonC0.gif', /*url*/'images/buttonC1.gif', /*url*/'images/buttonC3.gif', /*url*/'images/buttonC4.gif', /*url*/'images/buttonC6.jpg', /*url*/'images/buttonC7.jpg', /*url*/'images/button10E.gif', /*url*/'images/button10F.gif')">
 
 <div align="center">
-	<table border="0" width="1200" cellspacing="0" cellpadding="0" height="100%" bgcolor="#FFFFFF">
+	<table border="0" width="760" cellspacing="0" cellpadding="0" height="100%" bgcolor="#FFFFFF">
 		<tr>
 			<td>
 			<div align="center">
 				<table border="0" width="100%" height="100%" cellspacing="0" cellpadding="0">
 					<tr>
-						<td align="left" valign="top" height="250" background="images/1.jpg" style="border-bottom: 10px solid #FF9900">
-						<table border="0" width="100%" height="240" cellspacing="0" cellpadding="0">
+						<td align="left" valign="top" height="160" background="images/0.jpg" style="border-bottom: 10px solid #FFC000; ">
+						<table border="0" width="100%" height="150" cellspacing="0" cellpadding="0">
 							<tr>
 								<td align="left" valign="top">
-								<img border="0" src="images/2.png" width="958" height="240"></td>
+								<a href="index.html">
+								<img border="0" src="images/2.png" width="598" height="150"></a></td>
 							</tr>
 						</table>
 						</td>
 					</tr>
 					<tr>
-						<td align="left" width="100%" height="80" bgcolor="#D9F2D0">
-						<b><font color="#FF9900" size="5">&nbsp; </font>
+						<td align="left" width="100%" height="50" bgcolor="#D9F2D0">
+						<b>
 						<font size="5" color="#275317">
-						<!--webbot bot="Navigation" S-Type="sequence" S-Orientation="horizontal" S-Rendering="html" S-Bar="Underlined" S-Btn-Nml="&lt;A HREF=&quot;#URL#&quot; TARGET=&quot;#TARGET#&quot;&gt;#LABEL#&lt;/A&gt;" S-Btn-Sel="&lt;U&gt;#LABEL#&lt;/U&gt;" S-Btn-Sep="&amp;nbsp;" B-Include-Home="FALSE" B-Include-Up="FALSE" U-Page="sid:1001" startspan --><nobr><U>HOME</U></nobr><!--webbot bot="Navigation" i-checksum="59480" endspan --></font></b></td>
+						&nbsp;
+						<!--webbot bot="Navigation" S-Type="sequence" S-Orientation="horizontal" S-Rendering="html" S-Bar="Bars" S-Btn-Nml="&lt;A HREF=&quot;#URL#&quot; TARGET=&quot;#TARGET#&quot; STYLE=&quot;{text-decoration: none;}&quot;&gt;#LABEL#&lt;/A&gt;" S-Btn-Sel="#LABEL#" S-Btn-Sep="&amp;nbsp;|&amp;nbsp;" B-Include-Home="FALSE" B-Include-Up="FALSE" U-Page="sid:1001" startspan --><nobr>HOME</nobr>&nbsp;|&nbsp;<nobr><A HREF="dc.html" TARGET="" STYLE="{text-decoration: none;}">DOCS</A></nobr>&nbsp;|&nbsp;<nobr><A HREF="cm.html" TARGET="" STYLE="{text-decoration: none;}">CONTACT</A></nobr><!--webbot bot="Navigation" i-checksum="64235" endspan --></font></b></td>
 					</tr>
 					<tr>
-						<td align="left" valign="top">&nbsp;</td>
+						<td align="left" valign="top" height="500">
+						<table border="0" width="100%" cellspacing="0" cellpadding="0" height="100%">
+							<tr>
+								<td width="500">
+								<p align="center">
+								<img border="0" src="images/video.gif" width="450" height="337"></td>
+								<td>
+								<p align="center"><b>
+								<font size="4" color="#275317">Latest Release</font></b></p>
+								<p align="center">
+								<a href="https://github.com/KiriKirby/phytozome-go/releases/latest/download/phytozome-go_windows_amd64_wezterm.zip">
+								<img border="0" id="img1" src="images/button76.gif" height="30" width="200" alt="Download" fp-style="fp-btn: Glass Rectangle 4; fp-font: Noto Sans; fp-font-size: 8; fp-transparent: 1; fp-proportional: 0" fp-title="Download" onmouseover="FP_swapImg(1,0,/*id*/'img1',/*url*/'images/button77.gif')" onmouseout="FP_swapImg(0,0,/*id*/'img1',/*url*/'images/button76.gif')" onmousedown="FP_swapImg(1,0,/*id*/'img1',/*url*/'images/button78.gif')" onmouseup="FP_swapImg(0,0,/*id*/'img1',/*url*/'images/button77.gif')"></a></p>
+								<p align="center"><i><font size="1">Windows 
+								Vista x64 and later</font></i></p>
+								<p align="center"><i><font size="1">License: 
+								CPAL 1.0</font></i></p>
+								<hr>
+								<p align="center"><font size="4">
+								<a target="_blank" href="https://github.com/KiriKirby/phytozome-go/releases">
+								<img border="0" id="img2" src="images/buttonBF.gif" height="30" width="200" alt="Release Notes" fp-style="fp-btn: Glass Rectangle 5; fp-font: Noto Sans; fp-font-size: 8; fp-transparent: 1; fp-proportional: 0" fp-title="Release Notes" onmouseover="FP_swapImg(1,0,/*id*/'img2',/*url*/'images/buttonC0.gif')" onmouseout="FP_swapImg(0,0,/*id*/'img2',/*url*/'images/buttonBF.gif')" onmousedown="FP_swapImg(1,0,/*id*/'img2',/*url*/'images/buttonC1.gif')" onmouseup="FP_swapImg(0,0,/*id*/'img2',/*url*/'images/buttonC0.gif')"></a></font></p>
+								<p align="center"><a href="lc.html">
+								<img border="0" id="img3" src="images/button10D.gif" height="30" width="200" alt="View License Terms" fp-style="fp-btn: Glass Rectangle 5; fp-font: Noto Sans; fp-font-size: 8; fp-transparent: 1; fp-proportional: 0" fp-title="View License Terms" onmouseover="FP_swapImg(1,0,/*id*/'img3',/*url*/'images/button10E.gif')" onmouseout="FP_swapImg(0,0,/*id*/'img3',/*url*/'images/button10D.gif')" onmousedown="FP_swapImg(1,0,/*id*/'img3',/*url*/'images/button10F.gif')" onmouseup="FP_swapImg(0,0,/*id*/'img3',/*url*/'images/button10E.gif')"></a></p>
+								<hr>
+								<p align="center"><b><font color="#275317">
+								Explore More</font></b></p>
+								<p align="center"><font color="#275317"><b>
+								<font size="2">(</font></b></font><b><font size="2" color="#275317">Platforms 
+								&amp; Versions)</font></b></p>
+								<p align="center">
+								<a target="_blank" href="https://github.com/KiriKirby/phytozome-go">
+								<img border="0" id="img4" src="images/buttonC2.gif" height="30" width="200" alt="GitHub Repository" fp-style="fp-btn: Glass Rectangle 2; fp-font: Noto Sans; fp-font-size: 8; fp-transparent: 1; fp-proportional: 0" fp-title="GitHub Repository" onmouseover="FP_swapImg(1,0,/*id*/'img4',/*url*/'images/buttonC3.gif')" onmouseout="FP_swapImg(0,0,/*id*/'img4',/*url*/'images/buttonC2.gif')" onmousedown="FP_swapImg(1,0,/*id*/'img4',/*url*/'images/buttonC4.gif')" onmouseup="FP_swapImg(0,0,/*id*/'img4',/*url*/'images/buttonC3.gif')"></a></td>
+							</tr>
+						</table>
+						</td>
 					</tr>
 					<tr>
-						<td align="left" valign="top">&nbsp;</td>
+						<td align="center" bgcolor="#D9F2D0" height="500"><b>
+						<font size="5" color="#275317">News &amp; Changelog</font></b><p>
+						<iframe name="I1" marginwidth="10" marginheight="10" height="350" width="80%" border="0" frameborder="0" src="nac.html">
+						浏览器不支持嵌入式框架，或被配置为不显示嵌入式框架。</iframe></p>
+						<p><font size="4">
+						<a href="https://github.com/KiriKirby/phytozome-go/releases">
+						<img border="0" id="img6" src="images/buttonC5.jpg" height="30" width="200" alt="Release Page" fp-style="fp-btn: Glass Rectangle 4; fp-font: Noto Sans; fp-font-size: 8; fp-proportional: 0" fp-title="Release Page" onmouseover="FP_swapImg(1,0,/*id*/'img6',/*url*/'images/buttonC6.jpg')" onmouseout="FP_swapImg(0,0,/*id*/'img6',/*url*/'images/buttonC5.jpg')" onmousedown="FP_swapImg(1,0,/*id*/'img6',/*url*/'images/buttonC7.jpg')" onmouseup="FP_swapImg(0,0,/*id*/'img6',/*url*/'images/buttonC6.jpg')"></a></font></td>
+					</tr>
+					<tr>
+						<td align="left" valign="top">
+						<table border="0" width="100%" cellspacing="0" cellpadding="0" height="100%">
+							<tr>
+								<td width="20">&nbsp;</td>
+								<td align="left" valign="top">&nbsp;<p><b>
+								<font size="5" color="#275317">Learning &amp; 
+								Documentation</font></b></p>
+								<p>Find guides, tutorials, and documentation for 
+								using Phytozome-Go on Windows.</p>
+								<p>
+								<img border="0" id="img7" src="images/buttonB0.gif" height="30" width="250" alt="Documentation Center" onmouseover="FP_swapImg(1,0,/*id*/'img7',/*url*/'images/buttonB1.gif')" onmouseout="FP_swapImg(0,0,/*id*/'img7',/*url*/'images/buttonB0.gif')" onmousedown="FP_swapImg(1,0,/*id*/'img7',/*url*/'images/buttonB2.gif')" onmouseup="FP_swapImg(0,0,/*id*/'img7',/*url*/'images/buttonB1.gif')" fp-style="fp-btn: Glass Rectangle 5; fp-font: Noto Sans; fp-font-size: 8; fp-transparent: 1; fp-proportional: 0" fp-title="Documentation Center"></p>
+								<p>&nbsp;</p>
+								<p><b><font size="5" color="#275317">Contact &amp; 
+								Contribute</font></b></p>
+								<p>Get in touch with the developer, submit 
+								feature requests, report bugs, or contribute 
+								code through GitHub.</p>
+								<p><font size="4"><a href="cm.html">
+								<img border="0" id="img9" src="images/buttonB3.gif" height="30" width="200" alt="Contact Me" fp-style="fp-btn: Glass Rectangle 5; fp-font: Noto Sans; fp-font-size: 8; fp-transparent: 1; fp-proportional: 0" fp-title="Contact Me" onmouseover="FP_swapImg(1,0,/*id*/'img9',/*url*/'images/buttonB4.gif')" onmouseout="FP_swapImg(0,0,/*id*/'img9',/*url*/'images/buttonB3.gif')" onmousedown="FP_swapImg(1,0,/*id*/'img9',/*url*/'images/buttonB5.gif')" onmouseup="FP_swapImg(0,0,/*id*/'img9',/*url*/'images/buttonB4.gif')"></a>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+								<a target="_blank" href="https://github.com/KiriKirby/phytozome-go/issues">
+								<img border="0" id="img10" src="images/buttonB6.gif" height="30" width="300" alt="Report an Issue on GitHub" fp-style="fp-btn: Glass Rectangle 2; fp-font: Noto Sans; fp-font-size: 8; fp-transparent: 1; fp-proportional: 0" fp-title="Report an Issue on GitHub" onmouseover="FP_swapImg(1,0,/*id*/'img10',/*url*/'images/buttonB7.gif')" onmouseout="FP_swapImg(0,0,/*id*/'img10',/*url*/'images/buttonB6.gif')" onmousedown="FP_swapImg(1,0,/*id*/'img10',/*url*/'images/buttonB8.gif')" onmouseup="FP_swapImg(0,0,/*id*/'img10',/*url*/'images/buttonB7.gif')"></a></font></p>
+								<p>&nbsp;</td>
+							</tr>
+						</table>
+						</td>
+					</tr>
+					<tr>
+						<td align="left" height="100" bgcolor="#275317" style="border-top: 10px solid #FFC000">
+						<p align="center"><font size="2" color="#FFFFFF">Free 
+						Software, Free Society!&nbsp; (<a target="_blank" href="https://www.gnu.org/gnu/manifesto.en.html"><font color="#FFFFFF">The 
+						GNU Manifesto</font></a>)</font></p>
+						<p align="center"><font color="#FFFFFF" size="2">© 2026 
+						Wang Shuyang (KiriKirby). All Rights Reserved.</font></td>
 					</tr>
 				</table>
 			</div>

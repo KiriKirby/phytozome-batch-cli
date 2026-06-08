@@ -622,7 +622,8 @@ This file tracks the intended shape of `phytozome GO` and its release packaging,
 - Do not reuse user-provided identifiers, species combinations, pathway panels, or research-specific examples in public documentation. When writing README examples, use fresh public examples that did not come from the user's prior workflow.
 - Keep screenshots and README images in a stable repository location such as `docs/images/`.
 - Whenever output paths, cache paths, batch behavior, or recovery commands change, update the README and this file in the same change.
-- Treat the repository-root `pages/` directory as protected user workspace content managed outside this project. Do not delete, clean, rewrite, move, or auto-generate files under `pages/`. If the user wants a normal repository upload/release push, include `pages/` as-is without trying to sanitize or restructure it, and never treat it as disposable build output.
+- Treat the repository-root `pages/` directory as first-class release content. Do not delete, clean, sanitize, or filter it during build/release work; publish the entire `pages/` tree as-is whenever repository changes are uploaded.
+- `pages/nac.html` is the embedded website changelog page. Every release publish must sync GitHub release history into that page with the same flat paragraph format as the existing `test` sample: newest release first, every title/body line rendered with the same `<p>...</p>` style, and exactly one blank separator line between release entries.
 - Release packaging rules:
   - use the fixed release build template instead of hand-running ad hoc build commands:
     - Codex must directly use `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-codex.ps1`
@@ -633,6 +634,8 @@ This file tracks the intended shape of `phytozome GO` and its release packaging,
   - local development builds/tests must stay Windows-only; do not reintroduce Linux/macOS dev helper build entrypoints
   - do not write casual development executables into the repository root; keep generated build/test artifacts under `bin\`
   - `scripts\build-release.ps1` owns clearing `bin/`, rebuilding all supported release artifacts, validating package contents, extracting/verifying Windows icons, and writing `bin\SHA256SUMS.txt`
+  - release publishing must also update `pages/nac.html` from GitHub release notes before packaging/pushing, so the embedded website changelog stays in sync with released titles and bodies
+  - release publishing must not exclude or special-case other `pages/` files; upload the whole `pages/` directory together with normal repository changes
   - release-time WezTerm asset downloads must tolerate transient upstream CDN/GitHub failures such as HTTP `504`; keep retry/backoff logic in the packaging path instead of treating one timeout as a hard release failure
   - keep release assets aligned with the actual executable names documented in the README
   - all desktop release assets should use the bundled `WezTerm` runtime model instead of shipping bare `linux` or `darwin` binaries

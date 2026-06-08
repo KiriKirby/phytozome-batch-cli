@@ -80,8 +80,37 @@ try {
         Invoke-Checked "go build ./..." { go build ./... }
     }
 
+    if ([string]::IsNullOrWhiteSpace($ReleaseTitle)) {
+        $ReleaseTitle = "phytozome GO $BuildVersion"
+    }
+    if ([string]::IsNullOrWhiteSpace($ReleaseNotes)) {
+        $ReleaseNotes = @"
+Release $BuildVersion
+
+Validation:
+- go test ./...
+- go vet ./...
+- go build ./...
+- scripts\build-release.ps1
+
+Assets:
+- phytozome-go_windows_amd64_wezterm.zip
+- phytozome-go_linux_amd64_wezterm.tar.gz
+- phytozome-go_macos_amd64_wezterm.tar.gz
+- phytozome-go_macos_arm64_wezterm.tar.gz
+- SHA256SUMS.txt
+
+Website:
+- pages/nac.html updated with the latest release log at the top
+"@
+    }
+
     Invoke-Checked "Reactree tree viewer assets" {
         powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-tree-viewer.ps1
+    }
+
+    Invoke-Checked "Release notes page sync" {
+        powershell -NoProfile -ExecutionPolicy Bypass -File scripts\sync-release-notes-page.ps1 -PendingTitle $ReleaseTitle -PendingBody $ReleaseNotes -PendingTag $BuildVersion
     }
 
     Invoke-Checked "Windows WezTerm package" {
@@ -219,28 +248,6 @@ try {
         }
         Invoke-Checked "git push origin $BuildVersion" {
             git push origin $BuildVersion
-        }
-
-        if ([string]::IsNullOrWhiteSpace($ReleaseTitle)) {
-            $ReleaseTitle = "phytozome GO $BuildVersion"
-        }
-        if ([string]::IsNullOrWhiteSpace($ReleaseNotes)) {
-            $ReleaseNotes = @"
-Release $BuildVersion
-
-Validation:
-- go test ./...
-- go vet ./...
-- go build ./...
-- scripts\build-release.ps1
-
-Assets:
-- phytozome-go_windows_amd64_wezterm.zip
-- phytozome-go_linux_amd64_wezterm.tar.gz
-- phytozome-go_macos_amd64_wezterm.tar.gz
-- phytozome-go_macos_arm64_wezterm.tar.gz
-- SHA256SUMS.txt
-"@
         }
 
         Invoke-Checked "GitHub release $BuildVersion" {
