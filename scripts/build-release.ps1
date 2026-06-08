@@ -65,6 +65,9 @@ function Get-DirtyWorktreeLines {
     )
 }
 
+$websiteRoot = "docs"
+$websiteChangelogPath = "$websiteRoot/nac.html"
+
 function Get-StatusPath {
     param(
         [string]$StatusLine
@@ -76,7 +79,7 @@ function Get-StatusPath {
     return (($StatusLine -replace '^[ MADRCU?!]{1,2}\s+', '').Trim())
 }
 
-function Test-PagesOnlyDirty {
+function Test-WebsiteOnlyDirty {
     param(
         [string[]]$DirtyLines
     )
@@ -90,26 +93,26 @@ function Test-PagesOnlyDirty {
         if ([string]::IsNullOrWhiteSpace($path)) {
             return $false
         }
-        if ($path -notmatch '^pages([\\/]|$)') {
+        if ($path -notmatch '^docs([\\/]|$)') {
             return $false
         }
     }
     return $true
 }
 
-function Commit-DirtyPagesIfAny {
+function Commit-DirtyWebsiteIfAny {
     param(
         [string]$Label,
         [string]$CommitMessage
     )
 
     $dirty = Get-DirtyWorktreeLines
-    if (-not (Test-PagesOnlyDirty $dirty)) {
+    if (-not (Test-WebsiteOnlyDirty $dirty)) {
         return $false
     }
 
     Invoke-Checked $Label {
-        git add --all -- pages
+        git add --all -- docs
         git commit -m $CommitMessage
     }
     return $true
@@ -173,7 +176,7 @@ Assets:
 - SHA256SUMS.txt
 
 Website:
-- pages/nac.html updated with the latest release log at the top
+- docs/nac.html updated with the latest release log at the top
 "@
     }
 
@@ -186,7 +189,7 @@ Website:
     }
 
     if ($Publish) {
-        [void](Commit-DirtyPagesIfAny "Commit website changelog sync" "Sync website changelog for $BuildVersion")
+        [void](Commit-DirtyWebsiteIfAny "Commit website changelog sync" "Sync website changelog for $BuildVersion")
     }
 
     Invoke-Checked "Windows WezTerm package" {
@@ -294,7 +297,7 @@ Website:
     $hashLines | Set-Content -LiteralPath "bin\SHA256SUMS.txt" -Encoding ASCII
 
     if ($Publish) {
-        if (-not (Commit-DirtyPagesIfAny "Commit pages updates after packaging" "Update website pages for $BuildVersion")) {
+        if (-not (Commit-DirtyWebsiteIfAny "Commit website pages after packaging" "Update website pages for $BuildVersion")) {
             Assert-CleanWorktree "Refusing to publish because the worktree changed after packaging. Commit or stash changes first."
         }
         Assert-CleanWorktree "Refusing to publish because the worktree changed after packaging. Commit or stash changes first."

@@ -14,8 +14,8 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$targetPath = Join-Path $repoRoot "pages\nac.html"
-$metaPath = Join-Path $repoRoot "pages\_vti_cnf\nac.html"
+$targetPath = Join-Path $repoRoot "docs\nac.html"
+$metaPath = Join-Path $repoRoot "docs\_vti_cnf\nac.html"
 
 if (-not (Test-Path -LiteralPath $targetPath -PathType Leaf)) {
     throw "Release notes page not found: $targetPath"

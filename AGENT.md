@@ -622,9 +622,9 @@ This file tracks the intended shape of `phytozome GO` and its release packaging,
 - Do not reuse user-provided identifiers, species combinations, pathway panels, or research-specific examples in public documentation. When writing README examples, use fresh public examples that did not come from the user's prior workflow.
 - Keep screenshots and README images in a stable repository location such as `docs/images/`.
 - Whenever output paths, cache paths, batch behavior, or recovery commands change, update the README and this file in the same change.
-- Treat the repository-root `pages/` directory as first-class release content. Do not delete, clean, sanitize, filter, or specially whitelist it during build/release work; publish the entire `pages/` tree as-is whenever repository changes are uploaded, and keep release publishes subject to the same clean-worktree requirement as the rest of the repository.
-- `pages/nac.html` is the embedded website changelog page. Every release publish must sync GitHub release history into that page with the same flat paragraph format as the existing `test` sample: newest release first, every title/body line rendered with the same `<p>...</p>` style, and exactly one blank separator line between release entries.
-- The website favicon should use the small product icon variant. Keep `pages/favicon.png` aligned with `docs/logo3small.png`, and keep the homepage pointing at that favicon.
+- Treat the repository-root `docs/` website files as first-class published site content. Do not delete, clean, sanitize, filter, or specially whitelist the website subtree during build/release work; keep the moved FrontPage-style site files under `docs/` together with the rest of the documentation tree, and keep release publishes subject to the same clean-worktree requirement as the rest of the repository.
+- `docs/nac.html` is the embedded website changelog page. Every release publish must sync GitHub release history into that page with the same flat paragraph format as the existing `test` sample: newest release first, every title/body line rendered with the same `<p>...</p>` style, and exactly one blank separator line between release entries.
+- The website favicon should use the small product icon variant. Keep `docs/favicon.png` aligned with `docs/logo3small.png`, and keep the homepage pointing at that favicon.
 - Release packaging rules:
   - use the fixed release build template instead of hand-running ad hoc build commands:
     - Codex must directly use `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-codex.ps1`
@@ -635,8 +635,8 @@ This file tracks the intended shape of `phytozome GO` and its release packaging,
   - local development builds/tests must stay Windows-only; do not reintroduce Linux/macOS dev helper build entrypoints
   - do not write casual development executables into the repository root; keep generated build/test artifacts under `bin\`
   - `scripts\build-release.ps1` owns clearing `bin/`, rebuilding all supported release artifacts, validating package contents, extracting/verifying Windows icons, and writing `bin\SHA256SUMS.txt`
-  - release publishing must also update `pages/nac.html` from GitHub release notes before packaging/pushing, so the embedded website changelog stays in sync with released titles and bodies
-  - release publishing must not exclude or special-case other `pages/` files; upload the whole `pages/` directory together with normal repository changes
+  - release publishing must also update `docs/nac.html` from GitHub release notes before packaging/pushing, so the embedded website changelog stays in sync with released titles and bodies
+  - release publishing must not exclude or special-case the moved website files under `docs/`; upload the whole website subtree together with normal repository changes
   - release-time WezTerm asset downloads must tolerate transient upstream CDN/GitHub failures such as HTTP `504`; keep retry/backoff logic in the packaging path instead of treating one timeout as a hard release failure
   - keep release assets aligned with the actual executable names documented in the README
   - all desktop release assets should use the bundled `WezTerm` runtime model instead of shipping bare `linux` or `darwin` binaries

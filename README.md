@@ -103,6 +103,7 @@ What these scripts do:
 
 - `scripts\build-codex.ps1` is the normal local build entrypoint; without `-Publish` it runs Windows-only build/test work and writes development artifacts only under `bin\`
 - `scripts\build-codex.ps1 -Publish` is the release entrypoint and forwards to the full cross-platform `scripts\build-release.ps1`
+- The published project website now lives directly under `docs\`; the embedded changelog page is `docs\nac.html` and the site favicon is `docs\favicon.png`
 - `scripts\build-windows-dev.ps1` is the underlying Windows-only development build/test helper
 - `scripts\prepare-windows-wezterm.ps1` downloads and prepares the selected WezTerm Windows runtime under `bin\tooling\windows-wezterm\`
 - `scripts\package-windows-wezterm.ps1` stages a distributable bundle in `bin\phytozome-go_windows_amd64_wezterm\`

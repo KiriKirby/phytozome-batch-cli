@@ -7,13 +7,27 @@
 
 <body bgcolor="#FFFFFF">
 
+<p>phytozome GO website docs-root migration</p>
+<p>Website root moved from pages to docs.</p>
+<p>Changes:</p>
+<p>- Moved the full website subtree from pages/ into docs/ so the site can be published directly from the docs root.</p>
+<p>- Updated the embedded website changelog path to docs/nac.html and kept the same newest-first flat paragraph format.</p>
+<p>- Updated the website favicon path to docs/favicon.png while keeping it aligned with docs/logo3small.png.</p>
+<p>- Updated release/build website-sync rules so future changelog updates target docs/ instead of the old pages/ tree.</p>
+<p>Validation:</p>
+<p>- path sync and site file relocation verified in repository</p>
+<p>- scripts and agent rules updated to target docs/ website files</p>
+<p>Website:</p>
+<p>- docs/nac.html now serves as the website changelog page</p>
+<p>- docs/favicon.png now serves as the website favicon asset</p>
+<p>&nbsp;</p>
 <p>phytozome GO update reliability and website changelog sync</p>
 <p>Update reliability + website changelog sync.</p>
 <p>Changes:</p>
 <p>- Hardened packaged self-update verification so launcher, cleaner, main binary, and Windows WezTerm runtime must all match staged hash/size/mtime before restart is treated as success.</p>
 <p>- Update failures now report the concrete reason instead of silently falling through after the prompt.</p>
-<p>- Release publishing now syncs pages/nac.html from GitHub release history and commits the website changelog update automatically before creating the release.</p>
-<p>- Release publishes now treat the whole repository, including pages/, as normal first-class content with the same clean-worktree rules.</p>
+<p>- Release publishing now syncs docs/nac.html from GitHub release history and commits the website changelog update automatically before creating the release.</p>
+<p>- Release publishes now treat the whole repository website subtree under docs/ as normal first-class content with the same clean-worktree rules.</p>
 <p>- The website favicon now uses the small product logo variant.</p>
 <p>Validation:</p>
 <p>- go test ./...</p>
@@ -27,8 +41,8 @@
 <p>- phytozome-go_macos_arm64_wezterm.tar.gz</p>
 <p>- SHA256SUMS.txt</p>
 <p>Website:</p>
-<p>- pages/nac.html updated with this release at the top and full historical release notes kept newest-first</p>
-<p>- pages/favicon.png now uses the small logo asset</p>
+<p>- docs/nac.html updated with this release at the top and full historical release notes kept newest-first</p>
+<p>- docs/favicon.png now uses the small logo asset</p>
 <p>&nbsp;</p>
 <p>phytozome GO v20260608T121500Z</p>
 <p>Release v20260608T121500Z</p>
