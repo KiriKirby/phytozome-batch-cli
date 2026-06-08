@@ -624,6 +624,7 @@ This file tracks the intended shape of `phytozome GO` and its release packaging,
 - Whenever output paths, cache paths, batch behavior, or recovery commands change, update the README and this file in the same change.
 - Treat the repository-root `pages/` directory as first-class release content. Do not delete, clean, sanitize, filter, or specially whitelist it during build/release work; publish the entire `pages/` tree as-is whenever repository changes are uploaded, and keep release publishes subject to the same clean-worktree requirement as the rest of the repository.
 - `pages/nac.html` is the embedded website changelog page. Every release publish must sync GitHub release history into that page with the same flat paragraph format as the existing `test` sample: newest release first, every title/body line rendered with the same `<p>...</p>` style, and exactly one blank separator line between release entries.
+- The website favicon should use the small product icon variant. Keep `pages/favicon.png` aligned with `docs/logo3small.png`, and keep the homepage pointing at that favicon.
 - Release packaging rules:
   - use the fixed release build template instead of hand-running ad hoc build commands:
     - Codex must directly use `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-codex.ps1`

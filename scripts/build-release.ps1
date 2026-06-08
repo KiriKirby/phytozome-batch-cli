@@ -65,6 +65,56 @@ function Get-DirtyWorktreeLines {
     )
 }
 
+function Get-StatusPath {
+    param(
+        [string]$StatusLine
+    )
+
+    if ([string]::IsNullOrWhiteSpace($StatusLine)) {
+        return ""
+    }
+    return (($StatusLine -replace '^[ MADRCU?!]{1,2}\s+', '').Trim())
+}
+
+function Test-PagesOnlyDirty {
+    param(
+        [string[]]$DirtyLines
+    )
+
+    if ($null -eq $DirtyLines -or $DirtyLines.Count -eq 0) {
+        return $false
+    }
+
+    foreach ($line in $DirtyLines) {
+        $path = Get-StatusPath $line
+        if ([string]::IsNullOrWhiteSpace($path)) {
+            return $false
+        }
+        if ($path -notmatch '^pages([\\/]|$)') {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Commit-DirtyPagesIfAny {
+    param(
+        [string]$Label,
+        [string]$CommitMessage
+    )
+
+    $dirty = Get-DirtyWorktreeLines
+    if (-not (Test-PagesOnlyDirty $dirty)) {
+        return $false
+    }
+
+    Invoke-Checked $Label {
+        git add --all -- pages
+        git commit -m $CommitMessage
+    }
+    return $true
+}
+
 function Assert-CleanWorktree {
     param(
         [string]$Message
@@ -136,16 +186,7 @@ Website:
     }
 
     if ($Publish) {
-        $pageStatus = @(
-            git status --short -- pages/nac.html pages/_vti_cnf/nac.html |
-                Where-Object { -not [string]::IsNullOrWhiteSpace($_.Trim()) }
-        )
-        if ($pageStatus.Count -gt 0) {
-            Invoke-Checked "Commit website changelog sync" {
-                git add -- pages/nac.html pages/_vti_cnf/nac.html
-                git commit -m "Sync website changelog for $BuildVersion"
-            }
-        }
+        [void](Commit-DirtyPagesIfAny "Commit website changelog sync" "Sync website changelog for $BuildVersion")
     }
 
     Invoke-Checked "Windows WezTerm package" {
@@ -253,6 +294,9 @@ Website:
     $hashLines | Set-Content -LiteralPath "bin\SHA256SUMS.txt" -Encoding ASCII
 
     if ($Publish) {
+        if (-not (Commit-DirtyPagesIfAny "Commit pages updates after packaging" "Update website pages for $BuildVersion")) {
+            Assert-CleanWorktree "Refusing to publish because the worktree changed after packaging. Commit or stash changes first."
+        }
         Assert-CleanWorktree "Refusing to publish because the worktree changed after packaging. Commit or stash changes first."
 
         $branch = (git branch --show-current).Trim()
