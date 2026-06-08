@@ -625,14 +625,12 @@ This file tracks the intended shape of `phytozome GO` and its release packaging,
 - Release packaging rules:
   - use the fixed release build template instead of hand-running ad hoc build commands:
     - Codex must directly use `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-codex.ps1`
-    - local artifact build: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-codex.ps1`
+    - local artifact build/test: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-codex.ps1`
     - GitHub release build after committing the intended changes: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-codex.ps1 -Publish`
     - optional explicit version format: `-BuildVersion vYYYYMMDDTHHMMSSZ`
-  - `scripts\build-codex.ps1` is the Codex-facing entrypoint and must stay as a thin wrapper around `scripts\build-release.ps1`; do not make Codex call scattered per-platform packaging commands directly for normal release builds
-  - single-platform development bundle helpers must stay symmetric across platforms:
-    - Windows: `scripts\build-windows-wezterm-dev.ps1`
-    - Linux: `scripts\build-linux-wezterm-dev.ps1`
-    - macOS: `scripts\build-macos-wezterm-dev.ps1`
+  - `scripts\build-codex.ps1` is the only normal Codex-facing build entrypoint: without `-Publish` it must run the Windows-only development build/test flow and write artifacts only under `bin\`; with `-Publish` it may forward to the full cross-platform release build
+  - local development builds/tests must stay Windows-only; do not reintroduce Linux/macOS dev helper build entrypoints
+  - do not write casual development executables into the repository root; keep generated build/test artifacts under `bin\`
   - `scripts\build-release.ps1` owns clearing `bin/`, rebuilding all supported release artifacts, validating package contents, extracting/verifying Windows icons, and writing `bin\SHA256SUMS.txt`
   - keep release assets aligned with the actual executable names documented in the README
   - all desktop release assets should use the bundled `WezTerm` runtime model instead of shipping bare `linux` or `darwin` binaries
@@ -642,9 +640,9 @@ This file tracks the intended shape of `phytozome GO` and its release packaging,
   - Linux/macOS release bundles must not claim bundled PHgo runtime support. Those platforms should report system-tree unsupported until matching native runtime builds are intentionally added.
   - If future Linux/macOS support is explicitly requested, those runtime folders must contain real PHgo runtime executables built on matching platforms or with a configured Lazarus/FPC cross toolchain; never use MUSCLE-only folders, MEGA-CC binaries, installed MEGA files, or renamed placeholders to satisfy release validation.
   - release builds must rebuild and sync the Vite/React `tree-viewer` assets before packaging so the embedded Reactree viewer is current
-  - Windows WezTerm bundles must apply `docs/logo2.png` to both the launcher executable icon and the embedded WezTerm window executable icon as executable resources only
-  - do not package source logo image files in release zips; specifically, `docs/logo.png`, `docs/logo2.png`, `logo.png`, `logo2.png`, and `phytozome-go-window-icon.png` must not appear in `phytozome-go_windows_amd64_wezterm.zip`
-  - the README lead image must use `docs/logo.png`
+  - Windows WezTerm bundles must build one `.ico` stack from `docs/logo3small.png` and `docs/logo3large.png`: Windows shell small/list/details slots (`16`, `20`, `24`, `32`, `40`) must use `docs/logo3small.png`, while larger icon slots (`48`, `64`, `128`, `256`) use `docs/logo3large.png`; apply that `.ico` to both the launcher executable icon and the embedded WezTerm window executable icon as executable resources only
+  - do not package source logo image files in release zips; specifically, `docs/logo.png`, `docs/logo2.png`, `docs/logo3large.png`, `docs/logo3small.png`, `logo.png`, `logo2.png`, `logo3large.png`, `logo3small.png`, and `phytozome-go-window-icon.png` must not appear in `phytozome-go_windows_amd64_wezterm.zip`
+  - the README lead image must use `docs/logo3large.png`
   - prefer publishing GitHub releases with explicit release notes that summarize user-visible changes and supported platforms
 
 ## Current workflows

@@ -33,9 +33,6 @@ if ($SkipVet) {
 if ($SkipBuildCheck) {
     $forward.SkipBuildCheck = $true
 }
-if ($Publish) {
-    $forward.Publish = $true
-}
 if (-not [string]::IsNullOrWhiteSpace($ReleaseTitle)) {
     $forward.ReleaseTitle = $ReleaseTitle
 }
@@ -43,4 +40,9 @@ if (-not [string]::IsNullOrWhiteSpace($ReleaseNotes)) {
     $forward.ReleaseNotes = $ReleaseNotes
 }
 
-& (Join-Path $PSScriptRoot "build-release.ps1") @forward
+if ($Publish) {
+    $forward.Publish = $true
+    & (Join-Path $PSScriptRoot "build-release.ps1") @forward
+} else {
+    & (Join-Path $PSScriptRoot "build-windows-dev.ps1") @forward
+}

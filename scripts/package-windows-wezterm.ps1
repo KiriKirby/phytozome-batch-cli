@@ -42,7 +42,7 @@ Copy-Item -Path (Join-Path $runtimeSourceDir "*") -Destination $bundleDir -Force
 Remove-Item -LiteralPath (Join-Path $bundleDir "mesa") -Recurse -Force -ErrorAction SilentlyContinue
 Write-PhytozomeWezTermConfig -Path (Join-Path $bundleDir "wezterm.lua") -Version $BuildVersion
 Remove-Item -LiteralPath (Join-Path $bundleDir "phytozome-go-window-icon.png") -Force -ErrorAction SilentlyContinue
-& (Join-Path $PSScriptRoot "update-windows-icon.ps1") -Source "docs\logo2.png"
+& (Join-Path $PSScriptRoot "update-windows-icon.ps1") -SmallSource "docs\logo3small.png" -LargeSource "docs\logo3large.png"
 
 Push-Location $repoRoot
 try {

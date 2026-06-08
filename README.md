@@ -7,7 +7,7 @@
 
 The program is designed for real biological work where you often need to move from one known gene or protein to a shortlist of homologs, review rows interactively, and export both a table and peptide sequences without hand-copying between websites.
 
-![phytozome GO logo](docs/logo.png)
+![phytozome GO logo](docs/logo3large.png)
 
 ## What This Tool Is For
 
@@ -86,20 +86,14 @@ The Windows development flow can use the same bundled `WezTerm` terminal client 
 Useful commands:
 
 ```powershell
-# Build the Windows WezTerm bundle without zipping it
-powershell -ExecutionPolicy Bypass -File .\scripts\build-windows-wezterm-dev.ps1
-
-# Build the Linux WezTerm bundle without archiving it
-powershell -ExecutionPolicy Bypass -File .\scripts\build-linux-wezterm-dev.ps1
-
-# Build the macOS WezTerm bundle without archiving it
-powershell -ExecutionPolicy Bypass -File .\scripts\build-macos-wezterm-dev.ps1 -GOARCH arm64
-
-# Package the Windows WezTerm bundle and zip it
-powershell -ExecutionPolicy Bypass -File .\scripts\package-windows-wezterm.ps1 -BuildVersion dev
-
-# Build every release bundle through the same Codex/release entrypoint
+# Run the normal local Windows-only build/test flow into bin\
 powershell -ExecutionPolicy Bypass -File .\scripts\build-codex.ps1
+
+# Run the underlying Windows-only dev bundle helper directly
+powershell -ExecutionPolicy Bypass -File .\scripts\build-windows-dev.ps1
+
+# Build every release bundle only for publishing
+powershell -ExecutionPolicy Bypass -File .\scripts\build-codex.ps1 -Publish
 
 # Launch the debug bundle in the bundled WezTerm terminal
 powershell -ExecutionPolicy Bypass -File .\scripts\run-wizard-external.ps1
@@ -107,14 +101,15 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-wizard-external.ps1
 
 What these scripts do:
 
-- `scripts\build-codex.ps1` is the Codex-facing wrapper for the full cross-platform release build and forwards to `scripts\build-release.ps1`
-- `scripts\build-linux-wezterm-dev.ps1` and `scripts\build-macos-wezterm-dev.ps1` mirror the Windows dev helper pattern for unarchived single-platform bundle staging
+- `scripts\build-codex.ps1` is the normal local build entrypoint; without `-Publish` it runs Windows-only build/test work and writes development artifacts only under `bin\`
+- `scripts\build-codex.ps1 -Publish` is the release entrypoint and forwards to the full cross-platform `scripts\build-release.ps1`
+- `scripts\build-windows-dev.ps1` is the underlying Windows-only development build/test helper
 - `scripts\prepare-windows-wezterm.ps1` downloads and prepares the selected WezTerm Windows runtime under `bin\tooling\windows-wezterm\`
 - `scripts\package-windows-wezterm.ps1` stages a distributable bundle in `bin\phytozome-go_windows_amd64_wezterm\`
 - `scripts\run-wizard-external.ps1` starts the bundled GUI launcher, which opens the cache cleaner first; the cleaner then opens `phytozome-go.bin` in a fresh tab and exits
 - `cmd\phytozome-go-winlauncher` builds the Windows GUI launcher used by that bundle
 
-This keeps Windows debugging closer to the real release environment, including the newer terminal client and its bundled configuration.
+Normal development now stays Windows-only and keeps generated build/test artifacts in `bin\`. Full cross-platform packaging is reserved for release publishing.
 
 ## Files The Program Creates
 

@@ -110,7 +110,7 @@ try {
     if ($rootExeEntries.Count -ne 1 -or $rootExeEntries[0] -ne "phytozome-go.exe") {
         throw "Windows zip must contain exactly one root .exe (phytozome-go.exe). Found: $($rootExeEntries -join ', ')"
     }
-    foreach ($forbidden in @("docs/logo.png", "docs/logo2.png", "logo.png", "logo2.png", "phytozome-go-window-icon.png")) {
+    foreach ($forbidden in @("docs/logo.png", "docs/logo2.png", "docs/logo3large.png", "docs/logo3small.png", "logo.png", "logo2.png", "logo3large.png", "logo3small.png", "phytozome-go-window-icon.png")) {
         if ($entries -contains $forbidden) {
             throw "Windows zip must not package logo image file: $forbidden"
         }

@@ -6,20 +6,25 @@
 # wangsychn. All Rights Reserved. Contributor(s): .
 
 param(
-    [string]$Source = "docs\logo2.png"
+    [string]$SmallSource = "docs\logo3small.png",
+    [string]$LargeSource = "docs\logo3large.png"
 )
 
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$sourcePath = Join-Path $repoRoot $Source
+$smallSourcePath = Join-Path $repoRoot $SmallSource
+$largeSourcePath = Join-Path $repoRoot $LargeSource
 $launcherDir = Join-Path $repoRoot "cmd\phytozome-go-winlauncher"
 $iconPath = Join-Path $launcherDir "phytozome-go.ico"
 $sysoPath = Join-Path $launcherDir "rsrc_windows_amd64.syso"
 $toolBinDir = Join-Path $repoRoot "bin\tooling\gobin"
 
-if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
-    throw "Icon source not found: $sourcePath"
+if (-not (Test-Path -LiteralPath $smallSourcePath -PathType Leaf)) {
+    throw "Small icon source not found: $smallSourcePath"
+}
+if (-not (Test-Path -LiteralPath $largeSourcePath -PathType Leaf)) {
+    throw "Large icon source not found: $largeSourcePath"
 }
 
 Add-Type -AssemblyName System.Drawing
@@ -100,17 +105,21 @@ function Write-UInt32LE {
     $Writer.Write([uint32]$Value)
 }
 
-$sizes = @(16, 24, 32, 48, 64, 128, 256)
-$image = [System.Drawing.Image]::FromFile($sourcePath)
+$smallSizes = @(16, 20, 24, 32, 40)
+$sizes = @(16, 20, 24, 32, 40, 48, 64, 128, 256)
+$smallImage = [System.Drawing.Image]::FromFile($smallSourcePath)
+$largeImage = [System.Drawing.Image]::FromFile($largeSourcePath)
 try {
     $entries = foreach ($size in $sizes) {
+        $sourceImage = if ($smallSizes -contains $size) { $smallImage } else { $largeImage }
         [pscustomobject]@{
             Size = $size
-            Bytes = New-IconPngBytes -SourceImage $image -Size $size
+            Bytes = New-IconPngBytes -SourceImage $sourceImage -Size $size
         }
     }
 } finally {
-    $image.Dispose()
+    $smallImage.Dispose()
+    $largeImage.Dispose()
 }
 
 $iconStream = New-Object System.IO.MemoryStream
