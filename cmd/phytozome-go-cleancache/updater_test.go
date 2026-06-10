@@ -132,7 +132,7 @@ func TestMacInstallRootFromExec(t *testing.T) {
 	if err != nil {
 		t.Fatalf("updateAssetSpecFor returned error: %v", err)
 	}
-	cleanerPath := filepath.Join("/Applications", "phytozome GO.app", "Contents", "MacOS", "phytozome-go-cleancache.bin")
+	cleanerPath := filepath.Join("/Applications", "phytozome GO.app", "Contents", "MacOS", "phgohelper.bin")
 	got, err := spec.InstallRootFromExec(cleanerPath)
 	if err != nil {
 		t.Fatalf("InstallRootFromExec returned error: %v", err)
@@ -148,7 +148,7 @@ func TestBuildPowerShellUpdaterScriptOmitsEmptyArgumentList(t *testing.T) {
 		InstallRoot:  `C:\bundle`,
 		StageDir:     `C:\bundle.update-1`,
 		RelaunchPath: `C:\bundle\phytozome-go.exe`,
-		Spec:         updateAssetSpec{OutputRelative: "output", VerifyRelative: []string{"phytozome-go.exe", "phytozome-go-cleancache.bin"}},
+		Spec:         updateAssetSpec{OutputRelative: "output", VerifyRelative: []string{"phytozome-go.exe", "phgohelper.bin"}},
 	}
 	script := buildPowerShellUpdaterScript(plan, nil)
 	if strings.Contains(script, "-ArgumentList @()") {
@@ -160,7 +160,7 @@ func TestBuildPowerShellUpdaterScriptOmitsEmptyArgumentList(t *testing.T) {
 	if !strings.Contains(script, "Copy-PreservedOutputToStage") || !strings.Contains(script, "$OutputRelative = 'output'") {
 		t.Fatalf("buildPowerShellUpdaterScript missing output preservation:\n%s", script)
 	}
-	if !strings.Contains(script, "Assert-KeyFilesUpdated") || !strings.Contains(script, "$VerifyRelative = @('phytozome-go.exe', 'phytozome-go-cleancache.bin')") {
+	if !strings.Contains(script, "Assert-KeyFilesUpdated") || !strings.Contains(script, "$VerifyRelative = @('phytozome-go.exe', 'phgohelper.bin')") {
 		t.Fatalf("buildPowerShellUpdaterScript missing key-file verification:\n%s", script)
 	}
 	if !strings.Contains(script, lastUpdateErrorEnv) || !strings.Contains(script, "launching after failed update") || !strings.Contains(script, "[Environment]::SetEnvironmentVariable($LastUpdateErrorEnvName, $LastUpdateError, 'Process')") {
@@ -173,7 +173,7 @@ func TestBuildPowerShellUpdaterScriptIncludesArgumentsWhenPresent(t *testing.T) 
 		InstallRoot:  `C:\bundle`,
 		StageDir:     `C:\bundle.update-1`,
 		RelaunchPath: `C:\bundle\phytozome-go.exe`,
-		Spec:         updateAssetSpec{OutputRelative: "output", VerifyRelative: []string{"phytozome-go.exe", "phytozome-go-cleancache.bin"}},
+		Spec:         updateAssetSpec{OutputRelative: "output", VerifyRelative: []string{"phytozome-go.exe", "phgohelper.bin"}},
 	}
 	script := buildPowerShellUpdaterScript(plan, []string{"--instance-id", "1"})
 	if !strings.Contains(script, "-ArgumentList @('--instance-id', '1')") {

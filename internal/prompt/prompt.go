@@ -165,9 +165,9 @@ var columnHelpText = map[string]string{
 		"label_name の取得方法です。manual input、phgo_alias、source alias、auto_define、identifier fallback などを示します。",
 	),
 	"phgo_alias": columnHelp(
-		"Authoritative alias list produced by the phytozome GO labelname system. In keyword tables it belongs to the keyword result item; in BLAST tables it belongs to the BLAST hit row, while family BLAST grouping uses the stored query-source aliases instead.",
+		"Authoritative alias list produced by the phytozome GO symbol name system. In keyword tables it belongs to the keyword result item; in BLAST tables it belongs to the BLAST hit row, while family BLAST grouping uses the stored query-source aliases instead.",
 		"phytozome GO labelname 系统生成的权威别名列表。在 keyword 表格中它属于该 keyword 结果项；在 BLAST 表格中它属于 BLAST hit 结果项，而 family BLAST 分组使用的是已保存的查询来源项别名。",
-		"phytozome GO の labelname system が生成する authoritative alias list です。keyword table では keyword result item の別名、BLAST table では BLAST hit row の別名であり、Family BLAST grouping は保存済み query-source aliases を使います。",
+		"phytozome GO の symbol name system が生成する authoritative alias list です。keyword table では keyword result item の別名、BLAST table では BLAST hit row の別名であり、Family BLAST grouping は保存済み query-source aliases を使います。",
 	),
 	"source_database": columnHelp(
 		"Original database that produced this row, such as Phytozome or lemna. External references like UniProt and InterPro add columns later, but this field tells you where the primary hit came from.",

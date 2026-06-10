@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/KiriKirby/phytozome-go/internal/fastautil"
 )
@@ -18,17 +19,31 @@ import (
 var (
 	ecNumberLikePattern = regexp.MustCompile(`^(?:EC[:\-]?)?[A-Za-z]?\d+(?:\.\d+){2,3}$`)
 	lemnaGeneIDPattern  = regexp.MustCompile(`(?i)^SP\d{4}D\d{3}G\d{6}(?:_T\d+)?$`)
+	locusIDPattern      = regexp.MustCompile(`(?i)^(?:AT[1-5CM]G\d{5}|[A-Z]{2}\d+G\d+|LOC_[A-Z]{2}\d+G\d+)(?:\.\d+)?$`)
 )
 
 type AliasRankRequest struct {
-	TaskTimestamp string
-	ItemIndex     int
-	SearchTerm    string
-	ProteinID     string
-	GeneID        string
-	TranscriptID  string
-	SequenceID    string
-	Aliases       []string
+	TaskTimestamp     string
+	ItemIndex         int
+	TaxID             string
+	SearchTerm        string
+	Symbol            string
+	ProteinID         string
+	GeneID            string
+	TranscriptID      string
+	SequenceID        string
+	LocusTag          string
+	Aliases           []string
+	Synonyms          []string
+	DBXrefs           []string
+	Chromosome        string
+	MapLocation       string
+	Description       string
+	TypeOfGene        string
+	SymbolAuthority   string
+	FullNameAuthority string
+	OtherDesignations []string
+	FeatureType       string
 }
 
 type AliasRankResult struct {
@@ -50,107 +65,141 @@ func RankAliasBatch(requests []AliasRankRequest) []AliasRankResult {
 		return nil
 	}
 	results := make([]AliasRankResult, len(requests))
-	cache := make(map[string][]string, len(requests))
+	cacheIndex := make(map[string]int, len(requests))
+	uniqueRequests := make([]AliasRankRequest, 0, len(requests))
+	requestIndexes := make([]int, len(requests))
 	for i, request := range requests {
 		key := aliasRankCacheKey(request)
-		if ranked, ok := cache[key]; ok {
-			results[i] = AliasRankResult{
-				TaskTimestamp: request.TaskTimestamp,
-				ItemIndex:     request.ItemIndex,
-				RankedAliases: append([]string(nil), ranked...),
-			}
+		if index, ok := cacheIndex[key]; ok {
+			requestIndexes[i] = index
 			continue
 		}
-		result := AliasRankResult{
+		index := len(uniqueRequests)
+		cacheIndex[key] = index
+		requestIndexes[i] = index
+		uniqueRequests = append(uniqueRequests, request)
+	}
+	uniqueRanked := rankAliasRequestItemsBatch(uniqueRequests)
+	rankedByRequest := make([][]rankedAlias, len(requests))
+	for i, index := range requestIndexes {
+		rankedByRequest[i] = cloneRankedAliases(uniqueRanked[index])
+	}
+	familyCounts := batchFamilyCounts(rankedByRequest)
+	for i, request := range requests {
+		ranked := sortRankedAliases(rankedByRequest[i], familyCounts)
+		results[i] = AliasRankResult{
 			TaskTimestamp: request.TaskTimestamp,
 			ItemIndex:     request.ItemIndex,
-			RankedAliases: rankAliasRequest(request),
+			RankedAliases: rankedAliasTexts(ranked),
 		}
-		cache[key] = append([]string(nil), result.RankedAliases...)
-		results[i] = result
 	}
 	return results
 }
 
 func rankAliasRequest(request AliasRankRequest) []string {
-	fallback := uniqueStrings([]string{
-		request.ProteinID,
-		request.TranscriptID,
-		request.GeneID,
-		request.SequenceID,
-	})
-	return rankAliasCandidates(request.Aliases, fallback)
+	return rankedAliasTexts(sortRankedAliases(rankAliasRequestItems(request), nil))
+}
+
+type rankedAlias struct {
+	Text   string
+	Score  int
+	Family string
+}
+
+func rankAliasRequestItems(request AliasRankRequest) []rankedAlias {
+	if db, ok := openDefaultGeneDB(); ok {
+		if ranked, handled := db.rank(request); handled {
+			return ranked
+		}
+	}
+	return nil
+}
+
+func rankAliasRequestItemsBatch(requests []AliasRankRequest) [][]rankedAlias {
+	out := make([][]rankedAlias, len(requests))
+	if len(requests) == 0 {
+		return out
+	}
+	db, ok := openDefaultGeneDB()
+	if !ok || db == nil {
+		return out
+	}
+	if len(requests) < 4 {
+		for i, request := range requests {
+			if ranked, handled := db.rank(request); handled {
+				out[i] = ranked
+			}
+		}
+		return out
+	}
+	workers := DefaultBuildWorkers()
+	if workers > len(requests) {
+		workers = len(requests)
+	}
+	if workers < 1 {
+		workers = 1
+	}
+	jobs := make(chan int, workers*2)
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range jobs {
+				if ranked, handled := db.rank(requests[index]); handled {
+					out[index] = ranked
+				}
+			}
+		}()
+	}
+	for i := range requests {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+	return out
 }
 
 func aliasRankCacheKey(request AliasRankRequest) string {
-	values := make([]string, 0, len(request.Aliases)+4)
+	values := make([]string, 0, len(request.Aliases)+len(request.Synonyms)+len(request.DBXrefs)+len(request.OtherDesignations)+16)
+	for _, value := range []string{
+		request.TaxID,
+		request.SearchTerm,
+		request.Symbol,
+		request.ProteinID,
+		request.GeneID,
+		request.TranscriptID,
+		request.SequenceID,
+		request.LocusTag,
+		request.Chromosome,
+		request.MapLocation,
+		request.Description,
+		request.TypeOfGene,
+		request.SymbolAuthority,
+		request.FullNameAuthority,
+		request.FeatureType,
+	} {
+		if normalized := normalizeAliasKey(value); normalized != "" {
+			values = append(values, normalized)
+		}
+	}
 	for _, value := range request.Aliases {
 		if normalized := normalizeAliasKey(value); normalized != "" {
 			values = append(values, normalized)
 		}
 	}
-	for _, value := range []string{request.ProteinID, request.TranscriptID, request.GeneID, request.SequenceID} {
-		if normalized := normalizeAliasKey(value); normalized != "" {
-			values = append(values, normalized)
+	for _, group := range [][]string{request.Synonyms, request.DBXrefs, request.OtherDesignations} {
+		for _, value := range group {
+			if normalized := normalizeAliasKey(value); normalized != "" {
+				values = append(values, normalized)
+			}
 		}
 	}
 	return strings.Join(values, "\x00")
 }
 
 func RankedAliases(aliases []string) []string {
-	return rankAliasCandidates(aliases, nil)
-}
-
-func rankAliasCandidates(aliases []string, fallback []string) []string {
-	aliases = uniqueStrings(aliases)
-	trusted := make([]string, 0, len(aliases))
-	untrusted := make([]string, 0, len(aliases))
-	for _, alias := range aliases {
-		if IsTrustedCandidate(alias) {
-			trusted = append(trusted, alias)
-		} else {
-			untrusted = append(untrusted, alias)
-		}
-	}
-	sortAliasRank(trusted)
-	sortAliasRank(untrusted)
-	out := make([]string, 0, len(trusted)+len(fallback)+len(untrusted))
-	out = append(out, trusted...)
-	out = append(out, fallback...)
-	out = append(out, untrusted...)
-	return uniqueStrings(out)
-}
-
-func sortAliasRank(aliases []string) {
-	type aliasRankItem struct {
-		text  string
-		key   string
-		score int
-	}
-	items := make([]aliasRankItem, 0, len(aliases))
-	peers := make([]string, 0, len(aliases))
-	for _, alias := range aliases {
-		trimmed := strings.TrimSpace(alias)
-		if trimmed == "" {
-			continue
-		}
-		items = append(items, aliasRankItem{text: trimmed, key: normalizeAliasKey(trimmed)})
-		peers = append(peers, trimmed)
-	}
-	for i := range items {
-		items[i].score = AliasPreferenceScore(items[i].text) +
-			QueryAliasPrimarySymbolBonus(items[i].text) +
-			aliasRedundantLongFormPenalty(items[i].text, peers)
-	}
-	sort.SliceStable(items, func(i, j int) bool {
-		if items[i].score != items[j].score {
-			return items[i].score > items[j].score
-		}
-		return len(items[i].text) < len(items[j].text)
-	})
-	for i := range items {
-		aliases[i] = items[i].text
-	}
+	return rankAliasRequest(AliasRankRequest{Aliases: aliases})
 }
 
 func aliasScores(aliases []string) map[string]int {
@@ -167,6 +216,115 @@ func aliasScores(aliases []string) map[string]int {
 		scores[key] = AliasPreferenceScore(trimmed) + QueryAliasPrimarySymbolBonus(trimmed) + aliasRedundantLongFormPenalty(trimmed, aliases)
 	}
 	return scores
+}
+
+func sortRankedAliases(items []rankedAlias, familyCounts map[string]int) []rankedAlias {
+	items = cloneRankedAliases(items)
+	if len(items) == 0 {
+		return nil
+	}
+	if familyCounts == nil {
+		familyCounts = batchFamilyCounts([][]rankedAlias{items})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		leftFamilyCount := familyCounts[items[i].Family]
+		rightFamilyCount := familyCounts[items[j].Family]
+		if leftFamilyCount != rightFamilyCount {
+			return leftFamilyCount > rightFamilyCount
+		}
+		if items[i].Score != items[j].Score {
+			return items[i].Score > items[j].Score
+		}
+		if items[i].Family != items[j].Family {
+			return items[i].Family < items[j].Family
+		}
+		return len(items[i].Text) < len(items[j].Text)
+	})
+	return items
+}
+
+func batchFamilyCounts(groups [][]rankedAlias) map[string]int {
+	counts := make(map[string]int)
+	seenByFamily := make(map[string]map[string]struct{})
+	for _, group := range groups {
+		for _, item := range group {
+			if strings.TrimSpace(item.Family) == "" {
+				continue
+			}
+			if seenByFamily[item.Family] == nil {
+				seenByFamily[item.Family] = map[string]struct{}{}
+			}
+			key := normalizeAliasKey(item.Text)
+			if key == "" {
+				continue
+			}
+			if _, ok := seenByFamily[item.Family][key]; ok {
+				continue
+			}
+			seenByFamily[item.Family][key] = struct{}{}
+			counts[item.Family]++
+		}
+	}
+	for family, count := range counts {
+		if count < 2 {
+			counts[family] = 0
+		}
+	}
+	return counts
+}
+
+func cloneRankedAliases(items []rankedAlias) []rankedAlias {
+	return append([]rankedAlias(nil), items...)
+}
+
+func rankedAliasTexts(items []rankedAlias) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if text := strings.TrimSpace(item.Text); text != "" {
+			out = append(out, text)
+		}
+	}
+	return uniqueStrings(out)
+}
+
+func symbolFamily(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	runes := []rune(value)
+	end := len(runes)
+	for end > 0 {
+		r := runes[end-1]
+		if r >= '0' && r <= '9' {
+			end--
+			continue
+		}
+		break
+	}
+	for end > 0 {
+		r := runes[end-1]
+		if r == '-' || r == '_' || r == '.' {
+			end--
+			continue
+		}
+		break
+	}
+	prefix := strings.TrimSpace(string(runes[:end]))
+	if prefix == "" || prefix == value {
+		return ""
+	}
+	hasLetter := false
+	for _, r := range prefix {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+			hasLetter = true
+			break
+		}
+	}
+	if !hasLetter {
+		return ""
+	}
+	return strings.ToUpper(prefix)
 }
 
 func FastaHeaderLabelNameFromInput(input string) string {
@@ -496,6 +654,8 @@ func LooksLikeDatabaseIdentifier(value string) bool {
 	case strings.HasPrefix(strings.ToUpper(value), "PAC:"):
 		return true
 	case lemnaGeneIDPattern.MatchString(value):
+		return true
+	case locusIDPattern.MatchString(value):
 		return true
 	default:
 		return false

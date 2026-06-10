@@ -86,7 +86,7 @@ local wezterm = require 'wezterm'
 local act = wezterm.action
 local mux = wezterm.mux
 local is_windows = string.find(wezterm.target_triple or '', 'windows', 1, true) ~= nil
-local clean_cache_prog = './phytozome-go-cleancache.bin'
+local clean_cache_prog = './phgohelper.bin'
 local window_title = 'PHgo ($safeVersion)'
 local title_prefix = '__PHGO__|'
 
@@ -106,7 +106,7 @@ local function command_targets_main(cmd)
   end
   for _, value in ipairs(cmd.args) do
     local normalized = normalize_prog(value)
-    if normalized == './phytozome-go.bin' or normalized == 'phytozome-go.bin' then
+    if normalized == './core.bin' or normalized == 'core.bin' then
       return true
     end
   end
@@ -146,7 +146,7 @@ local function startup_spawn(cmd)
     local skip_first = true
     for _, value in ipairs(cmd.args) do
       local normalized = normalize_prog(value)
-      if skip_first and (normalized == './phytozome-go.bin' or normalized == 'phytozome-go.bin') then
+      if skip_first and (normalized == './core.bin' or normalized == 'core.bin') then
         skip_first = false
       else
         table.insert(extra, value)
@@ -281,7 +281,7 @@ wezterm.on('new-tab-button-click', function(window, pane, button, default_action
   end
   local run_id = run_id_for_window(window)
   local instance_id = next_root_instance_id(window)
-  local args = { './phytozome-go.bin' }
+  local args = { './core.bin' }
   if run_id ~= '' then
     table.insert(args, '--instance-run-id')
     table.insert(args, run_id)
@@ -310,7 +310,10 @@ wezterm.on('gui-startup', function(cmd)
   if spawn.cwd == nil then
     spawn.cwd = '.'
   end
-  local _, _, window = mux.spawn_window(spawn)
+  local tab, _, window = mux.spawn_window(spawn)
+  if tab ~= nil then
+    tab:set_title(encoded_title('0', ''))
+  end
   if window ~= nil and is_windows then
     window:gui_window():maximize()
   end
@@ -338,7 +341,7 @@ return {
   window_close_confirmation = 'NeverPrompt',
   automatically_reload_config = false,
   quit_when_all_windows_are_closed = true,
-  default_prog = is_windows and { '.\\phytozome-go.bin' } or { './phytozome-go.bin' },
+  default_prog = is_windows and { '.\\core.bin' } or { './core.bin' },
 
   front_end = 'WebGpu',
   webgpu_power_preference = 'HighPerformance',

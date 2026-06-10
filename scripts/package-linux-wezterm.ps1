@@ -24,8 +24,8 @@ $appImagePath = Join-Path $assetDir $release.Name
 $bundleDir = Join-Path $repoRoot "bin\phytozome-go_linux_amd64_wezterm"
 $archivePath = Join-Path $repoRoot "bin\phytozome-go_linux_amd64_wezterm.tar.gz"
 $launcherPath = Join-Path $bundleDir "phytozome-go"
-$binaryPath = Join-Path $bundleDir "phytozome-go.bin"
-$cleanCachePath = Join-Path $bundleDir "phytozome-go-cleancache.bin"
+$binaryPath = Join-Path $bundleDir "core.bin"
+$cleanCachePath = Join-Path $bundleDir "phgohelper.bin"
 
 if ($Prepare -or -not (Test-Path -LiteralPath $appImagePath -PathType Leaf)) {
     New-Item -ItemType Directory -Force -Path $assetDir | Out-Null
@@ -54,7 +54,7 @@ export WEZTERM_CONFIG_FILE="$SCRIPT_DIR/wezterm.lua"
 if [ "$#" -eq 0 ]; then
   exec "$SCRIPT_DIR/wezterm" start --always-new-process --cwd "$SCRIPT_DIR"
 fi
-exec "$SCRIPT_DIR/wezterm" start --always-new-process --cwd "$SCRIPT_DIR" -- "$SCRIPT_DIR/phytozome-go.bin" "$@"
+exec "$SCRIPT_DIR/wezterm" start --always-new-process --cwd "$SCRIPT_DIR" -- "$SCRIPT_DIR/core.bin" "$@"
 '@
 $launcherScript | Set-Content -LiteralPath $launcherPath -Encoding Ascii
 
@@ -86,7 +86,7 @@ try {
 
 if (-not $SkipArchive) {
     Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
-    go run (Join-Path $repoRoot "scripts\create-tar") $archivePath (Join-Path $repoRoot "bin\phytozome-go_linux_amd64_wezterm") "phytozome-go_linux_amd64_wezterm" "phytozome-go" "phytozome-go.bin" "phytozome-go-cleancache.bin" "wezterm" "wezterm.AppImage"
+    go run (Join-Path $repoRoot "scripts\create-tar") $archivePath (Join-Path $repoRoot "bin\phytozome-go_linux_amd64_wezterm") "phytozome-go_linux_amd64_wezterm" "phytozome-go" "core.bin" "phgohelper.bin" "wezterm" "wezterm.AppImage"
     if ($LASTEXITCODE -ne 0) {
         throw "Could not create Linux WezTerm archive: $archivePath"
     }

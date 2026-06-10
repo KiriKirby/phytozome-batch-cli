@@ -122,7 +122,7 @@ Must preserve:
 Must not rebuild on open:
 
 - keyword search results
-- labelname ranking already applied to rows
+- symbol name ranking already applied to rows
 - release-file parsing already performed into saved rows
 
 ## BLAST Input and Execution Workflows
@@ -494,3 +494,5 @@ That means every new feature must ship with:
 - completeness-checklist updates
 - `AGENT.md` updates when the user-visible workflow contract changes
 - tests proving the new state survives save/open without hidden rebuilding
+
+

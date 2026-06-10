@@ -17,7 +17,7 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Get-PhytozomeRepoRoot
 $bundleDir = Join-Path $repoRoot "bin\phytozome-go_windows_amd64_wezterm"
 $launcherPath = Join-Path $bundleDir "phytozome-go.exe"
-$appPath = Join-Path $bundleDir "phytozome-go.bin"
+$appPath = Join-Path $bundleDir "core.bin"
 $terminalPath = Join-Path $bundleDir "wezterm.bin"
 $configPath = Join-Path $bundleDir "wezterm.lua"
 

@@ -1506,7 +1506,7 @@ Use one summary table, one per-term traceability table, and a detailed prose met
 
 ### Search Term Summary Table
 
-| Search term | Input type | Query order | Result rows | Selected rows | Label name | Notes |
+| Search term | Input type | Query order | Result rows | Selected rows | Symbol name | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 
 Input type classification is based only on existing parser state:
@@ -1916,3 +1916,4 @@ These additions are allowed later only under the same no-extra-lookup rule.
 - Record sequence export status per row.
 - Add an external manifest for the report PDF's own hash when report self-hashing is required.
 - Add a small glossary chapter for users who are less familiar with terms such as GFF3, AHRD, hash, provenance, and fallback.
+

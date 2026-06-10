@@ -793,7 +793,7 @@ func keywordColumnLineageForHeader(header string, rows []model.KeywordResultRow)
 	case "label_name":
 		return report.ColumnLineage{ID: header, Column: display, Meaning: firstNonEmpty(english, "Readable label used for row grouping, exports, and sequence headers."), EnglishDetail: english, ChineseDetail: chinese, JapaneseDetail: japanese, Source: "user input or label workflow", CollectionMethod: "captured before or during keyword workflow", BlankMeaning: "user skipped or label unavailable", UsedInStats: "yes"}
 	case "labelname_type":
-		return report.ColumnLineage{ID: header, Column: display, Meaning: firstNonEmpty(english, "How the keyword row label_name was obtained."), EnglishDetail: english, ChineseDetail: chinese, JapaneseDetail: japanese, Source: "labelname system", CollectionMethod: "recorded from the labelname fallback source for the current row", BlankMeaning: "label_name is blank or source was not recorded", UsedInStats: "label/quality"}
+		return report.ColumnLineage{ID: header, Column: display, Meaning: firstNonEmpty(english, "How the keyword row label_name was obtained."), EnglishDetail: english, ChineseDetail: chinese, JapaneseDetail: japanese, Source: "symbol name system", CollectionMethod: "recorded from the symbol name fallback source for the current row", BlankMeaning: "label_name is blank or source was not recorded", UsedInStats: "label/quality"}
 	case "protein_id":
 		return report.ColumnLineage{ID: header, Column: display, Meaning: firstNonEmpty(english, "Original protein identifier when the source naturally provides one."), EnglishDetail: english, ChineseDetail: chinese, JapaneseDetail: japanese, Source: "selected database", CollectionMethod: "from current result rows", BlankMeaning: "not provided by this source", UsedInStats: "quality"}
 	case "transcript":
@@ -805,7 +805,7 @@ func keywordColumnLineageForHeader(header string, rows []model.KeywordResultRow)
 	case "location":
 		return report.ColumnLineage{ID: header, Column: display, Meaning: firstNonEmpty(english, "Genomic coordinate or location text."), EnglishDetail: english, ChineseDetail: chinese, JapaneseDetail: japanese, Source: "selected database", CollectionMethod: "from current result rows", BlankMeaning: "not provided by source row", UsedInStats: "no"}
 	case "phgo_alias":
-		return report.ColumnLineage{ID: header, Column: display, Meaning: firstNonEmpty(english, "Labelname-system alias list used by phytozome GO for display, grouping, and automatic label selection."), EnglishDetail: english, ChineseDetail: chinese, JapaneseDetail: japanese, Source: "labelname system", CollectionMethod: "computed from current result rows", BlankMeaning: "no usable alias could be inferred", UsedInStats: "label/quality"}
+		return report.ColumnLineage{ID: header, Column: display, Meaning: firstNonEmpty(english, "Symbol-name-system alias list used by phytozome GO for display, grouping, and automatic label selection."), EnglishDetail: english, ChineseDetail: chinese, JapaneseDetail: japanese, Source: "symbol name system", CollectionMethod: "computed from current result rows", BlankMeaning: "no usable alias could be inferred", UsedInStats: "label/quality"}
 	case "alias":
 		return report.ColumnLineage{ID: header, Column: display, Meaning: firstNonEmpty(english, "Alias or gene-symbol list."), EnglishDetail: english, ChineseDetail: chinese, JapaneseDetail: japanese, Source: "source annotation", CollectionMethod: "from current result rows", BlankMeaning: "source has no alias", UsedInStats: "label/quality"}
 	case "symbols":

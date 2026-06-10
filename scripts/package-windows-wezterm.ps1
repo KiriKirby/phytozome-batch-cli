@@ -19,7 +19,7 @@ $repoRoot = Get-PhytozomeRepoRoot
 $release = Resolve-WezTermWindowsRelease $Version
 $preparedDir = Get-PreparedWindowsWezTermDir $repoRoot $release.Tag
 $bundleDir = Join-Path $repoRoot "bin\phytozome-go_windows_amd64_wezterm"
-$appPath = Join-Path $bundleDir "phytozome-go.bin"
+$appPath = Join-Path $bundleDir "core.bin"
 $zipPath = Join-Path $repoRoot "bin\phytozome-go_windows_amd64_wezterm.zip"
 $runtimeSourceDir = Join-Path $repoRoot "assets\mega-phgo-runtime\windows-amd64\runtime"
 
@@ -48,7 +48,7 @@ Push-Location $repoRoot
 try {
 	go build -trimpath -ldflags="-X main.version=$BuildVersion" -o $appPath .\cmd\phytozome-go
 	go build -trimpath -ldflags="-H=windowsgui -X main.version=$BuildVersion" -o (Join-Path $bundleDir "phytozome-go.exe") .\cmd\phytozome-go-winlauncher
-	go build -trimpath -ldflags="-X main.version=$BuildVersion" -o (Join-Path $bundleDir "phytozome-go-cleancache.bin") .\cmd\phytozome-go-cleancache
+	go build -trimpath -ldflags="-X main.version=$BuildVersion" -o (Join-Path $bundleDir "phgohelper.bin") .\cmd\phytozome-go-cleancache
 } finally {
 	Pop-Location
 }

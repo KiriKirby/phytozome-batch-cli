@@ -71,7 +71,7 @@ macOS Apple Silicon:
 Open `phytozome GO.app` from `phytozome-go_macos_arm64_wezterm.tar.gz`
 ```
 
-All release bundles now ship with a bundled `WezTerm` runtime. The Windows `amd64` bundle also ships with the PHgo tree runtime files directly at the app root as `.bin` files, so Canvas system-tree analysis works without any extra runtime download step and without an extra runtime subfolder. Linux and macOS releases do not bundle PHgo system-tree runtime support yet, and system-tree on those platforms reports unsupported. Opening the packaged app starts a short cache-clean startup CLI in the first tab, then that cleaner opens the wizard in a fresh tab in the same window and exits. That startup preflight only clears `.cache/`. If it installs a newer release, it preserves `output/` and replaces the rest of the bundle so bundled runtime files and managed folders such as `blastplus/` are refreshed by the new version. New tabs opened from inside `WezTerm` launch the wizard directly without running the cache cleaner again. You do not need to pass subcommands.
+All release bundles now ship with a bundled `WezTerm` runtime. The Windows `amd64` bundle also ships with the PHgo tree runtime files directly at the app root as `.bin` files, so Canvas system-tree analysis works without any extra runtime download step and without an extra runtime subfolder. Linux and macOS releases do not bundle PHgo system-tree runtime support yet, and system-tree on those platforms reports unsupported. Opening the packaged app starts `phgohelper.bin` in tab `[0]`; the helper clears `.cache/`, checks for app updates, and checks the local `symbolname.pgd` database before opening `core.bin`. If it installs a newer release, it preserves `output/` and `symbolname.pgd` while replacing the rest of the bundle so bundled runtime files and managed folders such as `blastplus/` are refreshed by the new version. New tabs opened from inside `WezTerm` launch the wizard directly through `core.bin`; if tab `[0]` is still initializing, the wizard waits, and if the symbol-name database is downloading, symbol-name use waits for that download to finish.
 
 ## License
 
@@ -107,7 +107,7 @@ What these scripts do:
 - `scripts\build-windows-dev.ps1` is the underlying Windows-only development build/test helper
 - `scripts\prepare-windows-wezterm.ps1` downloads and prepares the selected WezTerm Windows runtime under `bin\tooling\windows-wezterm\`
 - `scripts\package-windows-wezterm.ps1` stages a distributable bundle in `bin\phytozome-go_windows_amd64_wezterm\`
-- `scripts\run-wizard-external.ps1` starts the bundled GUI launcher, which opens the cache cleaner first; the cleaner then opens `phytozome-go.bin` in a fresh tab and exits
+- `scripts\run-wizard-external.ps1` starts the bundled GUI launcher, which opens `phgohelper.bin` first; the helper then opens `core.bin` when startup preflight is done
 - `cmd\phytozome-go-winlauncher` builds the Windows GUI launcher used by that bundle
 
 Normal development now stays Windows-only and keeps generated build/test artifacts in `bin\`. Full cross-platform packaging is reserved for release publishing.
@@ -328,7 +328,7 @@ What happens:
 
 - each line becomes a separate BLAST query
 - the wizard resolves them in parallel
-- you then enter one label name per query
+- you then enter one symbol name per query
 - each query is reviewed and exported separately
 
 ## BLAST Program Selection
@@ -662,3 +662,4 @@ The repository keeps release binaries in `bin/` during packaging. GitHub Release
   - `https://www.lemna.org`
 
 The codebase isolates Phytozome-specific and lemna-specific logic behind internal adapters so the wizard can stay stable even when upstream sites evolve.
+

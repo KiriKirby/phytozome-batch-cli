@@ -801,12 +801,12 @@ func TestAutoIdentifyKeywordLabelsDoesNotSpecialCaseLemnaLocalRows(t *testing.T)
 	}}
 
 	labels := autoIdentifyKeywordLabels(groups)
-	if len(labels) != 1 || labels[0] != "P48522" {
-		t.Fatalf("generic keyword auto labels should not apply Lemna-specific fallback ordering: %#v", labels)
+	if len(labels) != 1 || labels[0] != "CYP73A5" {
+		t.Fatalf("generic keyword auto labels should resolve through gene_info: %#v", labels)
 	}
 }
 
-func TestAutoIdentifyKeywordLabelsFallsBackToPhytozomeRowMetadataWhenSynonymsMissing(t *testing.T) {
+func TestAutoIdentifyKeywordLabelsReturnsEmptyWhenPhytozomeRowMetadataHasNoDatabaseMatch(t *testing.T) {
 	groups := []model.KeywordSearchGroup{{
 		SearchTerm: "Os4CL1",
 		Rows: []model.KeywordResultRow{{
@@ -820,8 +820,8 @@ func TestAutoIdentifyKeywordLabelsFallsBackToPhytozomeRowMetadataWhenSynonymsMis
 	}}
 
 	labels := autoIdentifyKeywordLabels(groups)
-	if len(labels) != 1 || labels[0] != "4CL1" {
-		t.Fatalf("expected phytozome keyword fallback to preserve row metadata label, got %#v", labels)
+	if len(labels) != 1 || labels[0] != "" {
+		t.Fatalf("expected empty label without gene_info match, got %#v", labels)
 	}
 }
 
@@ -1212,8 +1212,8 @@ func TestAutoIdentifyBlastLabelResultLetsDatabaseAliasOverrideFastaHeaderFallbac
 	}
 
 	result := w.autoIdentifyBlastLabelResult(context.Background(), src, model.SpeciesCandidate{GenomeLabel: "Arabidopsis thaliana"}, item)
-	if result.Label != "ANAC101" {
-		t.Fatalf("label = %q, want database synonym ANAC101", result.Label)
+	if result.Label != "VND6" {
+		t.Fatalf("label = %q, want gene_info symbol VND6", result.Label)
 	}
 	if containsString(result.Aliases, "HeaderName") {
 		t.Fatalf("aliases = %#v, want FASTA header ignored when database candidates exist", result.Aliases)
@@ -1282,7 +1282,7 @@ func TestSupplementBlastAliasesPreservesExistingFastaLabels(t *testing.T) {
 	}
 }
 
-func TestAutoIdentifyBlastLabelResultFallsBackToResolvedIDs(t *testing.T) {
+func TestAutoIdentifyBlastLabelResultResolvesStructuredIDsThroughGeneInfo(t *testing.T) {
 	w := &BlastWizard{}
 	item := blastQueryItem{QuerySource: &model.QuerySequenceSource{
 		SourceDatabase: "phytozome",
@@ -1292,24 +1292,24 @@ func TestAutoIdentifyBlastLabelResultFallsBackToResolvedIDs(t *testing.T) {
 		ProteinID:      "PAC:19660032",
 	}}
 	got := w.autoIdentifyBlastLabel(context.Background(), keywordMapSource{}, model.SpeciesCandidate{}, item)
-	if got != "PAC:19660032" {
-		t.Fatalf("unexpected fallback label: %q", got)
+	if got != "ATPAL4" {
+		t.Fatalf("unexpected symbol label: %q", got)
 	}
 }
 
-func TestAutoIdentifyBlastLabelFallsBackToStructuredIDsWhenNoDatabaseCandidates(t *testing.T) {
+func TestAutoIdentifyBlastLabelReturnsEmptyWhenStructuredIDsHaveNoDatabaseMatch(t *testing.T) {
 	w := &BlastWizard{}
 	item := blastQueryItem{
-		RawInput: ">A.thaliana TAIR10|AT5G62380.1 (AtVND6)\nMPEPTIDE",
+		RawInput: ">A.thaliana TAIR10|NO_SUCH_PROTEIN.1 (AtVND6)\nMPEPTIDE",
 		QuerySource: &model.QuerySequenceSource{
-			ProteinID:    "AT5G62380.1",
-			TranscriptID: "AT5G62380.1",
-			GeneID:       "AT5G62380",
+			ProteinID:    "NO_SUCH_PROTEIN.1",
+			TranscriptID: "NO_SUCH_TRANSCRIPT.1",
+			GeneID:       "NO_SUCH_GENE",
 		},
 	}
 	got := w.autoIdentifyBlastLabel(context.Background(), keywordMapSource{}, model.SpeciesCandidate{}, item)
-	if got != "AT5G62380.1" {
-		t.Fatalf("unexpected ID fallback label: %q", got)
+	if got != "" {
+		t.Fatalf("unexpected label without gene_info match: %q", got)
 	}
 }
 
@@ -1346,17 +1346,20 @@ func TestAutoIdentifyLemnaBlastSourceLabelPrefersPhytozomeThenLocalThenStructure
 	item.QuerySource.LabelName = "C4H"
 	item.RawInput = ">Spirodela polyrhiza (HeaderName)\nMPEPTIDE"
 	result = w.autoIdentifyBlastLabelResult(context.Background(), src, model.SpeciesCandidate{GenomeLabel: "Spirodela polyrhiza"}, item)
-	if result.Label != "C4H" || !containsString(result.Aliases, "C4H") {
-		t.Fatalf("local fallback result = %#v, want Lemna local aliases", result)
+	if result.Label != "CYP73A5" || !containsString(result.Aliases, "CYP73A5") {
+		t.Fatalf("local alias database result = %#v, want gene_info symbol CYP73A5", result)
 	}
 
-	item.QuerySource.LabelName = ""
-	item.QuerySource.PhgoAliases = ""
-	item.QuerySource.Aliases = ""
-	item.QuerySource.AutoDefine = ""
-	result = w.autoIdentifyBlastLabelResult(context.Background(), src, model.SpeciesCandidate{GenomeLabel: "Spirodela polyrhiza"}, item)
-	if result.Label != "missing" || !containsString(result.Aliases, "missing") {
-		t.Fatalf("ID fallback result = %#v, want structured ID fallback", result)
+	missingItem := blastQueryItem{
+		RawInput: ">Spirodela polyrhiza|missing\nMPEPTIDE",
+		QuerySource: &model.QuerySequenceSource{
+			SourceDatabase: "lemna",
+			ProteinID:      "missing",
+		},
+	}
+	result = (&BlastWizard{source: lemna.NewClient(nil)}).autoIdentifyBlastLabelResult(context.Background(), src, model.SpeciesCandidate{GenomeLabel: "Spirodela polyrhiza"}, missingItem)
+	if result.Label != "" || len(result.Aliases) != 0 {
+		t.Fatalf("ID miss result = %#v, want empty without gene_info match", result)
 	}
 }
 
@@ -1380,7 +1383,7 @@ func TestAutoIdentifyBlastHitLabelUsesPhytozomeFallbackAndSourceLabelLast(t *tes
 		{TranscriptID: "AT5G62380.1"},
 	}
 	got := w.autoIdentifyBlastHitLabels(context.Background(), model.SpeciesCandidate{ProteomeID: 1}, blastQueryItem{LabelName: "SOURCE1"}, rows)
-	wants := []string{"ANAC101", "VND7", "AUTO1", "SOURCE1", "ANAC101"}
+	wants := []string{"VND6", "VND7", "AUTO1", "", "VND6"}
 	wantTypes := []string{"phytozome synonyms", "phytozome symbols", "phytozome auto_define", "blast source labelname fallback", "phytozome synonyms"}
 	for i := range wants {
 		if got[i].LabelName != wants[i] || got[i].LabelNameType != wantTypes[i] {
@@ -1488,8 +1491,8 @@ func TestAutoIdentifyBlastHitLabelReusesCachedIdentificationAcrossCalls(t *testi
 	rows := []model.BlastResultRow{{TranscriptID: "AT5G62380.1", Protein: "AT5G62380.1"}}
 	first := w.autoIdentifyBlastHitLabels(context.Background(), model.SpeciesCandidate{ProteomeID: 1}, blastQueryItem{LabelName: "SOURCE1"}, rows)
 	second := w.autoIdentifyBlastHitLabels(context.Background(), model.SpeciesCandidate{ProteomeID: 1}, blastQueryItem{LabelName: "SOURCE1"}, rows)
-	if first[0].LabelName != "ANAC101" || second[0].LabelName != "ANAC101" {
-		t.Fatalf("cached hit label = %q/%q, want ANAC101", first[0].LabelName, second[0].LabelName)
+	if first[0].LabelName != "VND6" || second[0].LabelName != "VND6" {
+		t.Fatalf("cached hit label = %q/%q, want VND6", first[0].LabelName, second[0].LabelName)
 	}
 	src.mu.Lock()
 	defer src.mu.Unlock()
@@ -1510,8 +1513,8 @@ func TestAutoIdentifyLemnaBlastHitLabelFallsBackToLocalBeforeSourceLabel(t *test
 			Defline:        "cinnamate 4-hydroxylase (C4H)",
 		}},
 	)
-	if got[0].LabelName != "C4H" {
-		t.Fatalf("LabelName = %q, want Lemna local hit alias C4H", got[0].LabelName)
+	if got[0].LabelName != "CYP73A5" {
+		t.Fatalf("LabelName = %q, want gene_info symbol CYP73A5", got[0].LabelName)
 	}
 	if got[0].LabelNameType != "lemna local aliases" {
 		t.Fatalf("LabelNameType = %q, want lemna local aliases", got[0].LabelNameType)
@@ -1543,18 +1546,8 @@ func TestAutoIdentifyLemnaBlastHitLabelSplitsWhitespaceAliasList(t *testing.T) {
 	if strings.Contains(got[0].PhgoAliases, "4CLL4 Os03g0132000") {
 		t.Fatalf("PhgoAliases kept whitespace list as one alias: %q", got[0].PhgoAliases)
 	}
-	aliases := labelname.SplitAliases(got[0].PhgoAliases)
-	for _, alias := range []string{"4CLL4", "Os03g0132000", "LOC_Os03g04000", "OsJ_09299"} {
-		found := false
-		for _, gotAlias := range aliases {
-			if strings.EqualFold(gotAlias, alias) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("PhgoAliases = %q, missing split alias %q", got[0].PhgoAliases, alias)
-		}
+	if got[0].PhgoAliases != "4CLL4" {
+		t.Fatalf("PhgoAliases = %q, want gene_info symbol 4CLL4 only", got[0].PhgoAliases)
 	}
 }
 
@@ -1601,11 +1594,11 @@ func TestAutoIdentifyLemnaBlastHitLabelUsesSourceLabelLast(t *testing.T) {
 		blastQueryItem{LabelName: "SOURCE1"},
 		[]model.BlastResultRow{{SourceDatabase: "lemna", Protein: "Sp9509d020g000340_T001"}},
 	)
-	if got[0].LabelName != "SOURCE1" || got[0].LabelNameType != "blast source labelname fallback" {
-		t.Fatalf("got label/type = %q/%q, want source label fallback", got[0].LabelName, got[0].LabelNameType)
+	if got[0].LabelName != "" || got[0].LabelNameType != "blast source labelname fallback" {
+		t.Fatalf("got label/type = %q/%q, want empty label after unmatched source fallback request", got[0].LabelName, got[0].LabelNameType)
 	}
-	if got[0].PhgoAliases != "SOURCE1" {
-		t.Fatalf("PhgoAliases = %q, want source label as last-resort hit alias", got[0].PhgoAliases)
+	if got[0].PhgoAliases != "" {
+		t.Fatalf("PhgoAliases = %q, want empty aliases without gene_info match", got[0].PhgoAliases)
 	}
 }
 
@@ -1849,10 +1842,10 @@ func TestBlastReportLineageDocumentsHitPhgoAliasAndQuerySourceColumns(t *testing
 	if phgo == nil {
 		t.Fatal("phgo_alias lineage missing")
 	}
-	if phgo.Source != "labelname system" {
-		t.Fatalf("phgo_alias source = %q, want labelname system", phgo.Source)
+	if phgo.Source != "symbol name system" {
+		t.Fatalf("phgo_alias source = %q, want symbol name system", phgo.Source)
 	}
-	if !strings.Contains(phgo.Meaning, "BLAST hit row") || !strings.Contains(phgo.CollectionMethod, "BLAST-hit labelname") {
+	if !strings.Contains(phgo.Meaning, "BLAST hit row") || !strings.Contains(phgo.CollectionMethod, "BLAST-hit symbol name") {
 		t.Fatalf("phgo_alias lineage does not describe hit-level aliases: %#v", *phgo)
 	}
 	if phgo.UsedInStats != "traceability" {
@@ -1933,7 +1926,7 @@ func TestBlastFullReferenceAutoLabelSimulationKeepsHitAliasesSeparateFromSourceG
 	rows = w.autoIdentifyBlastHitLabels(context.Background(), model.SpeciesCandidate{ProteomeID: 167}, item, rows)
 	rows = annotateBlastRowsForQueryContext(rows, item)
 
-	if rows[0].LabelName != "ANAC101" || rows[0].LabelNameType != "phytozome synonyms" {
+	if rows[0].LabelName != "VND6" || rows[0].LabelNameType != "phytozome synonyms" {
 		t.Fatalf("first hit label/type = %q/%q, want hit-level phytozome synonyms", rows[0].LabelName, rows[0].LabelNameType)
 	}
 	if rows[0].PhgoAliases == "" || strings.Contains(rows[0].PhgoAliases, "ATPAL1") {
@@ -2119,7 +2112,7 @@ func TestOfflineWorkflowMatrixTwoDatabasesTwoModesWithAutoLabelsAndReferences(t 
 			requireColumnsInOrder(t, tc.name+" display", display, []string{"label_name", "labelname_type", "phgo_alias", "protein", "blast_labelname", "blast_geneid"})
 			requireColumns(t, tc.name+" references", display, []string{"uniprot_accession", "interpro_entry_type"})
 			lineage := blastColumnLineage(rows, tc.database, "BLASTP", true, true)
-			if phgo := findColumnLineage(lineage, "phgo_alias"); phgo == nil || phgo.Source != "labelname system" {
+			if phgo := findColumnLineage(lineage, "phgo_alias"); phgo == nil || phgo.Source != "symbol name system" {
 				t.Fatalf("phgo_alias lineage missing or wrong: %#v", phgo)
 			}
 			metadata := buildExportMetadata(blastQueryItemLabelName(tc.item), tc.item.QuerySource)
@@ -2554,8 +2547,8 @@ func TestAutoIdentifyLemnaKeywordLabelsFallsBackToLocalAliases(t *testing.T) {
 	}}
 
 	got := w.autoIdentifyLemnaKeywordLabels(context.Background(), model.SpeciesCandidate{GenomeLabel: "Spirodela polyrhiza 9509 REF-OXFORD-3.0"}, groups, nil)
-	if len(got) != 1 || len(got[0].Aliases) == 0 || got[0].Aliases[0] != "C4H" {
-		t.Fatalf("expected lemna local label fallback: %#v", got)
+	if len(got) != 1 || len(got[0].Aliases) == 0 || got[0].Aliases[0] != "CYP73A5" {
+		t.Fatalf("expected lemna local alias resolved through gene_info: %#v", got)
 	}
 	if got[0].SourceType != "lemna local aliases" {
 		t.Fatalf("SourceType = %q, want lemna local aliases", got[0].SourceType)
@@ -5004,8 +4997,8 @@ func TestAutoIdentifyBlastLabelResultForPhgoFastaKeepsPinnedLabelAndRanksAliases
 	if result.Aliases[0] != "PAL1" {
 		t.Fatalf("expected pinned label to stay first in ranked aliases: %#v", result)
 	}
-	if !containsString(result.Aliases, "C4H") {
-		t.Fatalf("expected alias ranking to still include phytozome aliases: %#v", result)
+	if !containsString(result.Aliases, "CYP73A5") {
+		t.Fatalf("expected alias ranking to include gene_info symbol aliases: %#v", result)
 	}
 }
 

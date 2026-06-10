@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bufio"
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,9 +12,12 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/KiriKirby/phytozome-go/internal/labelname"
+	"github.com/KiriKirby/phytozome-go/internal/startupstate"
 )
 
-const mainProgramName = "phytozome-go.bin"
+const mainProgramName = "core.bin"
 const windowsWezTermCLIName = "wezterm-cli.bin"
 const displayName = "phytozome GO"
 const author = "wangsychn"
@@ -56,9 +62,15 @@ func main() {
 func run() error {
 	printStartupNotice()
 	printLastUpdateErrorNotice()
+	appDir, err := applicationDir()
+	if err != nil {
+		return err
+	}
+	_ = startupstate.Write(appDir, startupstate.State{Status: startupstate.StatusInitializing, Message: "Startup helper is preparing phytozome GO."})
 	if shouldSkipBundlePreflight() {
 		_, _ = fmt.Fprintln(os.Stdout)
 		_, _ = fmt.Fprintln(os.Stdout, "Bundle preflight skipped for relaunch.")
+		_ = startupstate.Complete(appDir)
 		return launchMainProgram(os.Args[1:])
 	}
 
@@ -81,6 +93,16 @@ func run() error {
 
 	_, _ = fmt.Fprintln(os.Stdout, "Cache cleanup complete.")
 	if updateLaunched := maybeHandleReleaseUpdate(os.Args[1:]); updateLaunched {
+		_ = startupstate.Complete(appDir)
+		return nil
+	}
+	mainAlreadyLaunched, err := maybeEnsureSymbolNameDatabase(appDir, os.Args[1:])
+	if err != nil {
+		_ = startupstate.Complete(appDir)
+		return err
+	}
+	_ = startupstate.Complete(appDir)
+	if mainAlreadyLaunched {
 		return nil
 	}
 	return launchMainProgram(os.Args[1:])
@@ -155,7 +177,7 @@ func launchMainProgramDirect(args []string) error {
 func launchMainProgramInNewTab(args []string) error {
 	cleanerPath, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("locate cache cleaner executable: %w", err)
+		return fmt.Errorf("locate helper executable: %w", err)
 	}
 	mainPath, err := resolveMainProgramPathFrom(cleanerPath)
 	if err != nil {
@@ -187,7 +209,7 @@ func launchMainProgram(args []string) error {
 func resolveMainProgramPath() (string, error) {
 	exePath, err := os.Executable()
 	if err != nil {
-		return "", fmt.Errorf("locate cache cleaner executable: %w", err)
+		return "", fmt.Errorf("locate helper executable: %w", err)
 	}
 	return resolveMainProgramPathFrom(exePath)
 }
@@ -195,7 +217,7 @@ func resolveMainProgramPath() (string, error) {
 func resolveCacheTargets() ([]string, error) {
 	exePath, err := os.Executable()
 	if err != nil {
-		return nil, fmt.Errorf("locate cache cleaner executable: %w", err)
+		return nil, fmt.Errorf("locate helper executable: %w", err)
 	}
 	workingDir, err := os.Getwd()
 	if err != nil {
@@ -207,7 +229,7 @@ func resolveCacheTargets() ([]string, error) {
 func resolveWezTermCLIPathFrom(cleanerPath string) (string, error) {
 	cleanerPath = strings.TrimSpace(cleanerPath)
 	if cleanerPath == "" {
-		return "", fmt.Errorf("cache cleaner path is empty")
+		return "", fmt.Errorf("helper path is empty")
 	}
 	dir := filepath.Dir(cleanerPath)
 	candidates := []string{}
@@ -232,7 +254,7 @@ func resolveWezTermCLIPathFrom(cleanerPath string) (string, error) {
 			return candidate, nil
 		}
 	}
-	return "", fmt.Errorf("could not locate WezTerm CLI next to the cache cleaner:\n%s", dir)
+	return "", fmt.Errorf("could not locate WezTerm CLI next to the helper:\n%s", dir)
 }
 
 func resolveCacheTargetsFrom(cleanerPath string, workingDir string) []string {
@@ -295,15 +317,214 @@ func removeCacheTargets(targets []string) error {
 	return nil
 }
 
+func maybeEnsureSymbolNameDatabase(appDir string, args []string) (bool, error) {
+	dbPath := labelname.DefaultGeneInfoDatabasePath(appDir)
+	labelname.SetDefaultGeneInfoDatabasePath(dbPath)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	remote, err := labelname.FetchRemoteGeneInfoMetadata(ctx)
+	if err != nil {
+		return false, err
+	}
+	local, localErr := labelname.InspectGeneInfoDatabase(dbPath)
+	if localErr != nil {
+		_, _ = fmt.Fprintln(os.Stdout)
+		_, _ = fmt.Fprintln(os.Stdout, "NCBI Gene symbol name library is missing.")
+		_, _ = fmt.Fprintf(os.Stdout, "Database path: %s\n", dbPath)
+		_, _ = fmt.Fprintf(os.Stdout, "Source: %s\n", labelname.GeneInfoURL)
+		_, _ = fmt.Fprintf(os.Stdout, "Remote size: %s\n", humanBytes(remote.ContentLength))
+		_, _ = fmt.Fprintf(os.Stdout, "Last modified: %s\n", firstNonEmptyText(remote.LastModifiedRaw, "unknown"))
+		if !canPromptForUpdateConsent() {
+			return false, fmt.Errorf("symbol name library is missing and confirmation is not interactive")
+		}
+		if !promptYesNo(os.Stdin, os.Stdout, "Download and build the symbol name library now? [y/N]: ") {
+			_, _ = fmt.Fprintln(os.Stdout, "Skipping symbol name library download. It will be required when symbol names are used.")
+			return false, nil
+		}
+		launchNow := promptYesNo(os.Stdin, os.Stdout, "Open phytozome GO while the symbol name library downloads? [y/N]: ")
+		if launchNow {
+			_ = startupstate.Write(appDir, startupstate.State{Status: startupstate.StatusDownloading, AllowUse: true, Message: "Symbol name library is downloading.", DBPath: dbPath})
+			_, _ = fmt.Fprintln(os.Stdout, "Opening phytozome GO in a new tab while download continues in tab 0...")
+			if err := launchMainProgramInNewTab(args); err != nil {
+				return false, err
+			}
+		}
+		if err := downloadSymbolNameDatabaseStartupWithRetry(appDir, "Downloading and building NCBI Gene symbol name library", dbPath, remote, launchNow); err != nil {
+			return launchNow, err
+		}
+		return launchNow, nil
+	}
+	if remote.LastModified.IsZero() || local.LastModified.IsZero() || !remote.LastModified.After(local.LastModified) {
+		_, _ = fmt.Fprintf(os.Stdout, "Symbol name library: current (%d records).\n", local.RecordCount)
+		return false, nil
+	}
+	expiredDays := int(remote.LastModified.Sub(local.LastModified).Hours() / 24)
+	if expiredDays < 0 {
+		expiredDays = 0
+	}
+	_, _ = fmt.Fprintln(os.Stdout)
+	_, _ = fmt.Fprintln(os.Stdout, "NCBI Gene symbol name library update available.")
+	_, _ = fmt.Fprintf(os.Stdout, "Database path: %s\n", dbPath)
+	_, _ = fmt.Fprintf(os.Stdout, "Local Last-Modified:  %s\n", firstNonEmptyText(local.LastModifiedRaw, local.LastModified.Format(time.RFC1123)))
+	_, _ = fmt.Fprintf(os.Stdout, "Remote Last-Modified: %s\n", firstNonEmptyText(remote.LastModifiedRaw, remote.LastModified.Format(time.RFC1123)))
+	_, _ = fmt.Fprintf(os.Stdout, "Expired by: %d days\n", expiredDays)
+	_, _ = fmt.Fprintf(os.Stdout, "Remote size: %s\n", humanBytes(remote.ContentLength))
+	if !canPromptForUpdateConsent() {
+		_, _ = fmt.Fprintln(os.Stdout, "Skipping symbol name library update because confirmation is not interactive.")
+		return false, nil
+	}
+	if !promptYesNo(os.Stdin, os.Stdout, "Download updated symbol name library now? [y/N]: ") {
+		_, _ = fmt.Fprintln(os.Stdout, "Keeping existing symbol name library.")
+		return false, nil
+	}
+	launchNow := promptYesNo(os.Stdin, os.Stdout, "Open phytozome GO while the symbol name library update downloads? [y/N]: ")
+	if launchNow {
+		_ = startupstate.Write(appDir, startupstate.State{Status: startupstate.StatusDownloading, AllowUse: true, Message: "Symbol name library update is downloading.", DBPath: dbPath})
+		_, _ = fmt.Fprintln(os.Stdout, "Opening phytozome GO in a new tab while update continues in tab 0...")
+		if err := launchMainProgramInNewTab(args); err != nil {
+			return false, err
+		}
+	}
+	if err := downloadSymbolNameDatabaseStartupWithRetry(appDir, "Downloading and building updated NCBI Gene symbol name library", dbPath, remote, launchNow); err != nil {
+		return launchNow, err
+	}
+	return launchNow, nil
+}
+
+func downloadSymbolNameDatabaseStartupWithRetry(appDir string, label string, dbPath string, remote labelname.GeneInfoMetadata, allowUse bool) error {
+	for {
+		_ = startupstate.Write(appDir, startupstate.State{Status: startupstate.StatusDownloading, AllowUse: allowUse, Message: label, DBPath: dbPath})
+		err := downloadSymbolNameDatabaseWithProgress(label, dbPath, remote)
+		if err == nil {
+			return nil
+		}
+		_, _ = fmt.Fprintln(os.Stdout)
+		_, _ = fmt.Fprintf(os.Stdout, "Symbol name library download/build failed: %v\n", err)
+		if !canPromptForUpdateConsent() {
+			return err
+		}
+		switch promptRetrySkip(os.Stdin, os.Stdout, "Retry download/build, or skip startup install? [r/S]: ") {
+		case "retry":
+			continue
+		default:
+			_, _ = fmt.Fprintln(os.Stdout, "Skipping startup symbol name library install. It will be required when symbol names are used.")
+			return nil
+		}
+	}
+}
+
+func downloadSymbolNameDatabaseWithProgress(label string, dbPath string, remote labelname.GeneInfoMetadata) error {
+	_, _ = fmt.Fprintf(os.Stdout, "%s...\n", label)
+	_, _ = fmt.Fprintf(os.Stdout, "Writing database to: %s\n", dbPath)
+	progress := newConsoleProgress(os.Stdout)
+	downloadCtx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
+	defer cancel()
+	err := labelname.DownloadAndBuildGeneInfoDatabase(downloadCtx, dbPath, remote, labelname.DownloadOptions{
+		Workers: labelname.DefaultDownloadWorkers(),
+		Stdout:  os.Stdout,
+		Progress: func(event labelname.GeneInfoProgress) {
+			progress.Update(labelname.FormatGeneInfoProgress(event), event.Done)
+		},
+	})
+	progress.Finish(err == nil)
+	return err
+}
+
+func applicationDir() (string, error) {
+	exePath, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("locate helper executable: %w", err)
+	}
+	return filepath.Dir(exePath), nil
+}
+
+func promptRetrySkip(input io.Reader, output io.Writer, label string) string {
+	reader := bufio.NewReader(input)
+	for {
+		_, _ = fmt.Fprint(output, label)
+		line, err := reader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return "skip"
+		}
+		answer := strings.TrimSpace(strings.ToLower(line))
+		switch answer {
+		case "r", "retry":
+			return "retry"
+		case "", "s", "skip":
+			return "skip"
+		}
+		_, _ = fmt.Fprintln(output, "Please enter r or s.")
+		if err == io.EOF {
+			return "skip"
+		}
+	}
+}
+
+type consoleProgress struct {
+	output io.Writer
+	last   string
+}
+
+func newConsoleProgress(output io.Writer) *consoleProgress {
+	return &consoleProgress{output: output}
+}
+
+func (p *consoleProgress) Update(line string, done bool) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return
+	}
+	p.last = line
+	_, _ = fmt.Fprintf(p.output, "\r\033[2K%s", line)
+	if done {
+		_, _ = fmt.Fprintln(p.output)
+	}
+}
+
+func (p *consoleProgress) Finish(ok bool) {
+	if strings.TrimSpace(p.last) != "" {
+		_, _ = fmt.Fprint(p.output, "\r\033[2K")
+	}
+	if ok {
+		_, _ = fmt.Fprintln(p.output, "Symbol name library download/build complete.")
+	}
+}
+
+func humanBytes(size int64) string {
+	if size <= 0 {
+		return "unknown"
+	}
+	units := []string{"B", "KiB", "MiB", "GiB", "TiB"}
+	value := float64(size)
+	unit := 0
+	for value >= 1024 && unit < len(units)-1 {
+		value /= 1024
+		unit++
+	}
+	if unit == 0 {
+		return fmt.Sprintf("%d %s", size, units[unit])
+	}
+	return fmt.Sprintf("%.1f %s", value, units[unit])
+}
+
+func firstNonEmptyText(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
 func resolveMainProgramPathFrom(cleanerPath string) (string, error) {
 	cleanerPath = strings.TrimSpace(cleanerPath)
 	if cleanerPath == "" {
-		return "", fmt.Errorf("cache cleaner path is empty")
+		return "", fmt.Errorf("helper path is empty")
 	}
 	mainPath := filepath.Join(filepath.Dir(cleanerPath), mainProgramName)
 	info, err := os.Stat(mainPath)
 	if err != nil {
-		return "", fmt.Errorf("could not locate phytozome GO main program next to the cache cleaner:\n%s", mainPath)
+		return "", fmt.Errorf("could not locate phytozome GO core program next to the helper:\n%s", mainPath)
 	}
 	if info.IsDir() {
 		return "", fmt.Errorf("phytozome GO main program path is a directory:\n%s", mainPath)

@@ -40,6 +40,7 @@ import (
 	"github.com/KiriKirby/phytozome-go/internal/prompt"
 	"github.com/KiriKirby/phytozome-go/internal/report"
 	"github.com/KiriKirby/phytozome-go/internal/source"
+	"github.com/KiriKirby/phytozome-go/internal/startupstate"
 	"github.com/KiriKirby/phytozome-go/internal/tair"
 	"github.com/KiriKirby/phytozome-go/internal/tui"
 	"github.com/KiriKirby/phytozome-go/internal/uniprot"
@@ -503,6 +504,233 @@ func safeTaskUpdate(update func(string)) func(string) {
 	}
 }
 
+func (w *BlastWizard) symbolNameDatabasePath() (string, error) {
+	appDir, err := appfs.ApplicationDir()
+	if err == nil {
+		return labelname.DefaultGeneInfoDatabasePath(appDir), nil
+	}
+	if path := labelname.DefaultGeneInfoDatabaseCurrentPath(); strings.TrimSpace(path) != "" {
+		return path, nil
+	}
+	return "", err
+}
+
+func (w *BlastWizard) ensureSymbolNameDatabase(ctx context.Context, cancelError error) error {
+	if err := w.waitForStartupSymbolNameDownload(ctx, cancelError); err != nil {
+		return err
+	}
+	if labelname.DefaultGeneInfoDatabaseAvailable() {
+		return nil
+	}
+	if w.suppressTaskModals {
+		return w.ensureSymbolNameDatabaseWithUpdate(ctx, nil, false)
+	}
+	for {
+		_, err := tui.RunProgressTaskValueContext(tui.TaskPage{
+			Path:        w.tuiPath("Symbol names", "Database"),
+			Title:       "Installing symbol name database",
+			Description: "Downloading and building the local NCBI Gene symbol name library.",
+			Initial:     "Preparing symbol name database...",
+			Total:       1000,
+			CancelError: cancelError,
+		}, func(taskCtx context.Context, update func(int, string)) (struct{}, error) {
+			return struct{}{}, w.ensureSymbolNameDatabaseWithProgress(mergeContexts(ctx, taskCtx), update, true)
+		})
+		if err == nil {
+			return nil
+		}
+		if isCancellationLikeError(err) {
+			return err
+		}
+		action, actionErr := w.prompt.WorkflowErrorAction(fmt.Sprintf("symbol name database install failed: %v", err), cancelError)
+		if actionErr != nil {
+			return actionErr
+		}
+		decision, navErr := interpretRecoveryAction(action, cancelError, false)
+		if navErr != nil {
+			return navErr
+		}
+		if decision != recoveryRetry {
+			if cancelError != nil {
+				return cancelError
+			}
+			return prompt.ErrBackToQueryInput
+		}
+	}
+}
+
+func (w *BlastWizard) ensureSymbolNameDatabaseWithProgress(ctx context.Context, update func(int, string), allowInstall bool) error {
+	if err := w.pollStartupSymbolNameDownload(ctx, func(message string) {
+		safeProgress(update)(0, message)
+	}); err != nil {
+		return err
+	}
+	if labelname.DefaultGeneInfoDatabaseAvailable() {
+		return nil
+	}
+	path, err := w.symbolNameDatabasePath()
+	if err != nil {
+		return fmt.Errorf("resolve symbol name database path: %w", err)
+	}
+	labelname.SetDefaultGeneInfoDatabasePath(path)
+	if labelname.DefaultGeneInfoDatabaseAvailable() {
+		return nil
+	}
+	if !allowInstall {
+		return fmt.Errorf("%w: missing %s", labelname.ErrGeneInfoDatabaseMissing, path)
+	}
+	safeProgress(update)(0, "Preparing symbol name database...")
+	return labelname.EnsureDefaultGeneInfoDatabaseProgress(ctx, path, func(event labelname.GeneInfoProgress) {
+		safeProgress(update)(geneInfoProgressPermille(event), labelname.FormatGeneInfoProgress(event))
+	})
+}
+
+func (w *BlastWizard) ensureSymbolNameDatabaseWithUpdate(ctx context.Context, update func(string), allowInstall bool) error {
+	if err := w.pollStartupSymbolNameDownload(ctx, update); err != nil {
+		return err
+	}
+	if labelname.DefaultGeneInfoDatabaseAvailable() {
+		return nil
+	}
+	path, err := w.symbolNameDatabasePath()
+	if err != nil {
+		return fmt.Errorf("resolve symbol name database path: %w", err)
+	}
+	labelname.SetDefaultGeneInfoDatabasePath(path)
+	if labelname.DefaultGeneInfoDatabaseAvailable() {
+		return nil
+	}
+	if !allowInstall {
+		return fmt.Errorf("%w: missing %s", labelname.ErrGeneInfoDatabaseMissing, path)
+	}
+	taskUpdate := safeTaskUpdate(update)
+	taskUpdate("Preparing symbol name database...")
+	return labelname.EnsureDefaultGeneInfoDatabaseProgress(ctx, path, func(event labelname.GeneInfoProgress) {
+		taskUpdate(labelname.FormatGeneInfoProgress(event))
+	})
+}
+
+func (w *BlastWizard) waitForStartupInitializationIfNeeded(ctx context.Context) error {
+	state, ok := readStartupState()
+	if !ok || state.AllowUse {
+		return nil
+	}
+	if w.suppressTaskModals {
+		return w.pollStartupState(ctx, false, nil)
+	}
+	_, err := tui.RunTaskValueContext(tui.TaskPage{
+		Path:        w.tuiPath("Startup", "Initialization"),
+		Title:       "Waiting for initialization",
+		Description: "phytozome GO is waiting for tab 0 to finish startup initialization.",
+		Initial:     "Waiting for tab 0 initialization to finish...",
+		CancelError: prompt.ErrExitRequested,
+	}, func(taskCtx context.Context, update func(string)) (struct{}, error) {
+		return struct{}{}, w.pollStartupState(mergeContexts(ctx, taskCtx), false, update)
+	})
+	return err
+}
+
+func (w *BlastWizard) waitForStartupSymbolNameDownload(ctx context.Context, cancelError error) error {
+	state, ok := readStartupState()
+	if !ok || state.Status != startupstate.StatusDownloading {
+		return nil
+	}
+	if w.suppressTaskModals {
+		return w.pollStartupSymbolNameDownload(ctx, nil)
+	}
+	message := "The NCBI Gene symbol name library is already downloading in tab 0.\n\nWait here until tab 0 finishes, or cancel this symbol-name operation."
+	if trimmed := strings.TrimSpace(state.Message); trimmed != "" {
+		message += "\n\nStatus: " + trimmed
+	}
+	result, err := tui.RunActionModalPage(tui.ActionModalPage{
+		Path:         w.tuiPath("Symbol names", "Database"),
+		Title:        "Symbol name download in progress",
+		Message:      message,
+		Actions:      []tui.Action{{Value: "cancel", Label: tui.ButtonClose, Shortcut: "Esc"}},
+		ConfirmText:  "Wait",
+		ConfirmValue: "wait",
+	})
+	if err != nil {
+		return err
+	}
+	if result.Value != "wait" {
+		if cancelError != nil {
+			return cancelError
+		}
+		return prompt.ErrBackToQueryInput
+	}
+	_, err = tui.RunTaskValueContext(tui.TaskPage{
+		Path:        w.tuiPath("Symbol names", "Database"),
+		Title:       "Waiting for symbol name database",
+		Description: "Waiting for tab 0 to finish the NCBI Gene symbol name library download.",
+		Initial:     "Waiting for tab 0 symbol name download...",
+		CancelError: cancelError,
+	}, func(taskCtx context.Context, update func(string)) (struct{}, error) {
+		return struct{}{}, w.pollStartupSymbolNameDownload(mergeContexts(ctx, taskCtx), update)
+	})
+	return err
+}
+
+func (w *BlastWizard) pollStartupSymbolNameDownload(ctx context.Context, update func(string)) error {
+	return w.pollStartupState(ctx, true, update)
+}
+
+func (w *BlastWizard) pollStartupState(ctx context.Context, symbolOnly bool, update func(string)) error {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		state, ok := readStartupState()
+		if !ok {
+			return nil
+		}
+		if symbolOnly && state.Status != startupstate.StatusDownloading {
+			return nil
+		}
+		if update != nil {
+			message := strings.TrimSpace(state.Message)
+			if message == "" {
+				message = "Waiting for tab 0 to finish..."
+			}
+			update(message)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func readStartupState() (startupstate.State, bool) {
+	appDir, err := appfs.ApplicationDir()
+	if err != nil {
+		return startupstate.State{}, false
+	}
+	return startupstate.Read(appDir)
+}
+
+func geneInfoProgressPermille(event labelname.GeneInfoProgress) int {
+	if event.Done {
+		return 1000
+	}
+	switch event.Stage {
+	case "download":
+		if event.TotalBytes > 0 && event.CurrentBytes > 0 {
+			return maxInt(1, minInt(700, int(event.CurrentBytes*700/event.TotalBytes)))
+		}
+		return 1
+	case "build":
+		if event.TotalBytes > 0 && event.CurrentBytes > 0 {
+			return 700 + maxInt(1, minInt(290, int(event.CurrentBytes*290/event.TotalBytes)))
+		}
+		return 700
+	case "complete":
+		return 1000
+	default:
+		return 0
+	}
+}
+
 func mergeContexts(parent context.Context, cancel context.Context) context.Context {
 	if parent == nil {
 		parent = context.Background()
@@ -696,6 +924,12 @@ func (w *BlastWizard) Run(ctx context.Context) error {
 		defer func() {
 			_ = w.markInstanceInactive()
 		}()
+	}
+	if err := w.waitForStartupInitializationIfNeeded(ctx); err != nil {
+		if errors.Is(err, prompt.ErrExitRequested) {
+			return nil
+		}
+		return err
 	}
 databaseLoop:
 	for {
@@ -1803,7 +2037,7 @@ keywordInputLoop:
 				if errors.Is(labelErr, prompt.ErrBackToSpeciesSelection) || errors.Is(labelErr, prompt.ErrBackToModeSelection) || errors.Is(labelErr, prompt.ErrBackToDatabaseSelection) || errors.Is(labelErr, prompt.ErrExitRequested) {
 					return labelErr
 				}
-				retry, navErr := w.retryWorkflowStep(fmt.Sprintf("read label names: %v", labelErr), prompt.ErrBackToQueryInput)
+				retry, navErr := w.retryWorkflowStep(fmt.Sprintf("read symbol names: %v", labelErr), prompt.ErrBackToQueryInput)
 				if navErr != nil {
 					return navErr
 				}
@@ -2438,7 +2672,7 @@ func (w *BlastWizard) prepareKeywordBlastItems(ctx context.Context, selected mod
 				if errors.Is(err, prompt.ErrBackToQueryInput) {
 					return nil, prompt.ErrBackToRowSelection
 				}
-				retry, navErr := w.retryWorkflowStep(fmt.Sprintf("auto identify BLAST label names: %v", err), prompt.ErrBackToRowSelection)
+				retry, navErr := w.retryWorkflowStep(fmt.Sprintf("auto identify BLAST symbol names: %v", err), prompt.ErrBackToRowSelection)
 				if navErr != nil {
 					return nil, navErr
 				}
@@ -2448,7 +2682,7 @@ func (w *BlastWizard) prepareKeywordBlastItems(ctx context.Context, selected mod
 				continue
 			}
 			if !allLabelsPresent(prepared) {
-				action, actionErr := w.prompt.FetchErrorAction("auto identify BLAST label names: one or more query labels could not be identified", prompt.ErrBackToRowSelection)
+				action, actionErr := w.prompt.FetchErrorAction("auto identify BLAST symbol names: one or more query symbols could not be identified", prompt.ErrBackToRowSelection)
 				if actionErr != nil {
 					return nil, actionErr
 				}
@@ -2474,7 +2708,7 @@ func (w *BlastWizard) prepareKeywordBlastItems(ctx context.Context, selected mod
 				if errors.Is(err, prompt.ErrBackToQueryInput) {
 					return nil, prompt.ErrBackToRowSelection
 				}
-				retry, navErr := w.retryWorkflowStep(fmt.Sprintf("read BLAST alias label names: %v", err), prompt.ErrBackToRowSelection)
+				retry, navErr := w.retryWorkflowStep(fmt.Sprintf("read BLAST alias symbol names: %v", err), prompt.ErrBackToRowSelection)
 				if navErr != nil {
 					return nil, navErr
 				}
@@ -2812,7 +3046,7 @@ blastInputLoop:
 					if errors.Is(labelErr, prompt.ErrBackToSpeciesSelection) || errors.Is(labelErr, prompt.ErrBackToModeSelection) || errors.Is(labelErr, prompt.ErrBackToDatabaseSelection) || errors.Is(labelErr, prompt.ErrExitRequested) {
 						return labelErr
 					}
-					retry, navErr := w.retryWorkflowStep(fmt.Sprintf("read label names: %v", labelErr), prompt.ErrBackToQueryInput)
+					retry, navErr := w.retryWorkflowStep(fmt.Sprintf("read symbol names: %v", labelErr), prompt.ErrBackToQueryInput)
 					if navErr != nil {
 						return navErr
 					}
@@ -2867,7 +3101,7 @@ blastInputLoop:
 			if autoIdentifyLabels {
 				prepared, err = w.autoIdentifyBlastLabelsWithProgress(ctx, selected, prepared)
 				if err != nil {
-					retry, navErr := w.retryWorkflowStep(fmt.Sprintf("auto identify BLAST label names: %v", err), prompt.ErrBackToQueryInput)
+					retry, navErr := w.retryWorkflowStep(fmt.Sprintf("auto identify BLAST symbol names: %v", err), prompt.ErrBackToQueryInput)
 					if navErr != nil {
 						return navErr
 					}
@@ -2877,7 +3111,7 @@ blastInputLoop:
 					continue blastInputLoop
 				}
 				if !allLabelsPresent(prepared) {
-					action, actionErr := w.prompt.FetchErrorAction("auto identify BLAST label names: one or more query labels could not be identified", prompt.ErrBackToQueryInput)
+					action, actionErr := w.prompt.FetchErrorAction("auto identify BLAST symbol names: one or more query symbols could not be identified", prompt.ErrBackToQueryInput)
 					if actionErr != nil {
 						return actionErr
 					}
@@ -2905,7 +3139,7 @@ blastInputLoop:
 					if errors.Is(labelErr, prompt.ErrBackToSpeciesSelection) || errors.Is(labelErr, prompt.ErrBackToModeSelection) || errors.Is(labelErr, prompt.ErrBackToDatabaseSelection) || errors.Is(labelErr, prompt.ErrExitRequested) {
 						return labelErr
 					}
-					retry, navErr := w.retryWorkflowStep(fmt.Sprintf("read label names: %v", labelErr), prompt.ErrBackToQueryInput)
+					retry, navErr := w.retryWorkflowStep(fmt.Sprintf("read symbol names: %v", labelErr), prompt.ErrBackToQueryInput)
 					if navErr != nil {
 						return navErr
 					}
@@ -2924,7 +3158,7 @@ blastInputLoop:
 			if !autoIdentifyLabels && allLabelsPresent(prepared) {
 				prepared, err = w.supplementBlastAliasesWithProgress(ctx, selected, prepared)
 				if err != nil {
-					retry, navErr := w.retryWorkflowStep(fmt.Sprintf("read BLAST alias label names: %v", err), prompt.ErrBackToQueryInput)
+					retry, navErr := w.retryWorkflowStep(fmt.Sprintf("read BLAST alias symbol names: %v", err), prompt.ErrBackToQueryInput)
 					if navErr != nil {
 						return navErr
 					}
@@ -4681,20 +4915,31 @@ func blastQueryItemLabelName(item blastQueryItem) string {
 
 func (w *BlastWizard) autoIdentifyBlastHitLabels(ctx context.Context, selected model.SpeciesCandidate, item blastQueryItem, rows []model.BlastResultRow) []model.BlastResultRow {
 	if inheritedUpdate := updateFromContext(ctx); inheritedUpdate != nil {
+		if err := w.ensureSymbolNameDatabaseWithUpdate(ctx, func(message string) {
+			inheritedUpdate(0, message)
+		}, true); err != nil {
+			return append([]model.BlastResultRow(nil), rows...)
+		}
 		return w.autoIdentifyBlastHitLabelsWithProgress(ctx, selected, item, rows, inheritedUpdate)
 	}
-	if w.suppressTaskModals {
+	if w.suppressTaskModals || w.prompt == nil {
 		return w.autoIdentifyBlastHitLabelsWithProgress(ctx, selected, item, rows, nil)
 	}
 	out, err := tui.RunProgressTaskValueContext(tui.TaskPage{
 		Path:        w.tuiPath("BLAST", "Auto identify hit labels"),
-		Title:       "Auto identifying BLAST hit label names",
-		Description: "Resolving BLAST hit row label names from Phytozome and local aliases.",
-		Initial:     "Preparing BLAST hit label identification...",
+		Title:       "Auto identifying BLAST hit symbol names",
+		Description: "Resolving BLAST hit row symbol names from the local NCBI Gene library and source metadata.",
+		Initial:     "Preparing BLAST hit symbol identification...",
 		Total:       maxInt(1, len(rows)),
 		CancelError: prompt.ErrBackToQueryInput,
 	}, func(taskCtx context.Context, update func(int, string)) ([]model.BlastResultRow, error) {
-		return w.autoIdentifyBlastHitLabelsWithProgress(mergeContexts(ctx, taskCtx), selected, item, rows, update), nil
+		taskCtx = mergeContexts(ctx, taskCtx)
+		if err := w.ensureSymbolNameDatabaseWithUpdate(taskCtx, func(message string) {
+			update(0, message)
+		}, true); err != nil {
+			return nil, err
+		}
+		return w.autoIdentifyBlastHitLabelsWithProgress(taskCtx, selected, item, rows, update), nil
 	})
 	if err != nil {
 		return append([]model.BlastResultRow(nil), rows...)
@@ -4780,7 +5025,7 @@ func (w *BlastWizard) autoIdentifyBlastHitLabelsWithProgress(ctx context.Context
 				out[i].PhgoAliases = strings.TrimSpace(out[i].LabelName)
 			}
 			completed++
-			progress(minInt(completed, len(out)), fmt.Sprintf("Resolved BLAST hit label names... %d/%d", minInt(completed, len(out)), len(out)))
+			progress(minInt(completed, len(out)), fmt.Sprintf("Resolved BLAST hit symbol names... %d/%d", minInt(completed, len(out)), len(out)))
 			continue
 		}
 		cacheKey := blastHitLabelIdentificationCacheKey(out[i], sourceLabel)
@@ -4794,7 +5039,7 @@ func (w *BlastWizard) autoIdentifyBlastHitLabelsWithProgress(ctx context.Context
 		out[i].LabelNameType = identification.LabelType
 		out[i].PhgoAliases = strings.Join(identification.Aliases, "; ")
 		completed++
-		progress(minInt(completed, len(out)), fmt.Sprintf("Resolved BLAST hit label names... %d/%d", minInt(completed, len(out)), len(out)))
+		progress(minInt(completed, len(out)), fmt.Sprintf("Resolved BLAST hit symbol names... %d/%d", minInt(completed, len(out)), len(out)))
 	}
 	if len(out) > 0 {
 		progress(len(out), "Finished BLAST hit label identification.")
@@ -4919,23 +5164,14 @@ func blastHitLabelAliasRankRequest(row model.BlastResultRow, sourceLabel string,
 			if len(candidates) == 0 {
 				continue
 			}
-			return labelname.AliasRankRequest{
-				TaskTimestamp: taskTimestamp,
-				Aliases:       candidates,
-			}, labelType, false
+			return aliasRankRequestFromKeywordRows(taskTimestamp, candidates, candidateRows), labelType, false
 		}
 	}
 	if aliases := lemnaLocalBlastHitKeywordAliasCandidates(row, lemnaKeywordRowsByTerm); len(aliases) > 0 {
-		return labelname.AliasRankRequest{
-			TaskTimestamp: taskTimestamp,
-			Aliases:       aliases,
-		}, "lemna local aliases", false
+		return aliasRankRequestFromBlastRow(taskTimestamp, row, aliases), "lemna local aliases", false
 	}
 	if aliases := lemnaLocalBlastHitAliasCandidates(row); len(aliases) > 0 {
-		return labelname.AliasRankRequest{
-			TaskTimestamp: taskTimestamp,
-			Aliases:       aliases,
-		}, "lemna local aliases", false
+		return aliasRankRequestFromBlastRow(taskTimestamp, row, aliases), "lemna local aliases", false
 	}
 	if label := strings.TrimSpace(sourceLabel); label != "" {
 		return labelname.AliasRankRequest{
@@ -6938,7 +7174,7 @@ func (w *BlastWizard) collectBlastLabelsBeforeResolve(items []blastQueryItem) ([
 		}
 	}
 	if !allLabelsPresent(out) {
-		return nil, false, fmt.Errorf("label names are required for BLAST mode")
+		return nil, false, fmt.Errorf("symbol names are required for BLAST mode")
 	}
 	return out, false, nil
 }
@@ -6971,7 +7207,7 @@ func (w *BlastWizard) collectBlastLabels(ctx context.Context, selected model.Spe
 				return nil, autoErr
 			}
 			if !allLabelsPresent(out) {
-				return nil, fmt.Errorf("could not auto identify label names for every BLAST query")
+				return nil, fmt.Errorf("could not auto identify symbol names for every BLAST query")
 			}
 			return out, nil
 		}
@@ -6984,7 +7220,7 @@ func (w *BlastWizard) collectBlastLabels(ctx context.Context, selected model.Spe
 		}
 	}
 	if !allLabelsPresent(out) {
-		return nil, fmt.Errorf("label names are required for BLAST mode")
+		return nil, fmt.Errorf("symbol names are required for BLAST mode")
 	}
 	return out, nil
 }
@@ -7011,9 +7247,17 @@ func (w *BlastWizard) autoIdentifyBlastLabelsWithProgress(ctx context.Context, s
 	if len(autoIndexes) == 0 {
 		return items, nil
 	}
+	if !w.suppressTaskModals {
+		if err := w.ensureSymbolNameDatabase(ctx, prompt.ErrBackToQueryInput); err != nil {
+			return nil, err
+		}
+	}
 	run := func(taskCtx context.Context, update func(string)) ([]blastQueryItem, error) {
 		taskUpdate := safeTaskUpdate(update)
 		labelCtx := mergeContexts(ctx, taskCtx)
+		if err := w.ensureSymbolNameDatabaseWithUpdate(labelCtx, update, update != nil || !w.suppressTaskModals); err != nil {
+			return nil, err
+		}
 		phytozomeSource := phytozome.NewClient(w.httpClient)
 		out := cloneBlastQueryItems(items)
 		taskTimestamp := time.Now().UTC().Format(time.RFC3339Nano)
@@ -7034,12 +7278,8 @@ func (w *BlastWizard) autoIdentifyBlastLabelsWithProgress(ctx context.Context, s
 				for idx := range jobs {
 					result := w.autoIdentifyBlastLabelResultForTask(labelCtx, phytozomeSource, selected, out[idx], taskTimestamp, idx)
 					results <- labelResult{
-						index: idx,
-						request: labelname.AliasRankRequest{
-							TaskTimestamp: result.TaskTimestamp,
-							ItemIndex:     idx,
-							Aliases:       result.Aliases,
-						},
+						index:   idx,
+						request: result.Request,
 					}
 				}
 			}()
@@ -7090,9 +7330,9 @@ func (w *BlastWizard) autoIdentifyBlastLabelsWithProgress(ctx context.Context, s
 	}
 	return tui.RunTaskValueContext(tui.TaskPage{
 		Path:        w.tuiPath("BLAST", "Auto identify"),
-		Title:       "Auto identifying BLAST label names",
+		Title:       "Auto identifying BLAST symbol names",
 		Description: "Reading Phytozome aliases for BLAST query labels.",
-		Initial:     "Auto identifying BLAST label names...",
+		Initial:     "Auto identifying BLAST symbol names...",
 		CancelError: prompt.ErrBackToQueryInput,
 	}, run)
 }
@@ -7118,7 +7358,15 @@ func (w *BlastWizard) supplementBlastAliasesWithProgress(ctx context.Context, se
 	if !hasResolvable {
 		return items, nil
 	}
+	if !w.suppressTaskModals {
+		if err := w.ensureSymbolNameDatabase(ctx, prompt.ErrBackToRowSelection); err != nil {
+			return nil, err
+		}
+	}
 	run := func(taskCtx context.Context, update func(string)) ([]blastQueryItem, error) {
+		if err := w.ensureSymbolNameDatabaseWithUpdate(mergeContexts(ctx, taskCtx), update, update != nil || !w.suppressTaskModals); err != nil {
+			return nil, err
+		}
 		return w.supplementBlastAliases(ctx, taskCtx, phytozome.NewClient(w.httpClient), selected, items, safeTaskUpdate(update))
 	}
 	if w.suppressTaskModals {
@@ -7126,15 +7374,18 @@ func (w *BlastWizard) supplementBlastAliasesWithProgress(ctx context.Context, se
 	}
 	return tui.RunTaskValueContext(tui.TaskPage{
 		Path:        w.tuiPath("BLAST", "Alias labels"),
-		Title:       "Reading BLAST alias label names",
-		Description: "Reading source-species aliases while preserving existing BLAST query label names.",
-		Initial:     "Reading BLAST alias label names...",
+		Title:       "Reading BLAST alias symbol names",
+		Description: "Reading source-species aliases while preserving existing BLAST query symbol names.",
+		Initial:     "Reading BLAST alias symbol names...",
 		CancelError: prompt.ErrBackToQueryInput,
 	}, run)
 }
 
 func (w *BlastWizard) supplementBlastAliases(ctx context.Context, taskCtx context.Context, phytozomeSource source.DataSource, selected model.SpeciesCandidate, items []blastQueryItem, update func(string)) ([]blastQueryItem, error) {
 	labelCtx := mergeContexts(ctx, taskCtx)
+	if err := w.ensureSymbolNameDatabaseWithUpdate(labelCtx, update, update != nil); err != nil {
+		return nil, err
+	}
 	out := cloneBlastQueryItems(items)
 	aliasIndexes := blastItemsNeedingAliasSupplement(out)
 	if len(aliasIndexes) == 0 {
@@ -7157,12 +7408,8 @@ func (w *BlastWizard) supplementBlastAliases(ctx context.Context, taskCtx contex
 			for idx := range jobs {
 				result := w.autoIdentifyBlastLabelResultForTask(labelCtx, phytozomeSource, selected, out[idx], taskTimestamp, idx)
 				results <- aliasResult{
-					index: idx,
-					request: labelname.AliasRankRequest{
-						TaskTimestamp: result.TaskTimestamp,
-						ItemIndex:     idx,
-						Aliases:       result.Aliases,
-					},
+					index:   idx,
+					request: result.Request,
 				}
 			}
 		}()
@@ -7213,6 +7460,7 @@ func (w *BlastWizard) supplementBlastAliases(ctx context.Context, taskCtx contex
 type blastAutoLabelResult struct {
 	Label         string
 	Aliases       []string
+	Request       labelname.AliasRankRequest
 	TaskTimestamp string
 	ItemIndex     int
 }
@@ -7387,17 +7635,17 @@ func (w *BlastWizard) autoIdentifyBlastLabelResultFromPhytozome(ctx context.Cont
 	}
 	keywordRowsByTerm := w.fetchKeywordRowsByTerms(ctx, phytozomeSource, species, blastLabelSearchTerms(item))
 	candidates, aliases := blastLabelCandidatesFromKeywordRows(item, keywordRowsByTerm)
-	ranked := labelname.RankAliases(labelname.AliasRankRequest{
-		TaskTimestamp: time.Now().UTC().Format(time.RFC3339Nano),
-		Aliases:       append(aliases, candidates...),
-	})
+	request := aliasRankRequestFromBlastItem(time.Now().UTC().Format(time.RFC3339Nano), 0, item, append(aliases, candidates...))
+	ranked := labelname.RankAliases(request)
 	label := ""
 	if len(ranked.RankedAliases) > 0 {
 		label = ranked.RankedAliases[0]
 	}
+	request.Aliases = ranked.RankedAliases
 	result := blastAutoLabelResult{
 		Label:         label,
 		Aliases:       ranked.RankedAliases,
+		Request:       request,
 		TaskTimestamp: ranked.TaskTimestamp,
 	}
 	w.storeBlastLabelLookup(phytozomeSource, species, item, result)
@@ -7445,11 +7693,7 @@ func (w *BlastWizard) autoIdentifyBlastLabelResultForTask(ctx context.Context, p
 	if len(aliases) == 0 {
 		aliases = append(aliases, fastaHeaderFallbackAliases(item)...)
 	}
-	request := labelname.AliasRankRequest{
-		TaskTimestamp: taskTimestamp,
-		ItemIndex:     itemIndex,
-		Aliases:       aliases,
-	}
+	request := aliasRankRequestFromBlastItem(taskTimestamp, itemIndex, item, aliases)
 	if pinnedLabel == "" && len(aliases) == 0 {
 		fallback := blastLabelIdentityFallback(item)
 		if item.QuerySource != nil {
@@ -7468,12 +7712,94 @@ func (w *BlastWizard) autoIdentifyBlastLabelResultForTask(ctx context.Context, p
 	} else if len(ranked.RankedAliases) > 0 {
 		label = ranked.RankedAliases[0]
 	}
+	request.Aliases = ranked.RankedAliases
 	return blastAutoLabelResult{
 		Label:         label,
 		Aliases:       ranked.RankedAliases,
+		Request:       request,
 		TaskTimestamp: ranked.TaskTimestamp,
 		ItemIndex:     ranked.ItemIndex,
 	}
+}
+
+func aliasRankRequestFromBlastItem(taskTimestamp string, itemIndex int, item blastQueryItem, aliases []string) labelname.AliasRankRequest {
+	request := labelname.AliasRankRequest{
+		TaskTimestamp: taskTimestamp,
+		ItemIndex:     itemIndex,
+		SearchTerm:    strings.Join(blastLabelSearchTerms(item), "; "),
+		Aliases:       uniqueStrings(aliases),
+	}
+	if item.QuerySource == nil {
+		return request
+	}
+	source := item.QuerySource
+	request.Symbol = strings.TrimSpace(source.LabelName)
+	request.ProteinID = strings.TrimSpace(source.ProteinID)
+	request.GeneID = strings.TrimSpace(source.GeneID)
+	request.TranscriptID = strings.TrimSpace(source.TranscriptID)
+	request.SequenceID = strings.TrimSpace(source.PreferredSequenceID)
+	request.Synonyms = labelname.SplitAliases(source.Synonyms)
+	request.DBXrefs = compactStrings(source.UniProtAccession, source.OriginalInputURL, source.NormalizedURL)
+	request.Description = strings.TrimSpace(firstNonEmpty(source.Annotation, source.AutoDefine))
+	request.SymbolAuthority = strings.TrimSpace(source.LabelName)
+	request.FullNameAuthority = strings.TrimSpace(source.Annotation)
+	request.OtherDesignations = append(labelname.SplitAliases(source.Aliases), labelname.SplitAliases(source.PhgoAliases)...)
+	return request
+}
+
+func aliasRankRequestFromBlastRow(taskTimestamp string, row model.BlastResultRow, aliases []string) labelname.AliasRankRequest {
+	return labelname.AliasRankRequest{
+		TaskTimestamp:     taskTimestamp,
+		SearchTerm:        strings.Join(blastHitLabelSearchTerms(row), "; "),
+		Symbol:            strings.TrimSpace(row.LabelName),
+		ProteinID:         strings.TrimSpace(firstNonEmpty(row.Protein, row.SubjectID)),
+		GeneID:            strings.TrimSpace(row.SubjectID),
+		TranscriptID:      strings.TrimSpace(row.TranscriptID),
+		SequenceID:        strings.TrimSpace(row.SequenceID),
+		Aliases:           uniqueStrings(aliases),
+		Synonyms:          labelname.SplitAliases(row.UniProtGeneNames),
+		DBXrefs:           compactStrings(row.UniProtAccession, row.GeneReportURL, row.InterProAccessions, row.InterProSignatureAccessions, row.InterProPfamAccessions),
+		Description:       strings.TrimSpace(firstNonEmpty(row.Defline, row.UniProtProteinName, row.UniProtFunction)),
+		FullNameAuthority: strings.TrimSpace(row.UniProtProteinName),
+		OtherDesignations: labelname.SplitAliases(strings.Join(compactStrings(row.UniProtKeywords, row.UniProtDomain, row.UniProtRegion, row.InterProEntryName), "; ")),
+		FeatureType:       strings.TrimSpace(row.InterProEntryType),
+	}
+}
+
+func aliasRankRequestFromKeywordRows(taskTimestamp string, aliases []string, rows []model.KeywordResultRow) labelname.AliasRankRequest {
+	request := labelname.AliasRankRequest{
+		TaskTimestamp: taskTimestamp,
+		Aliases:       uniqueStrings(aliases),
+	}
+	for _, row := range rows {
+		request.SearchTerm = firstNonEmpty(request.SearchTerm, row.SearchTerm)
+		request.Symbol = firstNonEmpty(request.Symbol, row.LabelName, labelname.FirstAlias(row.Symbols))
+		request.ProteinID = firstNonEmpty(request.ProteinID, row.ProteinID)
+		request.GeneID = firstNonEmpty(request.GeneID, row.GeneIdentifier, row.GeneLocus)
+		request.TranscriptID = firstNonEmpty(request.TranscriptID, row.TranscriptID)
+		request.SequenceID = firstNonEmpty(request.SequenceID, row.SequenceID)
+		request.Synonyms = append(request.Synonyms, labelname.SplitAliases(row.Synonyms)...)
+		request.Synonyms = append(request.Synonyms, labelname.SplitAliases(row.Aliases)...)
+		request.DBXrefs = append(request.DBXrefs, compactStrings(row.UniProt, row.GeneReportURL)...)
+		request.Description = firstNonEmpty(request.Description, row.Description, row.Comments, row.AutoDefine)
+		request.FullNameAuthority = firstNonEmpty(request.FullNameAuthority, row.Description)
+		request.OtherDesignations = append(request.OtherDesignations, labelname.AutoDefineCandidates(row.AutoDefine)...)
+	}
+	request.Synonyms = uniqueStrings(request.Synonyms)
+	request.DBXrefs = uniqueStrings(request.DBXrefs)
+	request.OtherDesignations = uniqueStrings(request.OtherDesignations)
+	return request
+}
+
+func compactStrings(values ...string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func collectBlastItemAliasCandidates(item blastQueryItem) []string {
@@ -9776,12 +10102,9 @@ func autoIdentifyKeywordLabelIdentifications(groups []model.KeywordSearchGroup) 
 	taskTimestamp := keywordLabelTaskTimestamp(groups)
 	requests := make([]labelname.AliasRankRequest, len(groups))
 	for i, group := range groups {
-		requests[i] = labelname.AliasRankRequest{
-			TaskTimestamp: taskTimestamp,
-			ItemIndex:     i,
-			SearchTerm:    group.SearchTerm,
-			Aliases:       collectKeywordGroupAliasCandidates(group),
-		}
+		requests[i] = aliasRankRequestFromKeywordRows(taskTimestamp, collectKeywordGroupAliasCandidates(group), group.Rows)
+		requests[i].ItemIndex = i
+		requests[i].SearchTerm = firstNonEmpty(requests[i].SearchTerm, group.SearchTerm)
 	}
 	results := labelname.RankAliasBatch(requests)
 	identifications := make([]keywordLabelIdentification, len(results))
@@ -9796,15 +10119,23 @@ func autoIdentifyKeywordLabelIdentifications(groups []model.KeywordSearchGroup) 
 }
 
 func (w *BlastWizard) autoIdentifyKeywordLabelsWithProgress(ctx context.Context, selected model.SpeciesCandidate, groups []model.KeywordSearchGroup) ([]keywordLabelIdentification, error) {
+	if !w.suppressTaskModals {
+		if err := w.ensureSymbolNameDatabase(ctx, prompt.ErrBackToQueryInput); err != nil {
+			return nil, err
+		}
+	}
 	return tui.RunTaskValueContext(tui.TaskPage{
 		Path:        w.tuiPath("Keyword", "Auto identify"),
-		Title:       "Auto identifying label names",
-		Description: "Inferring keyword label names from result rows.",
-		Initial:     "Auto identifying label names...",
+		Title:       "Auto identifying symbol names",
+		Description: "Inferring keyword symbol names from result rows.",
+		Initial:     "Auto identifying symbol names...",
 		CancelError: prompt.ErrBackToQueryInput,
 	}, func(taskCtx context.Context, update func(string)) ([]keywordLabelIdentification, error) {
 		taskUpdate := safeTaskUpdate(update)
 		labelCtx := mergeContexts(ctx, taskCtx)
+		if err := w.ensureSymbolNameDatabaseWithUpdate(labelCtx, update, true); err != nil {
+			return nil, err
+		}
 		taskUpdate("Reviewing keyword result rows...")
 		working := cloneKeywordSearchGroups(groups)
 		if strings.EqualFold(strings.TrimSpace(w.source.Name()), "tair") {
@@ -9818,7 +10149,7 @@ func (w *BlastWizard) autoIdentifyKeywordLabelsWithProgress(ctx context.Context,
 			taskUpdate("Selecting NCBI protein label candidates...")
 			return w.autoIdentifyNCBIKeywordLabelsWithProgress(labelCtx, working), nil
 		}
-		taskUpdate("Selecting label names...")
+		taskUpdate("Selecting symbol names...")
 		return autoIdentifyKeywordLabelIdentifications(working), nil
 	})
 }
@@ -9831,7 +10162,7 @@ func (w *BlastWizard) autoIdentifyTAIRKeywordLabelsWithProgress(ctx context.Cont
 	taskUpdate := safeTaskUpdate(update)
 	taskUpdate("Collecting TAIR label candidates from Phytozome...")
 	identifications := w.autoIdentifyTAIRKeywordLabelsWithLookup(ctx, groups, phytozome.NewClient(w.httpClient))
-	taskUpdate("Selecting TAIR label names...")
+	taskUpdate("Selecting TAIR symbol names...")
 	return identifications
 }
 
@@ -9859,12 +10190,9 @@ func (w *BlastWizard) autoIdentifyNCBIKeywordLabels(ctx context.Context, groups 
 		if len(aliases) == 0 && lookupSource != nil {
 			aliases, sourceType = w.ncbiKeywordGroupPhytozomeAliasCandidates(ctx, group, lookupSource, phytozomeCandidates)
 		}
-		requests[i] = labelname.AliasRankRequest{
-			TaskTimestamp: taskTimestamp,
-			ItemIndex:     i,
-			SearchTerm:    group.SearchTerm,
-			Aliases:       aliases,
-		}
+		requests[i] = aliasRankRequestFromKeywordRows(taskTimestamp, aliases, group.Rows)
+		requests[i].ItemIndex = i
+		requests[i].SearchTerm = firstNonEmpty(requests[i].SearchTerm, group.SearchTerm)
 		sourceTypes[i] = sourceType
 	}
 	results := labelname.RankAliasBatch(requests)
@@ -9885,12 +10213,10 @@ func (w *BlastWizard) autoIdentifyLemnaKeywordLabels(ctx context.Context, select
 	if lookupSource == nil {
 		for i, group := range groups {
 			aliases, sourceType := lemnaKeywordGroupAliasCandidates(group, nil)
-			ranked := labelname.RankAliases(labelname.AliasRankRequest{
-				TaskTimestamp: taskTimestamp,
-				ItemIndex:     i,
-				SearchTerm:    group.SearchTerm,
-				Aliases:       aliases,
-			})
+			request := aliasRankRequestFromKeywordRows(taskTimestamp, aliases, group.Rows)
+			request.ItemIndex = i
+			request.SearchTerm = firstNonEmpty(request.SearchTerm, group.SearchTerm)
+			ranked := labelname.RankAliases(request)
 			identifications[i].Aliases = ranked.RankedAliases
 			identifications[i].SourceType = sourceType
 		}
@@ -9906,12 +10232,9 @@ func (w *BlastWizard) autoIdentifyLemnaKeywordLabels(ctx context.Context, select
 	sourceTypes := make([]string, len(groups))
 	for i, group := range groups {
 		aliases, sourceType := lemnaKeywordGroupAliasCandidates(group, keywordRowsByTerm)
-		requests[i] = labelname.AliasRankRequest{
-			TaskTimestamp: taskTimestamp,
-			ItemIndex:     i,
-			SearchTerm:    group.SearchTerm,
-			Aliases:       aliases,
-		}
+		requests[i] = aliasRankRequestFromKeywordRows(taskTimestamp, aliases, group.Rows)
+		requests[i].ItemIndex = i
+		requests[i].SearchTerm = firstNonEmpty(requests[i].SearchTerm, group.SearchTerm)
 		sourceTypes[i] = sourceType
 	}
 	results := labelname.RankAliasBatch(requests)
@@ -10083,12 +10406,10 @@ func (w *BlastWizard) autoIdentifyTAIRKeywordLabelsWithLookup(ctx context.Contex
 	if lookupSource == nil {
 		for i, group := range groups {
 			aliases, sourceType := tairKeywordGroupAliasCandidates(group, nil)
-			ranked := labelname.RankAliases(labelname.AliasRankRequest{
-				TaskTimestamp: taskTimestamp,
-				ItemIndex:     i,
-				SearchTerm:    firstNonEmpty(group.SearchTerm, group.LabelName),
-				Aliases:       aliases,
-			})
+			request := aliasRankRequestFromKeywordRows(taskTimestamp, aliases, group.Rows)
+			request.ItemIndex = i
+			request.SearchTerm = firstNonEmpty(request.SearchTerm, group.SearchTerm, group.LabelName)
+			ranked := labelname.RankAliases(request)
 			identifications[i].Aliases = uniqueStrings(ranked.RankedAliases)
 			identifications[i].SourceType = sourceType
 		}
@@ -10105,12 +10426,9 @@ func (w *BlastWizard) autoIdentifyTAIRKeywordLabelsWithLookup(ctx context.Contex
 	sourceTypes := make([]string, len(groups))
 	for i, group := range groups {
 		aliases, sourceType := tairKeywordGroupAliasCandidates(group, keywordRowsByTerm)
-		requests[i] = labelname.AliasRankRequest{
-			TaskTimestamp: taskTimestamp,
-			ItemIndex:     i,
-			SearchTerm:    firstNonEmpty(group.SearchTerm, group.LabelName),
-			Aliases:       aliases,
-		}
+		requests[i] = aliasRankRequestFromKeywordRows(taskTimestamp, aliases, group.Rows)
+		requests[i].ItemIndex = i
+		requests[i].SearchTerm = firstNonEmpty(requests[i].SearchTerm, group.SearchTerm, group.LabelName)
 		sourceTypes[i] = sourceType
 	}
 	results := labelname.RankAliasBatch(requests)

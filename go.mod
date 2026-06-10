@@ -12,6 +12,7 @@ require (
 	github.com/goccy/go-json v0.10.6
 	github.com/gofrs/flock v0.13.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
+	github.com/klauspost/compress v1.18.6
 	github.com/phpdave11/gofpdf v1.4.3
 	github.com/pkg/profile v1.7.0
 	github.com/rivo/tview v0.0.0-20241030223020-e34b54cd4c27
@@ -39,7 +40,6 @@ require (
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/google/pprof v0.0.0-20240227163752-401108e1b7e7 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
-	github.com/klauspost/compress v1.18.6 // indirect
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect

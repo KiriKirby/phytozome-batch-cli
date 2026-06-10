@@ -44,7 +44,7 @@ func TestWeztermSpawnArgsIncludeCLICommandAndMainPath(t *testing.T) {
 
 func TestWeztermCLIPathPrefersBundledCandidates(t *testing.T) {
 	tempDir := t.TempDir()
-	exeName := "phytozome-go.bin"
+	exeName := "core.bin"
 	if runtime.GOOS == "windows" {
 		exeName = "phytozome-go.exe"
 	}

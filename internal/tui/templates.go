@@ -3970,7 +3970,7 @@ func RunRowSelectionPage(page RowSelectionPage) (RowSelectionResult, error) {
 		choices := page.LoadAliases(originalRow)
 		aliases := rowSelectionAliasLabels(choices)
 		if len(aliases) == 0 {
-			showInfoModal("Aliases", "No alias labelnames are available for this row.", 58, 10)
+			showInfoModal("Aliases", "No alias symbol names are available for this row.", 58, 10)
 			return
 		}
 		list := tview.NewList()
@@ -3978,7 +3978,7 @@ func RunRowSelectionPage(page RowSelectionPage) (RowSelectionResult, error) {
 		list.SetSelectedTextColor(tcell.ColorBlack)
 		list.SetSelectedBackgroundColor(tcell.ColorWhite)
 		list.SetSelectedFocusOnly(false)
-		list.SetBorder(true).SetTitle(" Alias labelnames ").SetTitleAlign(tview.AlignCenter)
+		list.SetBorder(true).SetTitle(" Alias symbol names ").SetTitleAlign(tview.AlignCenter)
 		for _, alias := range aliases {
 			list.AddItem(alias, "", 0, nil)
 		}
@@ -4067,7 +4067,7 @@ func RunRowSelectionPage(page RowSelectionPage) (RowSelectionResult, error) {
 			confirmInput := func() {
 				name := strings.TrimSpace(input.GetText())
 				if name == "" {
-					message.SetText("Enter a labelname.")
+					message.SetText("Enter a symbol name.")
 					return
 				}
 				if !applyAliasLabel(name) {
@@ -4080,7 +4080,7 @@ func RunRowSelectionPage(page RowSelectionPage) (RowSelectionResult, error) {
 			}
 			box := newButtonFlex()
 			box.SetBorder(true)
-			box.SetTitle(" Rename item labelname ")
+			box.SetTitle(" Rename item symbol name ")
 			box.SetTitleAlign(tview.AlignCenter)
 			box.AddItem(input, 1, 0, true)
 			box.AddItem(message, 1, 0, false)
@@ -4106,13 +4106,13 @@ func RunRowSelectionPage(page RowSelectionPage) (RowSelectionResult, error) {
 		box.SetBorder(true)
 		box.SetTitle(" Aliases ")
 		box.SetTitleAlign(tview.AlignCenter)
-		box.AddItem(textBlock("Choose an alias labelname. Copy copies the selected alias; Set as labelname fixes it as this row's labelname."), 3, 0, false)
+		box.AddItem(textBlock("Choose an alias symbol name. Copy copies the selected alias; Set as symbol name fixes it as this row's symbol name."), 3, 0, false)
 		box.AddItem(list, 0, 1, true)
 		addButtonRow(box, buttonRow(
 			buttonSpec{Label: ButtonClose, Shortcut: ShortcutBack, Action: closeAliasModal, Visible: true},
 			buttonSpec{Label: ButtonCopy, Shortcut: ShortcutCopy, Action: copyAlias, Visible: true},
 			buttonSpec{Label: "Rename", Shortcut: "F2", Action: showCustomAliasInputModal, Visible: true},
-			buttonSpec{Label: "Set as labelname", Shortcut: ShortcutApply, Action: setAliasAsLabel, Visible: true, Primary: true},
+			buttonSpec{Label: "Set as symbol name", Shortcut: ShortcutApply, Action: setAliasAsLabel, Visible: true, Primary: true},
 		))
 		closeModal = closeAliasModal
 		modalOpen = true
@@ -6132,7 +6132,7 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 		choices := page.LoadAliases(runIndex, originalRow)
 		aliases := rowSelectionAliasLabels(choices)
 		if len(aliases) == 0 {
-			showInfoModal("Aliases", "No alias labelnames are available for this row.", 58, 10)
+			showInfoModal("Aliases", "No alias symbol names are available for this row.", 58, 10)
 			return
 		}
 		list := tview.NewList()
@@ -6140,7 +6140,7 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 		list.SetSelectedTextColor(tcell.ColorBlack)
 		list.SetSelectedBackgroundColor(tcell.ColorWhite)
 		list.SetSelectedFocusOnly(false)
-		list.SetBorder(true).SetTitle(" Alias labelnames ").SetTitleAlign(tview.AlignCenter)
+		list.SetBorder(true).SetTitle(" Alias symbol names ").SetTitleAlign(tview.AlignCenter)
 		for _, alias := range aliases {
 			list.AddItem(alias, "", 0, nil)
 		}
@@ -6238,7 +6238,7 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 			confirmInput := func() {
 				name := strings.TrimSpace(input.GetText())
 				if name == "" {
-					message.SetText("Enter a labelname.")
+					message.SetText("Enter a symbol name.")
 					return
 				}
 				if !applyAliasLabel(name) {
@@ -6251,7 +6251,7 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 			}
 			box := newButtonFlex()
 			box.SetBorder(true)
-			box.SetTitle(" Rename item labelname ")
+			box.SetTitle(" Rename item symbol name ")
 			box.SetTitleAlign(tview.AlignCenter)
 			box.AddItem(input, 1, 0, true)
 			box.AddItem(message, 1, 0, false)
@@ -6274,13 +6274,13 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 		box.SetBorder(true)
 		box.SetTitle(" Aliases ")
 		box.SetTitleAlign(tview.AlignCenter)
-		box.AddItem(textBlock("Choose an alias labelname. Copy copies the selected alias; Set as labelname fixes it as this row's labelname."), 3, 0, false)
+		box.AddItem(textBlock("Choose an alias symbol name. Copy copies the selected alias; Set as symbol name fixes it as this row's symbol name."), 3, 0, false)
 		box.AddItem(list, 0, 1, true)
 		addButtonRow(box, buttonRow(
 			buttonSpec{Label: ButtonClose, Shortcut: ShortcutBack, Action: closeAliasModal, Visible: true},
 			buttonSpec{Label: ButtonCopy, Shortcut: ShortcutCopy, Action: copyAlias, Visible: true},
 			buttonSpec{Label: "Rename", Shortcut: "F2", Action: showCustomAliasInputModal, Visible: true},
-			buttonSpec{Label: "Set as labelname", Shortcut: ShortcutApply, Action: setAliasAsLabel, Visible: true, Primary: true},
+			buttonSpec{Label: "Set as symbol name", Shortcut: ShortcutApply, Action: setAliasAsLabel, Visible: true, Primary: true},
 		))
 		closeModal = closeAliasModal
 		modalOpen = true
@@ -7860,13 +7860,13 @@ func RunExternalReferenceModal(page ExternalReferencePage) (ExternalReferenceRes
 	settings := normalizeTUIInterProSettings(page.InterProSettings)
 	helpVisible := false
 	var mainRoot tview.Primitive
-	autoLabelBox := newCheckboxModule(firstNonEmptyText(page.AutoLabelLabel, "Auto identify BLAST hit labelnames"), func() bool {
+	autoLabelBox := newCheckboxModule(firstNonEmptyText(page.AutoLabelLabel, "Auto identify BLAST hit symbol names"), func() bool {
 		return autoLabelHits
 	}, func() {
 		autoLabelHits = !autoLabelHits
 	})
 	autoLabelBox.SetBorder(true)
-	autoLabelBox.SetTitle(" BLAST hit labelnames ")
+	autoLabelBox.SetTitle(" BLAST hit symbol names ")
 	autoLabelBox.SetTitleAlign(tview.AlignCenter)
 	setFocusBorder(autoLabelBox.Box, false)
 	attachFocusBorder(autoLabelBox.Box)
@@ -9054,9 +9054,9 @@ func buildFamilyBlastCustomizeModal(page FamilyBlastCustomizePage, app *tview.Ap
 			if ref.Group < 0 || ref.Group >= len(groups) || ref.Member < 0 || ref.Member >= len(groups[ref.Group].Members) {
 				return
 			}
-			showNameInputModal("Rename item labelname", "Rename", groups[ref.Group].Members[ref.Member].LabelName, func(name string) string {
+			showNameInputModal("Rename item symbol name", "Rename", groups[ref.Group].Members[ref.Member].LabelName, func(name string) string {
 				if name == "" {
-					return "Enter a labelname."
+					return "Enter a symbol name."
 				}
 				groups[ref.Group].Members[ref.Member].LabelName = name
 				groups[ref.Group].Members[ref.Member].Aliases = compactFamilyBlastGroupLabels(append(groups[ref.Group].Members[ref.Member].Aliases, name))
@@ -9072,9 +9072,9 @@ func buildFamilyBlastCustomizeModal(page FamilyBlastCustomizePage, app *tview.Ap
 		if !ok {
 			return
 		}
-		showNameInputModal("Rename item labelname", "Rename", member.LabelName, func(name string) string {
+		showNameInputModal("Rename item symbol name", "Rename", member.LabelName, func(name string) string {
 			if name == "" {
-				return "Enter a labelname."
+				return "Enter a symbol name."
 			}
 			ungrouped[selectedUngrouped].LabelName = name
 			ungrouped[selectedUngrouped].Aliases = compactFamilyBlastGroupLabels(append(ungrouped[selectedUngrouped].Aliases, name))
@@ -9211,7 +9211,7 @@ func buildFamilyBlastCustomizeModal(page FamilyBlastCustomizePage, app *tview.Ap
 		list.SetSelectedTextColor(tcell.ColorBlack)
 		list.SetSelectedBackgroundColor(tcell.ColorWhite)
 		list.SetSelectedFocusOnly(false)
-		list.SetBorder(true).SetTitle(" Alias labelnames ").SetTitleAlign(tview.AlignCenter)
+		list.SetBorder(true).SetTitle(" Alias symbol names ").SetTitleAlign(tview.AlignCenter)
 		for _, alias := range aliases {
 			list.AddItem(alias, "", 0, nil)
 		}
@@ -9240,7 +9240,7 @@ func buildFamilyBlastCustomizeModal(page FamilyBlastCustomizePage, app *tview.Ap
 				statusLine = "Copy failed: " + err.Error()
 				showSmallStatusModal("Copy failed", statusLine)
 			} else {
-				statusLine = "Copied alias labelname."
+				statusLine = "Copied alias symbol name."
 			}
 			refreshStatus()
 		}
@@ -9252,7 +9252,7 @@ func buildFamilyBlastCustomizeModal(page FamilyBlastCustomizePage, app *tview.Ap
 			member.LabelName = alias
 			member.Aliases = compactFamilyBlastGroupLabels(append(member.Aliases, alias))
 			updateMember(member)
-			statusLine = fmt.Sprintf("Set labelname to %s.", alias)
+			statusLine = fmt.Sprintf("Set symbol name to %s.", alias)
 			refreshStatus()
 			closeModal()
 		}
@@ -9260,12 +9260,12 @@ func buildFamilyBlastCustomizeModal(page FamilyBlastCustomizePage, app *tview.Ap
 		box.SetBorder(true)
 		box.SetTitle(" Aliases ")
 		box.SetTitleAlign(tview.AlignCenter)
-		box.AddItem(textBlock("Choose an alias labelname. Copy copies the selected alias; Set as labelname fixes it as this item's labelname."), 3, 0, false)
+		box.AddItem(textBlock("Choose an alias symbol name. Copy copies the selected alias; Set as symbol name fixes it as this item's symbol name."), 3, 0, false)
 		box.AddItem(list, 0, 1, true)
 		buttons := buttonRow(
 			buttonSpec{Label: ButtonClose, Shortcut: ShortcutBack, Action: closeModal, Visible: true},
 			buttonSpec{Label: ButtonCopy, Shortcut: ShortcutCopy, Action: copyAlias, Visible: true},
-			buttonSpec{Label: "Set as labelname", Shortcut: "F2", Action: setAliasAsLabel, Visible: true, Primary: true},
+			buttonSpec{Label: "Set as symbol name", Shortcut: "F2", Action: setAliasAsLabel, Visible: true, Primary: true},
 		)
 		addButtonRow(box, buttons)
 		capture := func(event *tcell.EventKey) *tcell.EventKey {

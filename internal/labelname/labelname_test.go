@@ -1,6 +1,13 @@
 package labelname
 
-import "testing"
+import (
+	"compress/gzip"
+	"net/http"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
 
 func TestBestAliasPrefersCanonicalFamilyStyleOverInternalPrefix(t *testing.T) {
 	if got := BestAlias("ATPAL1; PAL1"); got != "PAL1" {
@@ -80,4 +87,71 @@ func TestRankAliasBatchMatchesSingleRankingWithTrimmedDuplicateInputs(t *testing
 			}
 		}
 	}
+}
+
+func TestGeneInfoDatabaseRanksToSymbolName(t *testing.T) {
+	path := buildTestGeneInfoDB(t, stringsJoinLines(
+		"#tax_id\tGeneID\tSymbol\tLocusTag\tSynonyms\tdbXrefs\tchromosome\tmap_location\tdescription\ttype_of_gene\tSymbol_from_nomenclature_authority\tFull_name_from_nomenclature_authority\tNomenclature_status\tOther_designations\tModification_date\tFeature_type",
+		"3702\t838863\tVND6\t-\tANAC101|AtVND6\tTAIR:AT5G62380\t5\t-\tvascular NAC domain protein\tprotein-coding\tVND6\tvascular-related NAC-domain 6\tO\tNAC domain protein 101\t20260610\t-",
+	))
+	SetDefaultGeneInfoDatabasePath(path)
+	t.Cleanup(func() { SetDefaultGeneInfoDatabasePath("") })
+
+	got := RankAliases(AliasRankRequest{DBXrefs: []string{"TAIR:AT5G62380"}})
+	if len(got.RankedAliases) == 0 || got.RankedAliases[0] != "VND6" {
+		t.Fatalf("RankAliases() = %#v, want VND6 from gene_info Symbol", got.RankedAliases)
+	}
+}
+
+func TestGeneInfoDatabaseMissReturnsEmpty(t *testing.T) {
+	path := buildTestGeneInfoDB(t, stringsJoinLines(
+		"#tax_id\tGeneID\tSymbol\tLocusTag\tSynonyms\tdbXrefs\tchromosome\tmap_location\tdescription\ttype_of_gene\tSymbol_from_nomenclature_authority\tFull_name_from_nomenclature_authority\tNomenclature_status\tOther_designations\tModification_date\tFeature_type",
+		"3702\t838863\tVND6\t-\tANAC101\tTAIR:AT5G62380\t5\t-\tvascular NAC domain protein\tprotein-coding\tVND6\tvascular-related NAC-domain 6\tO\tNAC domain protein 101\t20260610\t-",
+	))
+	SetDefaultGeneInfoDatabasePath(path)
+	t.Cleanup(func() { SetDefaultGeneInfoDatabasePath("") })
+
+	got := RankAliases(AliasRankRequest{Aliases: []string{"NO_SUCH_SYMBOL"}})
+	if len(got.RankedAliases) != 0 {
+		t.Fatalf("RankAliases() = %#v, want empty when local gene_info has no match", got.RankedAliases)
+	}
+}
+
+func buildTestGeneInfoDB(t testing.TB, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	gzPath := filepath.Join(dir, "gene_info.gz")
+	file, err := os.Create(gzPath)
+	if err != nil {
+		t.Fatalf("create gzip: %v", err)
+	}
+	gz := gzip.NewWriter(file)
+	if _, err := gz.Write([]byte(content)); err != nil {
+		t.Fatalf("write gzip: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("close gzip: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close file: %v", err)
+	}
+	dbPath := filepath.Join(dir, "symbolname.pgd")
+	lastModified := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
+	if err := buildGeneInfoDatabaseFromGZ(gzPath, dbPath, GeneInfoMetadata{
+		URL:             GeneInfoURL,
+		LastModified:    lastModified,
+		LastModifiedRaw: lastModified.Format(http.TimeFormat),
+		ContentLength:   int64(len(content)),
+	}, DownloadOptions{}); err != nil {
+		t.Fatalf("build gene db: %v", err)
+	}
+	return dbPath
+}
+
+func stringsJoinLines(lines ...string) string {
+	out := ""
+	for _, line := range lines {
+		out += line + "\n"
+	}
+	return out
 }

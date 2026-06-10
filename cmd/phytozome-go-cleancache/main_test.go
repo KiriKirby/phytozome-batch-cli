@@ -9,7 +9,7 @@ import (
 
 func TestResolveMainProgramPathFromFindsSiblingBinary(t *testing.T) {
 	tmp := t.TempDir()
-	cleanerPath := filepath.Join(tmp, "phytozome-go-cleancache.bin")
+	cleanerPath := filepath.Join(tmp, "phgohelper.bin")
 	mainPath := filepath.Join(tmp, mainProgramName)
 
 	if err := os.WriteFile(cleanerPath, []byte("cleaner"), 0o644); err != nil {
@@ -30,7 +30,7 @@ func TestResolveMainProgramPathFromFindsSiblingBinary(t *testing.T) {
 
 func TestResolveMainProgramPathFromErrorsWhenSiblingBinaryMissing(t *testing.T) {
 	tmp := t.TempDir()
-	cleanerPath := filepath.Join(tmp, "phytozome-go-cleancache.bin")
+	cleanerPath := filepath.Join(tmp, "phgohelper.bin")
 
 	if err := os.WriteFile(cleanerPath, []byte("cleaner"), 0o644); err != nil {
 		t.Fatalf("write cleaner: %v", err)
@@ -46,7 +46,7 @@ func TestResolveCacheTargetsFromIncludesBundleAndWorkingDirectory(t *testing.T) 
 	tmp := t.TempDir()
 	repoRoot := filepath.Join(tmp, "repo")
 	bundleDir := filepath.Join(repoRoot, "bin", "phytozome-go_windows_amd64_wezterm")
-	cleanerPath := filepath.Join(bundleDir, "phytozome-go-cleancache.bin")
+	cleanerPath := filepath.Join(bundleDir, "phgohelper.bin")
 	workingDir := filepath.Join(tmp, "separate-workdir")
 
 	for _, dir := range []string{repoRoot, bundleDir, workingDir} {
@@ -71,7 +71,7 @@ func TestResolveCacheTargetsFromIncludesBundleAndWorkingDirectory(t *testing.T) 
 
 func TestResolveCacheTargetsFromDeduplicatesSameDirectory(t *testing.T) {
 	tmp := t.TempDir()
-	cleanerPath := filepath.Join(tmp, "phytozome-go-cleancache.bin")
+	cleanerPath := filepath.Join(tmp, "phgohelper.bin")
 
 	got := resolveCacheTargetsFrom(cleanerPath, tmp)
 	want := []string{filepath.Join(tmp, ".cache")}
@@ -82,7 +82,7 @@ func TestResolveCacheTargetsFromDeduplicatesSameDirectory(t *testing.T) {
 
 func TestResolveWezTermCLIPathFromFindsSiblingCLI(t *testing.T) {
 	tmp := t.TempDir()
-	cleanerPath := filepath.Join(tmp, "phytozome-go-cleancache.bin")
+	cleanerPath := filepath.Join(tmp, "phgohelper.bin")
 	cliPath := filepath.Join(tmp, windowsWezTermCLIName)
 
 	if err := os.WriteFile(cleanerPath, []byte("cleaner"), 0o644); err != nil {

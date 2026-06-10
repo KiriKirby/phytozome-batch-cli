@@ -31,14 +31,14 @@ func main() {
 	}
 	bundleDir := filepath.Dir(exePath)
 	terminalPath := filepath.Join(bundleDir, "wezterm.bin")
-	cleanCachePath := filepath.Join(bundleDir, "phytozome-go-cleancache.bin")
+	cleanCachePath := filepath.Join(bundleDir, "phgohelper.bin")
 	configPath := filepath.Join(bundleDir, "wezterm.lua")
 
 	if err := requireFile(terminalPath, "GPU terminal runtime"); err != nil {
 		showError(err.Error())
 		os.Exit(1)
 	}
-	if err := requireFile(cleanCachePath, "phytozome GO cache cleaner"); err != nil {
+	if err := requireFile(cleanCachePath, "phytozome GO startup helper"); err != nil {
 		showError(err.Error())
 		os.Exit(1)
 	}
@@ -59,7 +59,7 @@ func main() {
 		"--always-new-process",
 		"--cwd", bundleDir,
 		"--",
-		".\\phytozome-go-cleancache.bin",
+		".\\phgohelper.bin",
 	}
 	args = append(args, os.Args[1:]...)
 

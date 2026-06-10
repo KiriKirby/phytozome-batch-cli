@@ -30,7 +30,7 @@ $appBundleDir = Join-Path $bundleDir "phytozome GO.app"
 $appMacOSDir = Join-Path $appBundleDir "Contents\MacOS"
 $appResourcesDir = Join-Path $appBundleDir "Contents\Resources"
 $archivePath = Join-Path $repoRoot "bin\phytozome-go_macos_${GOARCH}_wezterm.tar.gz"
-$cleanCachePath = Join-Path $appMacOSDir "phytozome-go-cleancache.bin"
+$cleanCachePath = Join-Path $appMacOSDir "phgohelper.bin"
 
 if ($Prepare -or -not (Test-Path -LiteralPath $sourceAppDir -PathType Container)) {
     New-Item -ItemType Directory -Force -Path $assetDir | Out-Null
@@ -66,7 +66,7 @@ WEZTERM_BIN="$APP_DIR/wezterm"
 if [ "$#" -eq 0 ]; then
   exec "$WEZTERM_BIN" start --always-new-process --cwd "$APP_DIR"
 fi
-exec "$WEZTERM_BIN" start --always-new-process --cwd "$APP_DIR" -- "$APP_DIR/phytozome-go.bin" "$@"
+exec "$WEZTERM_BIN" start --always-new-process --cwd "$APP_DIR" -- "$APP_DIR/core.bin" "$@"
 '@
 $launcherPath = Join-Path $appMacOSDir "phytozome-go"
 $launcherScript | Set-Content -LiteralPath $launcherPath -Encoding Ascii
@@ -128,7 +128,7 @@ try {
         $env:GOOS = "darwin"
         $env:GOARCH = $GOARCH
         $env:CGO_ENABLED = "0"
-        go build -trimpath -ldflags="-X main.version=$BuildVersion" -o (Join-Path $appMacOSDir "phytozome-go.bin") .\cmd\phytozome-go
+        go build -trimpath -ldflags="-X main.version=$BuildVersion" -o (Join-Path $appMacOSDir "core.bin") .\cmd\phytozome-go
         if ($LASTEXITCODE -ne 0) {
             throw "go build darwin/$GOARCH phytozome-go failed"
         }

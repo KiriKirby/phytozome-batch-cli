@@ -6,6 +6,7 @@ tree-viewer/node_modules/
 tree-viewer/dist/
 tmp/
 .cache/
+.phgo-init-state.json
 output/
 _mega_source/
 $root/

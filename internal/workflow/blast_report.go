@@ -1053,7 +1053,7 @@ func blastColumnSource(header string) string {
 	case "source_database", "blast_program", "label_name", "labelname_type", "protein", "subject_id", "species", "e_value", "percent_identity", "align_query_length_percent", "target_length", "align_len", "strands", "query_id", "query_from", "query_to", "target_from", "target_to", "bitscore", "mismatches", "gap_openings", "identical", "positives", "gaps", "query_length", "jbrowse_name", "target_id", "sequence_id", "transcript_id", "defline", "gene_report_url":
 		return "BLAST result"
 	case "phgo_alias":
-		return "labelname system"
+		return "symbol name system"
 	case "blast_labelname", "blast_geneid":
 		return "BLAST query source"
 	case "interpro_conserved_region_status", "interpro_accessions", "interpro_entry_name", "interpro_entry_type", "interpro_coverage_percent", "interpro_match_regions":
@@ -1078,11 +1078,11 @@ func blastColumnMeaning(header string) string {
 	case "labelname_type":
 		return "How this row's label_name was obtained."
 	case "phgo_alias":
-		return "Ranked alias list for this BLAST hit row, produced by the labelname system."
+		return "Ranked alias list for this BLAST hit row, produced by the symbol name system."
 	case "protein":
 		return "Target protein identifier returned by BLAST/source parser."
 	case "blast_labelname":
-		return "Labelname of the query gene or sequence that produced this hit."
+		return "Symbol name of the query gene or sequence that produced this hit."
 	case "blast_geneid":
 		return "Transcript-style identifier of the query sequence that produced this hit; displayed externally as blast_transcript."
 	case "subject_id":
@@ -1113,7 +1113,7 @@ func blastColumnCollection(header string) string {
 	case "label_name", "labelname_type":
 		return "copied or inferred for the BLAST hit row"
 	case "phgo_alias":
-		return "computed by BLAST-hit labelname auto-identification or preserved from the hit row's stored alias ranking"
+		return "computed by BLAST-hit symbol name auto-identification or preserved from the hit row's stored alias ranking"
 	case "blast_labelname", "blast_geneid":
 		return "copied from the BLAST query source"
 	case "protein", "subject_id", "species", "e_value", "percent_identity", "align_query_length_percent", "target_length", "align_len", "strands", "query_id", "query_from", "query_to", "target_from", "target_to", "bitscore", "mismatches", "gap_openings", "identical", "positives", "gaps", "query_length", "jbrowse_name", "target_id", "sequence_id", "transcript_id", "defline", "gene_report_url":

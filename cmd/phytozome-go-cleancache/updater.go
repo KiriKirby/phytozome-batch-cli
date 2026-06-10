@@ -39,6 +39,7 @@ type updateAssetSpec struct {
 	StripPrefix         string
 	RelaunchRelative    string
 	OutputRelative      string
+	PreserveRelative    []string
 	VerifyRelative      []string
 	InstallRootFromExec func(string) (string, error)
 }
@@ -204,7 +205,7 @@ func planStagedUpdate(release githubRelease, currentVersion string) (stagedUpdat
 
 	cleanerPath, err := os.Executable()
 	if err != nil {
-		return stagedUpdatePlan{}, false, fmt.Errorf("locate cache cleaner executable: %w", err)
+		return stagedUpdatePlan{}, false, fmt.Errorf("locate helper executable: %w", err)
 	}
 	installRoot, err := spec.InstallRootFromExec(cleanerPath)
 	if err != nil {
@@ -242,10 +243,11 @@ func updateAssetSpecFor(goos string, goarch string) (updateAssetSpec, error) {
 			ArchiveKind:      "zip",
 			RelaunchRelative: "phytozome-go.exe",
 			OutputRelative:   "output",
+			PreserveRelative: []string{"output", "symbolname.pgd"},
 			VerifyRelative: []string{
 				"phytozome-go.exe",
-				"phytozome-go-cleancache.bin",
-				"phytozome-go.bin",
+				"phgohelper.bin",
+				"core.bin",
 				"wezterm.bin",
 			},
 			InstallRootFromExec: func(cleanerPath string) (string, error) {
@@ -262,10 +264,11 @@ func updateAssetSpecFor(goos string, goarch string) (updateAssetSpec, error) {
 			StripPrefix:      "phytozome-go_linux_amd64_wezterm",
 			RelaunchRelative: "phytozome-go",
 			OutputRelative:   "output",
+			PreserveRelative: []string{"output", "symbolname.pgd"},
 			VerifyRelative: []string{
 				"phytozome-go",
-				"phytozome-go-cleancache.bin",
-				"phytozome-go.bin",
+				"phgohelper.bin",
+				"core.bin",
 				"wezterm",
 				"wezterm.AppImage",
 			},
@@ -285,16 +288,17 @@ func updateAssetSpecFor(goos string, goarch string) (updateAssetSpec, error) {
 			StripPrefix:      "phytozome GO.app",
 			RelaunchRelative: "Contents/MacOS/phytozome-go",
 			OutputRelative:   "Contents/MacOS/output",
+			PreserveRelative: []string{"Contents/MacOS/output", "Contents/MacOS/symbolname.pgd"},
 			VerifyRelative: []string{
 				"Contents/MacOS/phytozome-go",
-				"Contents/MacOS/phytozome-go-cleancache.bin",
-				"Contents/MacOS/phytozome-go.bin",
+				"Contents/MacOS/phgohelper.bin",
+				"Contents/MacOS/core.bin",
 				"Contents/MacOS/wezterm",
 			},
 			InstallRootFromExec: func(cleanerPath string) (string, error) {
 				cleanerPath = filepath.Clean(strings.TrimSpace(cleanerPath))
 				if cleanerPath == "" {
-					return "", fmt.Errorf("cache cleaner path is empty")
+					return "", fmt.Errorf("helper path is empty")
 				}
 				macOSDir := filepath.Dir(cleanerPath)
 				contentsDir := filepath.Dir(macOSDir)
@@ -302,7 +306,7 @@ func updateAssetSpecFor(goos string, goarch string) (updateAssetSpec, error) {
 				if strings.EqualFold(filepath.Base(contentsDir), "Contents") && strings.HasSuffix(strings.ToLower(filepath.Base(appDir)), ".app") {
 					return appDir, nil
 				}
-				return "", fmt.Errorf("could not locate macOS app bundle from cache cleaner:\n%s", cleanerPath)
+				return "", fmt.Errorf("could not locate macOS app bundle from helper:\n%s", cleanerPath)
 			},
 		}, nil
 	default:
@@ -606,14 +610,16 @@ func buildPowerShellUpdaterScript(plan stagedUpdatePlan, args []string) string {
 	if len(argList) > 0 {
 		startProcessLine += " -ArgumentList @(" + strings.Join(argList, ", ") + ")"
 	}
+	preserveRelative := preserveRelativePaths(plan.Spec)
 
-return fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+	return fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 $ParentPid = %d
 $TargetDir = %s
 $StageDir = %s
 $Launcher = %s
 $WorkingDir = %s
 $OutputRelative = %s
+$PreserveRelative = @(%s)
 $VerifyRelative = @(%s)
 $LogPath = [Environment]::GetEnvironmentVariable(%s)
 $LastUpdateErrorEnvName = %s
@@ -664,13 +670,21 @@ function Copy-PreservedOutputToStage {
     }
 
     $Destination = Join-Path $StageRoot $RelativePath
-    Write-UpdateLog ("preserve output start: " + $Source + " -> " + $Destination)
-    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
-    & robocopy $Source $Destination /E /COPY:DAT /DCOPY:DAT /R:20 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
-    $code = $LASTEXITCODE
-    Write-UpdateLog ("preserve output robocopy exit code: " + $code)
-    if ($code -gt 7) {
-        throw "preserve output failed with exit code $code"
+    if (Test-Path -LiteralPath $Source -PathType Leaf) {
+        Write-UpdateLog ("preserve file start: " + $Source + " -> " + $Destination)
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Destination) | Out-Null
+        Copy-Item -LiteralPath $Source -Destination $Destination -Force
+        return
+    }
+    if (Test-Path -LiteralPath $Source -PathType Container) {
+        Write-UpdateLog ("preserve directory start: " + $Source + " -> " + $Destination)
+        New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+        & robocopy $Source $Destination /E /COPY:DAT /DCOPY:DAT /R:20 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+        $code = $LASTEXITCODE
+        Write-UpdateLog ("preserve directory robocopy exit code: " + $code)
+        if ($code -gt 7) {
+            throw "preserve output failed with exit code $code"
+        }
     }
 }
 
@@ -729,7 +743,9 @@ $LastUpdateError = ''
 for ($i = 0; $i -lt 120; $i++) {
     try {
         Write-UpdateLog ("update attempt " + ($i + 1))
-        Copy-PreservedOutputToStage -CurrentRoot $TargetDir -StageRoot $StageDir -RelativePath $OutputRelative
+        foreach ($relative in $PreserveRelative) {
+            Copy-PreservedOutputToStage -CurrentRoot $TargetDir -StageRoot $StageDir -RelativePath $relative
+        }
         Invoke-RobocopyMirror -Source $StageDir -Destination $TargetDir
         Assert-KeyFilesUpdated -StageRoot $StageDir -TargetRoot $TargetDir -RelativePaths $VerifyRelative
         Remove-Item -LiteralPath $StageDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -760,7 +776,7 @@ $env:%s = '1'
 Write-UpdateLog ("launching after successful update: " + $Launcher)
 %s
 Write-UpdateLog "launch command returned after successful update"
-`, os.Getpid(), psQuote(plan.InstallRoot), psQuote(plan.StageDir), psQuote(plan.RelaunchPath), psQuote(filepath.Dir(plan.RelaunchPath)), psQuote(plan.Spec.OutputRelative), strings.Join(psQuoteSlice(plan.Spec.VerifyRelative), ", "), psQuote(updateDebugLogEnv), psQuote(lastUpdateErrorEnv), startProcessLine, skipBundlePreflightEnv, startProcessLine)
+`, os.Getpid(), psQuote(plan.InstallRoot), psQuote(plan.StageDir), psQuote(plan.RelaunchPath), psQuote(filepath.Dir(plan.RelaunchPath)), psQuote(plan.Spec.OutputRelative), strings.Join(psQuoteSlice(preserveRelative), ", "), strings.Join(psQuoteSlice(plan.Spec.VerifyRelative), ", "), psQuote(updateDebugLogEnv), psQuote(lastUpdateErrorEnv), startProcessLine, skipBundlePreflightEnv, startProcessLine)
 }
 
 func writeShellUpdater(plan stagedUpdatePlan, args []string) (string, error) {
@@ -778,6 +794,8 @@ func writeShellUpdater(plan stagedUpdatePlan, args []string) (string, error) {
 	if len(quotedArgs) > 0 {
 		argsSuffix = " " + strings.Join(quotedArgs, " ")
 	}
+	preserveRelative := preserveRelativePaths(plan.Spec)
+	preserveList := shQuote(strings.Join(preserveRelative, "\n"))
 
 	script := fmt.Sprintf(`#!/bin/sh
 set -eu
@@ -788,33 +806,34 @@ BACKUP_DIR=%s
 LAUNCHER=%s
 WORKING_DIR=%s
 OUTPUT_REL=%s
+PRESERVE_RELATIVES=%s
 
 preserve_output() {
-  if [ -z "$OUTPUT_REL" ]; then
+  REL="$1"
+  if [ -z "$REL" ]; then
     return
   fi
-  SOURCE="$TARGET_DIR/$OUTPUT_REL"
-  if [ ! -d "$SOURCE" ]; then
+  SOURCE="$TARGET_DIR/$REL"
+  if [ ! -e "$SOURCE" ]; then
     return
   fi
-  DEST="$STAGE_DIR/$OUTPUT_REL"
-  mkdir -p "$DEST"
-  cp -a "$SOURCE"/. "$DEST"/
-}
-
-func psQuoteSlice(values []string) []string {
-	quoted := make([]string, 0, len(values))
-	for _, value := range values {
-		quoted = append(quoted, psQuote(value))
-	}
-	return quoted
+  DEST="$STAGE_DIR/$REL"
+  if [ -d "$SOURCE" ]; then
+    mkdir -p "$DEST"
+    cp -a "$SOURCE"/. "$DEST"/
+  else
+    mkdir -p "$(dirname "$DEST")"
+    cp -p "$SOURCE" "$DEST"
+  fi
 }
 
 while kill -0 "$PARENT_PID" 2>/dev/null; do
   sleep 1
 done
 
-preserve_output
+for REL in $PRESERVE_RELATIVES; do
+  preserve_output "$REL"
+done
 rm -rf "$BACKUP_DIR"
 if [ -e "$TARGET_DIR" ]; then
   mv "$TARGET_DIR" "$BACKUP_DIR"
@@ -824,7 +843,7 @@ rm -rf "$BACKUP_DIR"
 
 cd "$WORKING_DIR"
 env %s=1 "$LAUNCHER"%s >/dev/null 2>&1 &
-`, os.Getpid(), shQuote(plan.InstallRoot), shQuote(plan.StageDir), shQuote(plan.BackupDir), shQuote(plan.RelaunchPath), shQuote(filepath.Dir(plan.RelaunchPath)), shQuote(plan.Spec.OutputRelative), skipBundlePreflightEnv, argsSuffix)
+`, os.Getpid(), shQuote(plan.InstallRoot), shQuote(plan.StageDir), shQuote(plan.BackupDir), shQuote(plan.RelaunchPath), shQuote(filepath.Dir(plan.RelaunchPath)), shQuote(plan.Spec.OutputRelative), preserveList, skipBundlePreflightEnv, argsSuffix)
 
 	if _, err := scriptFile.WriteString(script); err != nil {
 		return "", fmt.Errorf("write updater script %s: %w", scriptFile.Name(), err)
@@ -871,6 +890,28 @@ func writeWindowsVBScriptLauncher(scriptPath string) (string, error) {
 		return "", fmt.Errorf("write updater launcher %s: %w", launcherFile.Name(), err)
 	}
 	return launcherFile.Name(), nil
+}
+
+func preserveRelativePaths(spec updateAssetSpec) []string {
+	values := append([]string(nil), spec.PreserveRelative...)
+	if len(values) == 0 && strings.TrimSpace(spec.OutputRelative) != "" {
+		values = append(values, spec.OutputRelative)
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.Trim(strings.ReplaceAll(strings.TrimSpace(value), "\\", "/"), "/")
+		if value == "" {
+			continue
+		}
+		key := strings.ToLower(value)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func psQuote(value string) string {

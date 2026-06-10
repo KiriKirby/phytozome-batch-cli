@@ -206,7 +206,7 @@ Website:
     }
 
     $entries = @(tar -tf $zipPath)
-    foreach ($required in @("phytozome-go.exe", "phytozome-go.bin", "phytozome-go-cleancache.bin", "wezterm.bin", "wezterm-cli.bin", "wezterm.lua", "opengl32.dll", "mega-phgo-runtime.bin", "muscleWin64.bin")) {
+    foreach ($required in @("phytozome-go.exe", "core.bin", "phgohelper.bin", "wezterm.bin", "wezterm-cli.bin", "wezterm.lua", "opengl32.dll", "mega-phgo-runtime.bin", "muscleWin64.bin")) {
         if (-not ($entries -contains $required)) {
             throw "Windows zip is missing required file: $required"
         }
@@ -225,7 +225,7 @@ Website:
     }
 
     $linuxEntries = @(tar -tf $linuxArchivePath)
-    foreach ($required in @("phytozome-go_linux_amd64_wezterm/phytozome-go", "phytozome-go_linux_amd64_wezterm/phytozome-go.bin", "phytozome-go_linux_amd64_wezterm/phytozome-go-cleancache.bin", "phytozome-go_linux_amd64_wezterm/wezterm", "phytozome-go_linux_amd64_wezterm/wezterm.AppImage", "phytozome-go_linux_amd64_wezterm/wezterm.lua")) {
+    foreach ($required in @("phytozome-go_linux_amd64_wezterm/phytozome-go", "phytozome-go_linux_amd64_wezterm/core.bin", "phytozome-go_linux_amd64_wezterm/phgohelper.bin", "phytozome-go_linux_amd64_wezterm/wezterm", "phytozome-go_linux_amd64_wezterm/wezterm.AppImage", "phytozome-go_linux_amd64_wezterm/wezterm.lua")) {
         if (-not ($linuxEntries -contains $required)) {
             throw "Linux archive is missing required file: $required"
         }
@@ -233,7 +233,7 @@ Website:
 
     foreach ($macArchive in @($macIntelArchivePath, $macArmArchivePath)) {
         $macEntries = @(tar -tf $macArchive)
-        foreach ($required in @("phytozome GO.app/Contents/Info.plist", "phytozome GO.app/Contents/MacOS/phytozome-go", "phytozome GO.app/Contents/MacOS/phytozome-go.bin", "phytozome GO.app/Contents/MacOS/phytozome-go-cleancache.bin", "phytozome GO.app/Contents/MacOS/wezterm", "phytozome GO.app/Contents/Resources/wezterm.lua")) {
+        foreach ($required in @("phytozome GO.app/Contents/Info.plist", "phytozome GO.app/Contents/MacOS/phytozome-go", "phytozome GO.app/Contents/MacOS/core.bin", "phytozome GO.app/Contents/MacOS/phgohelper.bin", "phytozome GO.app/Contents/MacOS/wezterm", "phytozome GO.app/Contents/Resources/wezterm.lua")) {
             if (-not ($macEntries -contains $required)) {
                 throw "macOS archive '$macArchive' is missing required file: $required"
             }
@@ -241,7 +241,7 @@ Website:
     }
 
     Invoke-Checked "version check" {
-        cmd /c bin\phytozome-go_windows_amd64_wezterm\phytozome-go.bin --version
+        cmd /c bin\phytozome-go_windows_amd64_wezterm\core.bin --version
     }
 
     Add-Type -AssemblyName System.Drawing
