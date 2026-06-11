@@ -391,7 +391,46 @@ func FetchGeneInfoDirectoryParts(ctx context.Context, rawURL string) ([]GeneInfo
 	if len(parts) == 0 {
 		return nil, fmt.Errorf("NCBI Gene GENE_INFO directory did not expose any split source files")
 	}
+	parts = enrichGeneInfoSourceFiles(ctx, parts)
 	return parts, nil
+}
+
+func enrichGeneInfoSourceFiles(ctx context.Context, parts []GeneInfoSourceFile) []GeneInfoSourceFile {
+	out := append([]GeneInfoSourceFile(nil), parts...)
+	for i := range out {
+		enriched, err := fetchGeneInfoSourceFileHead(ctx, out[i])
+		if err == nil {
+			out[i] = enriched
+		}
+	}
+	return out
+}
+
+func fetchGeneInfoSourceFileHead(ctx context.Context, part GeneInfoSourceFile) (GeneInfoSourceFile, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, part.URL, nil)
+	if err != nil {
+		return part, err
+	}
+	req.Header.Set("User-Agent", "phytozome-go-symbolname")
+	resp, err := geneInfoHTTP.Do(req)
+	if err != nil {
+		return part, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return part, fmt.Errorf("NCBI Gene split source HEAD returned %s", resp.Status)
+	}
+	if resp.ContentLength > 0 {
+		part.ContentLength = resp.ContentLength
+	} else if headerLength, err := strconv.ParseInt(strings.TrimSpace(resp.Header.Get("Content-Length")), 10, 64); err == nil && headerLength > 0 {
+		part.ContentLength = headerLength
+	}
+	if lastRaw := strings.TrimSpace(resp.Header.Get("Last-Modified")); lastRaw != "" {
+		part.LastModifiedRaw = lastRaw
+		part.LastModified, _ = http.ParseTime(lastRaw)
+	}
+	part.AcceptRanges = strings.Contains(strings.ToLower(resp.Header.Get("Accept-Ranges")), "bytes")
+	return part, nil
 }
 
 func ensureTrailingSlash(value string) string {

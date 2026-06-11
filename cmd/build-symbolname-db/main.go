@@ -232,7 +232,7 @@ func downloadSourceParts(ctx context.Context, parts []labelname.GeneInfoSourceFi
 func downloadSourcePart(ctx context.Context, part labelname.GeneInfoSourceFile, dir string) (string, error) {
 	name := safeSourceFilename(part)
 	path := filepath.Join(dir, name)
-	if stat, err := os.Stat(path); err == nil && stat.Size() == part.ContentLength && part.ContentLength > 0 {
+	if stat, err := os.Stat(path); err == nil && stat.Size() > 0 && (part.ContentLength <= 0 || stat.Size() == part.ContentLength) {
 		return path, nil
 	}
 	client := netconfig.DefaultHTTPClient()
@@ -285,6 +285,10 @@ func writeSourcePart(path string, resp *http.Response, part labelname.GeneInfoSo
 	if part.ContentLength > 0 && written != part.ContentLength {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("split source %s size mismatch: got %d want %d", part.Name, written, part.ContentLength)
+	}
+	if written <= 0 {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("split source %s is empty", part.Name)
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
