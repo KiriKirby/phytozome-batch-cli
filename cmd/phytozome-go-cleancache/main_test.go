@@ -118,3 +118,14 @@ func TestBuildWezTermSpawnArgsUsesMainPathAndAppArgs(t *testing.T) {
 		t.Fatalf("buildWezTermSpawnArgs = %#v, want %#v", got, want)
 	}
 }
+
+func TestShouldSkipBundleMaintenancePreflight(t *testing.T) {
+	t.Setenv(skipBundlePreflightEnv, "")
+	if shouldSkipBundleMaintenancePreflight() {
+		t.Fatal("shouldSkipBundleMaintenancePreflight returned true for empty env")
+	}
+	t.Setenv(skipBundlePreflightEnv, "1")
+	if !shouldSkipBundleMaintenancePreflight() {
+		t.Fatal("shouldSkipBundleMaintenancePreflight returned false for set env")
+	}
+}

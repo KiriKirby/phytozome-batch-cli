@@ -1,0 +1,66 @@
+name: Build symbolname.pgd
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Monthly prebuilt symbol-name database refresh: day 18 at 02:18 UTC.
+    - cron: "18 2 18 * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: symbolname-db-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build prebuilt symbol name database
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .tmp/symbolname
+          DB_BRANCH="symbolname-db"
+          DB_DIR="symbolname"
+          DB_URL="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${DB_BRANCH}/${DB_DIR}/symbolname.pgd.gz"
+          go run ./cmd/build-symbolname-db \
+            -out ".tmp/${DB_DIR}/symbolname.pgd.gz" \
+            -manifest ".tmp/${DB_DIR}/manifest.json" \
+            -download-url "${DB_URL}" \
+            -source-url "https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/" \
+            -download-workers "8"
+
+      - name: Publish symbolname-db branch
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          PUBLISH_DIR="$(mktemp -d)"
+          cp -R .tmp/symbolname "${PUBLISH_DIR}/symbolname"
+          cat > "${PUBLISH_DIR}/README.md" <<'EOF'
+          # symbolname-db
+
+          This branch stores the latest prebuilt `symbolname.pgd` and `manifest.json` for phytozome GO.
+          GitHub Actions rebuilds it from NCBI Gene `GENE_INFO/` split sources once per month on day 18 at 02:18 UTC, plus manual dispatch.
+          EOF
+          cd "${PUBLISH_DIR}"
+          git init
+          git checkout -b symbolname-db
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md symbolname
+          git commit -m "Update prebuilt symbolname.pgd"
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push --force origin HEAD:symbolname-db

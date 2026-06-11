@@ -67,34 +67,32 @@ func run() error {
 		return err
 	}
 	_ = startupstate.Write(appDir, startupstate.State{Status: startupstate.StatusInitializing, Message: "Startup helper is preparing phytozome GO."})
-	if shouldSkipBundlePreflight() {
+	if shouldSkipBundleMaintenancePreflight() {
 		_, _ = fmt.Fprintln(os.Stdout)
-		_, _ = fmt.Fprintln(os.Stdout, "Bundle preflight skipped for relaunch.")
-		_ = startupstate.Complete(appDir)
-		return launchMainProgram(os.Args[1:])
-	}
+		_, _ = fmt.Fprintln(os.Stdout, "Bundle cache cleanup and release update check skipped for relaunch.")
+	} else {
+		cacheTargets, err := resolveCacheTargets()
+		if err != nil {
+			return err
+		}
 
-	cacheTargets, err := resolveCacheTargets()
-	if err != nil {
-		return err
-	}
+		_, _ = fmt.Fprintln(os.Stdout)
+		_, _ = fmt.Fprintln(os.Stdout, "Cache cleanup targets:")
+		for _, target := range cacheTargets {
+			_, _ = fmt.Fprintf(os.Stdout, "  - %s\n", target)
+		}
 
-	_, _ = fmt.Fprintln(os.Stdout)
-	_, _ = fmt.Fprintln(os.Stdout, "Cache cleanup targets:")
-	for _, target := range cacheTargets {
-		_, _ = fmt.Fprintf(os.Stdout, "  - %s\n", target)
-	}
+		if err := runSpinner("Deleting .cache directories", func() error {
+			return removeCacheTargets(cacheTargets)
+		}); err != nil {
+			return err
+		}
 
-	if err := runSpinner("Deleting .cache directories", func() error {
-		return removeCacheTargets(cacheTargets)
-	}); err != nil {
-		return err
-	}
-
-	_, _ = fmt.Fprintln(os.Stdout, "Cache cleanup complete.")
-	if updateLaunched := maybeHandleReleaseUpdate(os.Args[1:]); updateLaunched {
-		_ = startupstate.Complete(appDir)
-		return nil
+		_, _ = fmt.Fprintln(os.Stdout, "Cache cleanup complete.")
+		if updateLaunched := maybeHandleReleaseUpdate(os.Args[1:]); updateLaunched {
+			_ = startupstate.Complete(appDir)
+			return nil
+		}
 	}
 	mainAlreadyLaunched, err := maybeEnsureSymbolNameDatabase(appDir, os.Args[1:])
 	if err != nil {
@@ -126,7 +124,7 @@ func printLastUpdateErrorNotice() {
 	_, _ = fmt.Fprintf(os.Stdout, "Reason: %s\n", message)
 }
 
-func shouldSkipBundlePreflight() bool {
+func shouldSkipBundleMaintenancePreflight() bool {
 	return strings.TrimSpace(os.Getenv(skipBundlePreflightEnv)) != ""
 }
 
@@ -322,17 +320,19 @@ func maybeEnsureSymbolNameDatabase(appDir string, args []string) (bool, error) {
 	labelname.SetDefaultGeneInfoDatabasePath(dbPath)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	remote, err := labelname.FetchRemoteGeneInfoMetadata(ctx)
+	plan, err := labelname.PreferredGeneInfoInstallPlan(ctx)
 	if err != nil {
 		return false, err
 	}
+	remote := plan.Remote
 	local, localErr := labelname.InspectGeneInfoDatabase(dbPath)
 	if localErr != nil {
 		_, _ = fmt.Fprintln(os.Stdout)
-		_, _ = fmt.Fprintln(os.Stdout, "NCBI Gene symbol name library is missing.")
+		_, _ = fmt.Fprintln(os.Stdout, "Symbol name library is missing.")
 		_, _ = fmt.Fprintf(os.Stdout, "Database path: %s\n", dbPath)
-		_, _ = fmt.Fprintf(os.Stdout, "Source: %s\n", labelname.GeneInfoURL)
-		_, _ = fmt.Fprintf(os.Stdout, "Remote size: %s\n", humanBytes(remote.ContentLength))
+		_, _ = fmt.Fprintf(os.Stdout, "Source: %s\n", plan.SourceLabel())
+		_, _ = fmt.Fprintf(os.Stdout, "Download URL: %s\n", plan.SourceURL())
+		_, _ = fmt.Fprintf(os.Stdout, "Remote size: %s\n", humanBytes(plan.DownloadSize()))
 		_, _ = fmt.Fprintf(os.Stdout, "Last modified: %s\n", firstNonEmptyText(remote.LastModifiedRaw, "unknown"))
 		if !canPromptForUpdateConsent() {
 			return false, fmt.Errorf("symbol name library is missing and confirmation is not interactive")
@@ -349,7 +349,7 @@ func maybeEnsureSymbolNameDatabase(appDir string, args []string) (bool, error) {
 				return false, err
 			}
 		}
-		if err := downloadSymbolNameDatabaseStartupWithRetry(appDir, "Downloading and building NCBI Gene symbol name library", dbPath, remote, launchNow); err != nil {
+		if err := downloadSymbolNameDatabaseStartupWithRetry(appDir, "Downloading and preparing symbol name library", dbPath, plan, launchNow); err != nil {
 			return launchNow, err
 		}
 		return launchNow, nil
@@ -363,12 +363,14 @@ func maybeEnsureSymbolNameDatabase(appDir string, args []string) (bool, error) {
 		expiredDays = 0
 	}
 	_, _ = fmt.Fprintln(os.Stdout)
-	_, _ = fmt.Fprintln(os.Stdout, "NCBI Gene symbol name library update available.")
+	_, _ = fmt.Fprintln(os.Stdout, "Symbol name library update available.")
 	_, _ = fmt.Fprintf(os.Stdout, "Database path: %s\n", dbPath)
 	_, _ = fmt.Fprintf(os.Stdout, "Local Last-Modified:  %s\n", firstNonEmptyText(local.LastModifiedRaw, local.LastModified.Format(time.RFC1123)))
 	_, _ = fmt.Fprintf(os.Stdout, "Remote Last-Modified: %s\n", firstNonEmptyText(remote.LastModifiedRaw, remote.LastModified.Format(time.RFC1123)))
 	_, _ = fmt.Fprintf(os.Stdout, "Expired by: %d days\n", expiredDays)
-	_, _ = fmt.Fprintf(os.Stdout, "Remote size: %s\n", humanBytes(remote.ContentLength))
+	_, _ = fmt.Fprintf(os.Stdout, "Source: %s\n", plan.SourceLabel())
+	_, _ = fmt.Fprintf(os.Stdout, "Download URL: %s\n", plan.SourceURL())
+	_, _ = fmt.Fprintf(os.Stdout, "Remote size: %s\n", humanBytes(plan.DownloadSize()))
 	if !canPromptForUpdateConsent() {
 		_, _ = fmt.Fprintln(os.Stdout, "Skipping symbol name library update because confirmation is not interactive.")
 		return false, nil
@@ -385,16 +387,16 @@ func maybeEnsureSymbolNameDatabase(appDir string, args []string) (bool, error) {
 			return false, err
 		}
 	}
-	if err := downloadSymbolNameDatabaseStartupWithRetry(appDir, "Downloading and building updated NCBI Gene symbol name library", dbPath, remote, launchNow); err != nil {
+	if err := downloadSymbolNameDatabaseStartupWithRetry(appDir, "Downloading and preparing updated symbol name library", dbPath, plan, launchNow); err != nil {
 		return launchNow, err
 	}
 	return launchNow, nil
 }
 
-func downloadSymbolNameDatabaseStartupWithRetry(appDir string, label string, dbPath string, remote labelname.GeneInfoMetadata, allowUse bool) error {
+func downloadSymbolNameDatabaseStartupWithRetry(appDir string, label string, dbPath string, plan labelname.GeneInfoInstallPlan, allowUse bool) error {
 	for {
 		_ = startupstate.Write(appDir, startupstate.State{Status: startupstate.StatusDownloading, AllowUse: allowUse, Message: label, DBPath: dbPath})
-		err := downloadSymbolNameDatabaseWithProgress(label, dbPath, remote)
+		err := downloadSymbolNameDatabaseWithProgress(label, dbPath, plan)
 		if err == nil {
 			return nil
 		}
@@ -413,13 +415,13 @@ func downloadSymbolNameDatabaseStartupWithRetry(appDir string, label string, dbP
 	}
 }
 
-func downloadSymbolNameDatabaseWithProgress(label string, dbPath string, remote labelname.GeneInfoMetadata) error {
+func downloadSymbolNameDatabaseWithProgress(label string, dbPath string, plan labelname.GeneInfoInstallPlan) error {
 	_, _ = fmt.Fprintf(os.Stdout, "%s...\n", label)
 	_, _ = fmt.Fprintf(os.Stdout, "Writing database to: %s\n", dbPath)
 	progress := newConsoleProgress(os.Stdout)
 	downloadCtx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
 	defer cancel()
-	err := labelname.DownloadAndBuildGeneInfoDatabase(downloadCtx, dbPath, remote, labelname.DownloadOptions{
+	err := plan.Install(downloadCtx, dbPath, labelname.DownloadOptions{
 		Workers: labelname.DefaultDownloadWorkers(),
 		Stdout:  os.Stdout,
 		Progress: func(event labelname.GeneInfoProgress) {
