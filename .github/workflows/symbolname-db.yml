@@ -47,9 +47,11 @@ jobs:
           if [[ "${MODE}" == "sample" ]]; then
             DB_BRANCH="symbolname-db-sample"
             SAMPLE_FLAG="-sample"
+            PART_SIZE="64"
           else
             DB_BRANCH="symbolname-db"
             SAMPLE_FLAG=""
+            PART_SIZE="$((50 * 1024 * 1024))"
           fi
           DB_DIR="symbolname"
           DB_URL="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${DB_BRANCH}/${DB_DIR}/symbolname.pgd.zst"
@@ -58,9 +60,12 @@ jobs:
             -manifest ".tmp/${DB_DIR}/manifest.json" \
             -download-url "${DB_URL}" \
             -source-url "https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/" \
+            -part-size "${PART_SIZE}" \
             -download-workers "8" \
             ${SAMPLE_FLAG}
-          rm -f ".tmp/${DB_DIR}/symbolname.pgd.zst"
+          if compgen -G ".tmp/${DB_DIR}/symbolname.pgd.zst.part*" > /dev/null; then
+            rm -f ".tmp/${DB_DIR}/symbolname.pgd.zst"
+          fi
           echo "${DB_BRANCH}" > .tmp/symbolname-db-branch.txt
 
       - name: Publish symbolname-db branch
