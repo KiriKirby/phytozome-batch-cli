@@ -36,13 +36,15 @@ func run() error {
 	var sourceURL string
 	var downloadWorkers int
 	var partSize int64
+	var simulateArchiveSize int64
 	var sample bool
 	flag.StringVar(&outPath, "out", "", "output compressed .pgd.zst path")
 	flag.StringVar(&manifestPath, "manifest", "", "output manifest.json path")
 	flag.StringVar(&downloadURL, "download-url", "", "final raw download URL for the .pgd file")
 	flag.StringVar(&sourceURL, "source-url", labelname.GeneInfoDirectoryURL, "NCBI GENE_INFO directory URL")
 	flag.IntVar(&downloadWorkers, "download-workers", 8, "parallel NCBI split-file downloads")
-	flag.Int64Var(&partSize, "part-size", 50*1024*1024, "compressed archive part size in bytes")
+	flag.Int64Var(&partSize, "part-size", 4*1024*1024, "compressed archive part size in bytes")
+	flag.Int64Var(&simulateArchiveSize, "simulate-archive-size", 0, "write a deterministic fake compressed archive of this size and split it without downloading/building")
 	flag.BoolVar(&sample, "sample", false, "build from a bundled small sample instead of NCBI")
 	flag.Parse()
 
@@ -61,6 +63,9 @@ func run() error {
 	}
 	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
 		return fmt.Errorf("create manifest directory: %w", err)
+	}
+	if simulateArchiveSize > 0 {
+		return runSimulatedArchiveBuild(outPath, manifestPath, downloadURL, partSize, simulateArchiveSize)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
@@ -130,6 +135,75 @@ func run() error {
 	return nil
 }
 
+func runSimulatedArchiveBuild(outPath string, manifestPath string, downloadURL string, partSize int64, archiveSize int64) error {
+	if archiveSize <= 0 {
+		return fmt.Errorf("-simulate-archive-size must be positive")
+	}
+	if err := writeDeterministicArchive(outPath, archiveSize); err != nil {
+		return err
+	}
+	sum, err := fileSHA256(outPath)
+	if err != nil {
+		return err
+	}
+	fixed := time.Date(2026, 6, 10, 5, 29, 0, 0, time.UTC)
+	manifest := labelname.PrebuiltGeneInfoManifest{
+		SchemaVersion:       "2",
+		URL:                 "",
+		SHA256:              sum,
+		ContentLength:       archiveSize,
+		RecordCount:         0,
+		GeneratedAt:         time.Now().UTC().Format(time.RFC3339Nano),
+		SourceURL:           "simulate://archive",
+		SourceLastModified:  fixed.Format(http.TimeFormat),
+		SourceContentLength: archiveSize,
+	}
+	if err := splitArchive(outPath, partSize, &manifest, downloadURL); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal simulated manifest: %w", err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(manifestPath, data, 0o644); err != nil {
+		return fmt.Errorf("write simulated manifest: %w", err)
+	}
+	if len(manifest.Parts) > 0 {
+		_, _ = fmt.Fprintf(os.Stdout, "Simulated archive %s split into %d part(s) of at most %s\n", formatBytes(archiveSize), len(manifest.Parts), formatBytes(partSize))
+	} else {
+		_, _ = fmt.Fprintf(os.Stdout, "Simulated archive %s kept as single file\n", formatBytes(archiveSize))
+	}
+	return nil
+}
+
+func writeDeterministicArchive(path string, size int64) error {
+	file, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("create simulated archive: %w", err)
+	}
+	defer file.Close()
+	buf := make([]byte, 1024*1024)
+	for i := range buf {
+		buf[i] = byte((i*31 + 17) % 251)
+	}
+	remaining := size
+	for remaining > 0 {
+		n := int64(len(buf))
+		if remaining < n {
+			n = remaining
+		}
+		if _, err := file.Write(buf[:n]); err != nil {
+			return fmt.Errorf("write simulated archive: %w", err)
+		}
+		remaining -= n
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close simulated archive: %w", err)
+	}
+	return nil
+}
+
 func buildSourceGZPaths(ctx context.Context, sourceDir string, sample bool, sourceURL string, downloadWorkers int) ([]string, labelname.GeneInfoMetadata, error) {
 	if sample {
 		path, remote, err := buildSampleGeneInfoSource(sourceDir)
@@ -194,7 +268,7 @@ func splitArchive(path string, partSize int64, manifest *labelname.PrebuiltGeneI
 		return fmt.Errorf("manifest is nil")
 	}
 	if partSize <= 0 {
-		partSize = 50 * 1024 * 1024
+		partSize = 4 * 1024 * 1024
 	}
 	if downloadURL == "" {
 		manifest.URL = path
@@ -213,8 +287,8 @@ func splitArchive(path string, partSize int64, manifest *labelname.PrebuiltGeneI
 		return fmt.Errorf("open archive for split: %w", err)
 	}
 	defer file.Close()
-	parts := make([]labelname.PrebuiltGeneInfoPart, 0, int((info.Size()/partSize)+1))
-	index := 0
+	plannedParts := planArchiveParts(info.Size(), partSize, downloadURL)
+	parts := make([]labelname.PrebuiltGeneInfoPart, 0, len(plannedParts))
 	for {
 		buf := make([]byte, partSize)
 		n, readErr := io.ReadFull(file, buf)
@@ -225,16 +299,17 @@ func splitArchive(path string, partSize int64, manifest *labelname.PrebuiltGeneI
 		} else if readErr != nil {
 			return fmt.Errorf("read archive for split: %w", readErr)
 		}
-		index++
-		partName := fmt.Sprintf("%s.part%03d", downloadURL, index)
-		partPath := path + fmt.Sprintf(".part%03d", index)
+		partIndex := len(parts)
+		if partIndex >= len(plannedParts) {
+			return fmt.Errorf("archive split produced more parts than planned")
+		}
+		partPath := path + fmt.Sprintf(".part%03d", partIndex+1)
 		if err := os.WriteFile(partPath, buf[:n], 0o644); err != nil {
 			return fmt.Errorf("write archive part %s: %w", partPath, err)
 		}
-		parts = append(parts, labelname.PrebuiltGeneInfoPart{
-			URL:           partName,
-			ContentLength: int64(n),
-		})
+		part := plannedParts[partIndex]
+		part.ContentLength = int64(n)
+		parts = append(parts, part)
 		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
 			break
 		}
@@ -243,6 +318,27 @@ func splitArchive(path string, partSize int64, manifest *labelname.PrebuiltGeneI
 	manifest.Parts = parts
 	manifest.ContentLength = 0
 	return nil
+}
+
+func planArchiveParts(totalSize int64, partSize int64, downloadURL string) []labelname.PrebuiltGeneInfoPart {
+	if totalSize <= 0 || partSize <= 0 || strings.TrimSpace(downloadURL) == "" || totalSize <= partSize {
+		return nil
+	}
+	count := int((totalSize + partSize - 1) / partSize)
+	parts := make([]labelname.PrebuiltGeneInfoPart, 0, count)
+	for index := 1; index <= count; index++ {
+		size := partSize
+		if index == count {
+			if remainder := totalSize % partSize; remainder > 0 {
+				size = remainder
+			}
+		}
+		parts = append(parts, labelname.PrebuiltGeneInfoPart{
+			URL:           fmt.Sprintf("%s.part%03d", downloadURL, index),
+			ContentLength: size,
+		})
+	}
+	return parts
 }
 
 func directoryMetadata(sourceURL string, parts []labelname.GeneInfoSourceFile) labelname.GeneInfoMetadata {

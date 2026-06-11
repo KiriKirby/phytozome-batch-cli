@@ -36,3 +36,27 @@ func TestListPublishFilesSortedAndSkipsGit(t *testing.T) {
 		}
 	}
 }
+
+func TestValidatePublishFilesRejectsOversizedBlob(t *testing.T) {
+	_, err := validatePublishFiles([]publishFile{
+		{Path: "symbolname/symbolname.pgd.zst.part001", Size: defaultMaxGitHubBlobBytes + 1},
+	}, defaultMaxGitHubBlobBytes)
+	if err == nil {
+		t.Fatal("validatePublishFiles() error = nil, want oversized blob error")
+	}
+}
+
+func TestValidatePublishFilesTotalsAcceptedFiles(t *testing.T) {
+	total, err := validatePublishFiles([]publishFile{
+		{Path: "README.md", Size: 10},
+		{Path: "symbolname/manifest.json", Size: 20},
+		{Path: "symbolname/symbolname.pgd.zst.part001", Size: defaultMaxGitHubBlobBytes},
+	}, defaultMaxGitHubBlobBytes)
+	if err != nil {
+		t.Fatalf("validatePublishFiles() error = %v", err)
+	}
+	want := defaultMaxGitHubBlobBytes + 30
+	if total != want {
+		t.Fatalf("total=%d, want %d", total, want)
+	}
+}

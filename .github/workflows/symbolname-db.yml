@@ -10,6 +10,7 @@ on:
         type: choice
         options:
           - sample
+          - simulate
           - full
   schedule:
     # Monthly prebuilt symbol-name database refresh: day 18 at 02:18 UTC.
@@ -47,11 +48,21 @@ jobs:
           if [[ "${MODE}" == "sample" ]]; then
             DB_BRANCH="symbolname-db-sample"
             SAMPLE_FLAG="-sample"
+            SIMULATE_FLAG=""
             PART_SIZE="64"
+          elif [[ "${MODE}" == "simulate" ]]; then
+            DB_BRANCH="symbolname-db-simulate"
+            SAMPLE_FLAG=""
+            SIMULATE_FLAG="-simulate-archive-size $((40 * 1024 * 1024))"
+            PART_SIZE="$((4 * 1024 * 1024))"
           else
             DB_BRANCH="symbolname-db"
             SAMPLE_FLAG=""
-            PART_SIZE="$((50 * 1024 * 1024))"
+            SIMULATE_FLAG=""
+            # GitHub's create-blob API rejects larger JSON/base64 payloads.
+            # Keep full parts deliberately small so publish can be tested without
+            # relying on a fragile multi-GB git pack push.
+            PART_SIZE="$((4 * 1024 * 1024))"
           fi
           DB_DIR="symbolname"
           DB_URL="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${DB_BRANCH}/${DB_DIR}/symbolname.pgd.zst"
@@ -62,6 +73,7 @@ jobs:
             -source-url "https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/" \
             -part-size "${PART_SIZE}" \
             -download-workers "8" \
+            ${SIMULATE_FLAG} \
             ${SAMPLE_FLAG}
           if compgen -G ".tmp/${DB_DIR}/symbolname.pgd.zst.part*" > /dev/null; then
             rm -f ".tmp/${DB_DIR}/symbolname.pgd.zst"
@@ -77,7 +89,7 @@ jobs:
           PUBLISH_DIR="$(mktemp -d)"
           DB_BRANCH="$(cat .tmp/symbolname-db-branch.txt)"
           cp -R .tmp/symbolname "${PUBLISH_DIR}/symbolname"
-          cat > "${PUBLISH_DIR}/README.md" <<EOF
+          cat > "${PUBLISH_DIR}/README.md" <<'EOF'
           # symbolname-db
 
           This branch stores the latest prebuilt `symbolname.pgd` and `manifest.json` for phytozome GO.

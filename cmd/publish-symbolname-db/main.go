@@ -18,6 +18,8 @@ import (
 	"github.com/KiriKirby/phytozome-go/internal/netconfig"
 )
 
+const defaultMaxGitHubBlobBytes int64 = 4 * 1024 * 1024
+
 type githubClient struct {
 	repo   string
 	token  string
@@ -62,11 +64,17 @@ func run() error {
 	var sourceDir string
 	var token string
 	var message string
+	var maxBlobBytes int64
+	var orphan bool
+	var dryRun bool
 	flag.StringVar(&repo, "repo", strings.TrimSpace(os.Getenv("GITHUB_REPOSITORY")), "owner/repo")
 	flag.StringVar(&branch, "branch", "", "target branch")
 	flag.StringVar(&sourceDir, "source", "", "directory containing README.md and symbolname/")
 	flag.StringVar(&token, "token", strings.TrimSpace(os.Getenv("GITHUB_TOKEN")), "GitHub token")
 	flag.StringVar(&message, "message", "Update prebuilt symbolname.pgd", "commit message")
+	flag.Int64Var(&maxBlobBytes, "max-blob-bytes", defaultMaxGitHubBlobBytes, "maximum file size allowed for GitHub API blob upload")
+	flag.BoolVar(&orphan, "orphan", true, "publish an orphan commit so old large database snapshots do not accumulate in branch history")
+	flag.BoolVar(&dryRun, "dry-run", false, "validate and list the publish set without contacting GitHub")
 	flag.Parse()
 	if strings.TrimSpace(repo) == "" {
 		return fmt.Errorf("-repo is required")
@@ -77,18 +85,22 @@ func run() error {
 	if strings.TrimSpace(sourceDir) == "" {
 		return fmt.Errorf("-source is required")
 	}
-	if strings.TrimSpace(token) == "" {
+	if strings.TrimSpace(token) == "" && !dryRun {
 		return fmt.Errorf("-token or GITHUB_TOKEN is required")
 	}
 	files, err := listPublishFiles(sourceDir)
 	if err != nil {
 		return err
 	}
-	var total int64
-	for _, file := range files {
-		total += file.Size
+	total, err := validatePublishFiles(files, maxBlobBytes)
+	if err != nil {
+		return err
 	}
 	fmt.Fprintf(os.Stdout, "Publishing %d files to %s:%s (%s)\n", len(files), repo, branch, formatBytes(total))
+	if dryRun {
+		fmt.Fprintf(os.Stdout, "Dry run passed; largest file is at most %s\n", formatBytes(maxBlobBytes))
+		return nil
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 	defer cancel()
 	client := githubClient{repo: repo, token: token, client: netconfig.DefaultHTTPClient()}
@@ -103,20 +115,35 @@ func run() error {
 		fmt.Fprintf(os.Stdout, "Uploaded blob %s (%s/%s)\n", file.Path, formatBytes(done), formatBytes(total))
 		entries = append(entries, treeEntry{Path: file.Path, Mode: "100644", Type: "blob", SHA: sha})
 	}
-	baseSHA, _ := client.getRef(ctx, branch)
+	existingSHA, _ := client.getRef(ctx, branch)
+	parentSHA := ""
+	if !orphan {
+		parentSHA = existingSHA
+	}
 	treeSHA, err := client.createTree(ctx, entries)
 	if err != nil {
 		return err
 	}
-	commitSHA, err := client.createCommit(ctx, message, treeSHA, baseSHA)
+	commitSHA, err := client.createCommit(ctx, message, treeSHA, parentSHA)
 	if err != nil {
 		return err
 	}
-	if err := client.updateRef(ctx, branch, commitSHA, baseSHA == ""); err != nil {
+	if err := client.updateRef(ctx, branch, commitSHA, existingSHA == ""); err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stdout, "Published %s to %s\n", commitSHA, branch)
 	return nil
+}
+
+func validatePublishFiles(files []publishFile, maxBlobBytes int64) (int64, error) {
+	var total int64
+	for _, file := range files {
+		if maxBlobBytes > 0 && file.Size > maxBlobBytes {
+			return 0, fmt.Errorf("%s is %s, larger than -max-blob-bytes %s; reduce build -part-size before publishing", file.Path, formatBytes(file.Size), formatBytes(maxBlobBytes))
+		}
+		total += file.Size
+	}
+	return total, nil
 }
 
 type publishFile struct {
