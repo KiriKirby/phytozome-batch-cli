@@ -34,11 +34,13 @@ func run() error {
 	var downloadURL string
 	var sourceURL string
 	var downloadWorkers int
+	var partSize int64
 	flag.StringVar(&outPath, "out", "", "output compressed .pgd.gz path")
 	flag.StringVar(&manifestPath, "manifest", "", "output manifest.json path")
 	flag.StringVar(&downloadURL, "download-url", "", "final raw download URL for the .pgd file")
 	flag.StringVar(&sourceURL, "source-url", labelname.GeneInfoDirectoryURL, "NCBI GENE_INFO directory URL")
 	flag.IntVar(&downloadWorkers, "download-workers", 8, "parallel NCBI split-file downloads")
+	flag.Int64Var(&partSize, "part-size", 90*1024*1024, "compressed archive part size in bytes")
 	flag.Parse()
 
 	if outPath == "" {
@@ -108,7 +110,7 @@ func run() error {
 
 	manifest := labelname.PrebuiltGeneInfoManifest{
 		SchemaVersion:       info.SchemaVersion,
-		URL:                 downloadURL,
+		URL:                 "",
 		SHA256:              sum,
 		ContentLength:       archiveInfo.Size(),
 		RecordCount:         info.RecordCount,
@@ -116,6 +118,9 @@ func run() error {
 		SourceURL:           remote.URL,
 		SourceLastModified:  remote.LastModifiedRaw,
 		SourceContentLength: remote.ContentLength,
+	}
+	if err := splitArchive(outPath, partSize, &manifest, downloadURL); err != nil {
+		return err
 	}
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
@@ -125,6 +130,62 @@ func run() error {
 	if err := os.WriteFile(manifestPath, data, 0o644); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
+	return nil
+}
+
+func splitArchive(path string, partSize int64, manifest *labelname.PrebuiltGeneInfoManifest, downloadURL string) error {
+	if manifest == nil {
+		return fmt.Errorf("manifest is nil")
+	}
+	if partSize <= 0 {
+		partSize = 90 * 1024 * 1024
+	}
+	if downloadURL == "" {
+		manifest.URL = path
+		return nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("stat archive for split: %w", err)
+	}
+	if info.Size() <= partSize {
+		manifest.URL = downloadURL
+		return nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open archive for split: %w", err)
+	}
+	defer file.Close()
+	parts := make([]labelname.PrebuiltGeneInfoPart, 0, int((info.Size()/partSize)+1))
+	index := 0
+	for {
+		buf := make([]byte, partSize)
+		n, readErr := io.ReadFull(file, buf)
+		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
+			if n == 0 {
+				break
+			}
+		} else if readErr != nil {
+			return fmt.Errorf("read archive for split: %w", readErr)
+		}
+		index++
+		partName := fmt.Sprintf("%s.part%03d", downloadURL, index)
+		partPath := path + fmt.Sprintf(".part%03d", index)
+		if err := os.WriteFile(partPath, buf[:n], 0o644); err != nil {
+			return fmt.Errorf("write archive part %s: %w", partPath, err)
+		}
+		parts = append(parts, labelname.PrebuiltGeneInfoPart{
+			URL:           partName,
+			ContentLength: int64(n),
+		})
+		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
+			break
+		}
+	}
+	manifest.URL = ""
+	manifest.Parts = parts
+	manifest.ContentLength = 0
 	return nil
 }
 

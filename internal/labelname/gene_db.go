@@ -72,15 +72,21 @@ type GeneDatabaseInfo struct {
 }
 
 type PrebuiltGeneInfoManifest struct {
-	SchemaVersion       string `json:"schema_version"`
-	URL                 string `json:"url"`
-	SHA256              string `json:"sha256,omitempty"`
-	ContentLength       int64  `json:"content_length,omitempty"`
-	RecordCount         int64  `json:"record_count,omitempty"`
-	GeneratedAt         string `json:"generated_at,omitempty"`
-	SourceURL           string `json:"source_url,omitempty"`
-	SourceLastModified  string `json:"source_last_modified,omitempty"`
-	SourceContentLength int64  `json:"source_content_length,omitempty"`
+	SchemaVersion       string                 `json:"schema_version"`
+	URL                 string                 `json:"url"`
+	Parts               []PrebuiltGeneInfoPart `json:"parts,omitempty"`
+	SHA256              string                 `json:"sha256,omitempty"`
+	ContentLength       int64                  `json:"content_length,omitempty"`
+	RecordCount         int64                  `json:"record_count,omitempty"`
+	GeneratedAt         string                 `json:"generated_at,omitempty"`
+	SourceURL           string                 `json:"source_url,omitempty"`
+	SourceLastModified  string                 `json:"source_last_modified,omitempty"`
+	SourceContentLength int64                  `json:"source_content_length,omitempty"`
+}
+
+type PrebuiltGeneInfoPart struct {
+	URL           string `json:"url"`
+	ContentLength int64  `json:"content_length,omitempty"`
 }
 
 type GeneInfoInstallPlan struct {
@@ -228,7 +234,7 @@ func FetchPrebuiltGeneInfoManifest(ctx context.Context) (PrebuiltGeneInfoManifes
 	if strings.TrimSpace(manifest.SchemaVersion) != geneDBSchemaVersion {
 		return PrebuiltGeneInfoManifest{}, fmt.Errorf("prebuilt symbol name manifest schema %q does not match %q", manifest.SchemaVersion, geneDBSchemaVersion)
 	}
-	if strings.TrimSpace(manifest.URL) == "" {
+	if strings.TrimSpace(manifest.URL) == "" && len(manifest.Parts) == 0 {
 		return PrebuiltGeneInfoManifest{}, fmt.Errorf("prebuilt symbol name manifest is missing database URL")
 	}
 	return manifest, nil
@@ -248,6 +254,13 @@ func (m PrebuiltGeneInfoManifest) remoteMetadata() GeneInfoMetadata {
 func (m PrebuiltGeneInfoManifest) downloadSize() int64 {
 	if m.ContentLength > 0 {
 		return m.ContentLength
+	}
+	var total int64
+	for _, part := range m.Parts {
+		total += part.ContentLength
+	}
+	if total > 0 {
+		return total
 	}
 	return m.SourceContentLength
 }
@@ -625,7 +638,7 @@ func DownloadPrebuiltGeneInfoDatabase(ctx context.Context, dest string, manifest
 		return fmt.Errorf("symbol name database path is empty")
 	}
 	rawURL := strings.TrimSpace(manifest.URL)
-	if rawURL == "" {
+	if rawURL == "" && len(manifest.Parts) == 0 {
 		return fmt.Errorf("prebuilt symbol name database URL is empty")
 	}
 	options.emitProgress(GeneInfoProgress{
@@ -638,19 +651,6 @@ func DownloadPrebuiltGeneInfoDatabase(ctx context.Context, dest string, manifest
 	}
 	tmpDB := dest + ".tmp-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	defer os.Remove(tmpDB)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return fmt.Errorf("build prebuilt symbol name database request: %w", err)
-	}
-	req.Header.Set("User-Agent", "phytozome-go-symbolname")
-	resp, err := geneInfoHTTP.Do(req)
-	if err != nil {
-		return fmt.Errorf("download prebuilt symbol name database: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("download prebuilt symbol name database returned %s", resp.Status)
-	}
 	out, err := os.Create(tmpDB)
 	if err != nil {
 		return fmt.Errorf("create prebuilt symbol name database %s: %w", tmpDB, err)
@@ -658,7 +658,65 @@ func DownloadPrebuiltGeneInfoDatabase(ctx context.Context, dest string, manifest
 	reporter := newGeneInfoProgressReporter(options.Progress, "download", manifest.downloadSize(), 1)
 	hasher := sha256.New()
 	writer := io.MultiWriter(out, hasher)
-	if strings.HasSuffix(strings.ToLower(rawURL), ".gz") {
+	if len(manifest.Parts) > 0 {
+		pipeReader, pipeWriter := io.Pipe()
+		downloadErrCh := make(chan error, 1)
+		go func() {
+			err := downloadPrebuiltGeneInfoParts(ctx, manifest, pipeWriter, reporter)
+			_ = pipeWriter.CloseWithError(err)
+			downloadErrCh <- err
+		}()
+		gzReader, err := kgzip.NewReader(pipeReader)
+		if err != nil {
+			_ = pipeReader.Close()
+			if downloadErr := <-downloadErrCh; downloadErr != nil {
+				out.Close()
+				return downloadErr
+			}
+			out.Close()
+			return fmt.Errorf("open prebuilt symbol name database split gzip stream: %w", err)
+		}
+		if _, err := io.Copy(writer, gzReader); err != nil {
+			_ = gzReader.Close()
+			_ = pipeReader.Close()
+			if downloadErr := <-downloadErrCh; downloadErr != nil {
+				out.Close()
+				return downloadErr
+			}
+			out.Close()
+			return fmt.Errorf("write prebuilt symbol name database %s: %w", tmpDB, err)
+		}
+		if err := gzReader.Close(); err != nil {
+			_ = pipeReader.Close()
+			if downloadErr := <-downloadErrCh; downloadErr != nil {
+				out.Close()
+				return downloadErr
+			}
+			out.Close()
+			return fmt.Errorf("close prebuilt symbol name database split gzip stream: %w", err)
+		}
+		_ = pipeReader.Close()
+		if downloadErr := <-downloadErrCh; downloadErr != nil {
+			out.Close()
+			return downloadErr
+		}
+	} else if strings.HasSuffix(strings.ToLower(rawURL), ".gz") {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+		if err != nil {
+			out.Close()
+			return fmt.Errorf("build prebuilt symbol name database request: %w", err)
+		}
+		req.Header.Set("User-Agent", "phytozome-go-symbolname")
+		resp, err := geneInfoHTTP.Do(req)
+		if err != nil {
+			out.Close()
+			return fmt.Errorf("download prebuilt symbol name database: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			out.Close()
+			return fmt.Errorf("download prebuilt symbol name database returned %s", resp.Status)
+		}
 		gzReader, err := kgzip.NewReader(&progressReader{reader: resp.Body, reporter: reporter})
 		if err != nil {
 			out.Close()
@@ -670,6 +728,22 @@ func DownloadPrebuiltGeneInfoDatabase(ctx context.Context, dest string, manifest
 			return fmt.Errorf("write prebuilt symbol name database %s: %w", tmpDB, err)
 		}
 	} else {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+		if err != nil {
+			out.Close()
+			return fmt.Errorf("build prebuilt symbol name database request: %w", err)
+		}
+		req.Header.Set("User-Agent", "phytozome-go-symbolname")
+		resp, err := geneInfoHTTP.Do(req)
+		if err != nil {
+			out.Close()
+			return fmt.Errorf("download prebuilt symbol name database: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			out.Close()
+			return fmt.Errorf("download prebuilt symbol name database returned %s", resp.Status)
+		}
 		if _, err := io.Copy(&progressWriter{writer: writer, reporter: reporter}, resp.Body); err != nil {
 			out.Close()
 			return fmt.Errorf("write prebuilt symbol name database %s: %w", tmpDB, err)
@@ -705,6 +779,36 @@ func DownloadPrebuiltGeneInfoDatabase(ctx context.Context, dest string, manifest
 		TotalBytes:   manifest.downloadSize(),
 		Done:         true,
 	})
+	return nil
+}
+
+func downloadPrebuiltGeneInfoParts(ctx context.Context, manifest PrebuiltGeneInfoManifest, writer io.Writer, reporter *geneInfoProgressReporter) error {
+	for idx, part := range manifest.Parts {
+		rawURL := strings.TrimSpace(part.URL)
+		if rawURL == "" {
+			return fmt.Errorf("prebuilt symbol name database part %d is missing URL", idx+1)
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+		if err != nil {
+			return fmt.Errorf("build prebuilt symbol name database part request: %w", err)
+		}
+		req.Header.Set("User-Agent", "phytozome-go-symbolname")
+		resp, err := geneInfoHTTP.Do(req)
+		if err != nil {
+			return fmt.Errorf("download prebuilt symbol name database part %s: %w", rawURL, err)
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			resp.Body.Close()
+			return fmt.Errorf("download prebuilt symbol name database part %s returned %s", rawURL, resp.Status)
+		}
+		if _, err := io.Copy(&progressWriter{writer: writer, reporter: reporter}, resp.Body); err != nil {
+			resp.Body.Close()
+			return fmt.Errorf("write prebuilt symbol name database part %s: %w", rawURL, err)
+		}
+		if err := resp.Body.Close(); err != nil {
+			return fmt.Errorf("close prebuilt symbol name database part %s: %w", rawURL, err)
+		}
+	}
 	return nil
 }
 

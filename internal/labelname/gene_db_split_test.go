@@ -1,8 +1,14 @@
 package labelname
 
 import (
+	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -89,5 +95,61 @@ func TestFetchGeneInfoDirectoryPartsSelectsCategorySplits(t *testing.T) {
 		if names[excluded] {
 			t.Fatalf("unexpected selected split %q from %#v", excluded, got)
 		}
+	}
+}
+
+func TestDownloadPrebuiltGeneInfoDatabaseFromSplitArchive(t *testing.T) {
+	dbPath := buildTestGeneInfoDB(t, stringsJoinLines(
+		"3702\t1\tVND6\tAT5G62380\tVND6A\tGeneID:1\t-\t-\tvascular-related NAC-domain 6\tprotein-coding\t-\t-\t-\t-\t20260610\t-",
+	))
+	dbData, err := os.ReadFile(dbPath)
+	if err != nil {
+		t.Fatalf("read source db: %v", err)
+	}
+	var archive bytes.Buffer
+	gz := gzip.NewWriter(&archive)
+	if _, err := gz.Write(dbData); err != nil {
+		t.Fatalf("gzip db: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("close gzip: %v", err)
+	}
+	archiveData := archive.Bytes()
+	cut := len(archiveData) / 2
+	partData := [][]byte{archiveData[:cut], archiveData[cut:]}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/symbolname.pgd.gz.part001":
+			_, _ = w.Write(partData[0])
+		case "/symbolname.pgd.gz.part002":
+			_, _ = w.Write(partData[1])
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	sum := fmt.Sprintf("%x", sha256.Sum256(dbData))
+	dest := filepath.Join(t.TempDir(), "symbolname.pgd")
+	err = DownloadPrebuiltGeneInfoDatabase(t.Context(), dest, PrebuiltGeneInfoManifest{
+		SchemaVersion:      geneDBSchemaVersion,
+		SHA256:             sum,
+		RecordCount:        1,
+		SourceURL:          GeneInfoDirectoryURL,
+		SourceLastModified: "Wed, 10 Jun 2026 00:00:00 GMT",
+		Parts: []PrebuiltGeneInfoPart{
+			{URL: server.URL + "/symbolname.pgd.gz.part001", ContentLength: int64(len(partData[0]))},
+			{URL: server.URL + "/symbolname.pgd.gz.part002", ContentLength: int64(len(partData[1]))},
+		},
+	}, DownloadOptions{})
+	if err != nil {
+		t.Fatalf("DownloadPrebuiltGeneInfoDatabase() error = %v", err)
+	}
+	info, err := InspectGeneInfoDatabase(dest)
+	if err != nil {
+		t.Fatalf("InspectGeneInfoDatabase() error = %v", err)
+	}
+	if info.RecordCount != 1 {
+		t.Fatalf("RecordCount=%d, want 1", info.RecordCount)
 	}
 }

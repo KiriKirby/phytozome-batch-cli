@@ -2,6 +2,8 @@ package main
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -34,5 +36,32 @@ func TestSafeSourceFilename(t *testing.T) {
 	got = safeSourceFilename(labelname.GeneInfoSourceFile{Name: `bad\name/gene_info.gz`})
 	if got != "bad_name_gene_info.gz" {
 		t.Fatalf("safeSourceFilename sanitized=%q", got)
+	}
+}
+
+func TestSplitArchiveWritesPartManifest(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "symbolname.pgd.gz")
+	if err := os.WriteFile(path, []byte("abcdefghijkl"), 0o644); err != nil {
+		t.Fatalf("write archive: %v", err)
+	}
+	manifest := labelname.PrebuiltGeneInfoManifest{ContentLength: 12}
+	if err := splitArchive(path, 5, &manifest, "https://example.test/symbolname/symbolname.pgd.gz"); err != nil {
+		t.Fatalf("splitArchive() error = %v", err)
+	}
+	if manifest.URL != "" {
+		t.Fatalf("URL=%q, want empty for split archive", manifest.URL)
+	}
+	if manifest.ContentLength != 0 {
+		t.Fatalf("ContentLength=%d, want 0 when manifest uses part sizes", manifest.ContentLength)
+	}
+	if len(manifest.Parts) != 3 {
+		t.Fatalf("Parts=%d, want 3", len(manifest.Parts))
+	}
+	if manifest.Parts[0].URL != "https://example.test/symbolname/symbolname.pgd.gz.part001" {
+		t.Fatalf("first part URL=%q", manifest.Parts[0].URL)
+	}
+	if manifest.Parts[2].ContentLength != 2 {
+		t.Fatalf("last part size=%d, want 2", manifest.Parts[2].ContentLength)
 	}
 }

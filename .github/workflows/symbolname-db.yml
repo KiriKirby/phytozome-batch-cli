@@ -40,6 +40,7 @@ jobs:
             -download-url "${DB_URL}" \
             -source-url "https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/" \
             -download-workers "8"
+          rm -f ".tmp/${DB_DIR}/symbolname.pgd.gz"
 
       - name: Publish symbolname-db branch
         shell: bash
