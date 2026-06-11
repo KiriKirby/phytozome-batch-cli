@@ -7,6 +7,13 @@
 
 <body bgcolor="#FFFFFF">
 
+<p>phytozome GO symbol name database refresh</p>
+<p>Symbol name database update:</p>
+<p>- Runtime now prefers the GitHub prebuilt symbolname.pgd manifest/archive before falling back to NCBI.</p>
+<p>- GitHub Actions now rebuilds symbolname.pgd from NCBI Gene GENE_INFO split sources monthly on day 18 at 02:18 UTC.</p>
+<p>- Startup relaunch after app update now skips only cache cleanup/release-update checks and still checks the symbol name database.</p>
+<p>- Local fallback builds can consume NCBI GENE_INFO split sources while retaining visible progress.</p>
+<p>&nbsp;</p>
 <p>phytozome GO v20260610T103044Z</p>
 <p>Release v20260610T103044Z</p>
 <p>Highlights:</p>
