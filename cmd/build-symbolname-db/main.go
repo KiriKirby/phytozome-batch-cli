@@ -19,6 +19,7 @@ import (
 
 	"github.com/KiriKirby/phytozome-go/internal/labelname"
 	"github.com/KiriKirby/phytozome-go/internal/netconfig"
+	"github.com/klauspost/compress/zstd"
 )
 
 func main() {
@@ -35,12 +36,14 @@ func run() error {
 	var sourceURL string
 	var downloadWorkers int
 	var partSize int64
-	flag.StringVar(&outPath, "out", "", "output compressed .pgd.gz path")
+	var sample bool
+	flag.StringVar(&outPath, "out", "", "output compressed .pgd.zst path")
 	flag.StringVar(&manifestPath, "manifest", "", "output manifest.json path")
 	flag.StringVar(&downloadURL, "download-url", "", "final raw download URL for the .pgd file")
 	flag.StringVar(&sourceURL, "source-url", labelname.GeneInfoDirectoryURL, "NCBI GENE_INFO directory URL")
 	flag.IntVar(&downloadWorkers, "download-workers", 8, "parallel NCBI split-file downloads")
-	flag.Int64Var(&partSize, "part-size", 90*1024*1024, "compressed archive part size in bytes")
+	flag.Int64Var(&partSize, "part-size", 50*1024*1024, "compressed archive part size in bytes")
+	flag.BoolVar(&sample, "sample", false, "build from a bundled small sample instead of NCBI")
 	flag.Parse()
 
 	if outPath == "" {
@@ -63,22 +66,16 @@ func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
 	defer cancel()
 
-	parts, err := labelname.FetchGeneInfoDirectoryParts(ctx, sourceURL)
-	if err != nil {
-		return err
-	}
-	remote := directoryMetadata(sourceURL, parts)
-	_, _ = fmt.Fprintf(os.Stdout, "Using %d NCBI GENE_INFO split sources (%s total)\n", len(parts), formatBytes(remote.ContentLength))
-
 	sourceDir, err := os.MkdirTemp("", "phgo-gene-info-source-*")
 	if err != nil {
 		return fmt.Errorf("create source download directory: %w", err)
 	}
 	defer os.RemoveAll(sourceDir)
-	gzPaths, err := downloadSourceParts(ctx, parts, sourceDir, downloadWorkers)
+	gzPaths, remote, err := buildSourceGZPaths(ctx, sourceDir, sample, sourceURL, downloadWorkers)
 	if err != nil {
 		return err
 	}
+	_, _ = fmt.Fprintf(os.Stdout, "Using %d source file(s) (%s total)\n", len(gzPaths), formatBytes(remote.ContentLength))
 
 	tempDB := outPath + ".builddb"
 	defer os.Remove(tempDB)
@@ -100,7 +97,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if err := gzipFile(tempDB, outPath); err != nil {
+	if err := compressFile(tempDB, outPath); err != nil {
 		return err
 	}
 	archiveInfo, err := os.Stat(outPath)
@@ -133,12 +130,71 @@ func run() error {
 	return nil
 }
 
+func buildSourceGZPaths(ctx context.Context, sourceDir string, sample bool, sourceURL string, downloadWorkers int) ([]string, labelname.GeneInfoMetadata, error) {
+	if sample {
+		path, remote, err := buildSampleGeneInfoSource(sourceDir)
+		if err != nil {
+			return nil, labelname.GeneInfoMetadata{}, err
+		}
+		return []string{path}, remote, nil
+	}
+	parts, err := labelname.FetchGeneInfoDirectoryParts(ctx, sourceURL)
+	if err != nil {
+		return nil, labelname.GeneInfoMetadata{}, err
+	}
+	remote := directoryMetadata(sourceURL, parts)
+	_, _ = fmt.Fprintf(os.Stdout, "Using %d NCBI GENE_INFO split sources (%s total)\n", len(parts), formatBytes(remote.ContentLength))
+	gzPaths, err := downloadSourceParts(ctx, parts, sourceDir, downloadWorkers)
+	if err != nil {
+		return nil, labelname.GeneInfoMetadata{}, err
+	}
+	return gzPaths, remote, nil
+}
+
+func buildSampleGeneInfoSource(sourceDir string) (string, labelname.GeneInfoMetadata, error) {
+	path := filepath.Join(sourceDir, "symbolname-sample.gene_info.gz")
+	content := strings.Join([]string{
+		"3702\t1\tVND6\tAT5G62380\tVND6A\tGeneID:1\t-\t-\tvascular-related NAC-domain 6\tprotein-coding\t-\t-\t-\t-\t20260610\t-",
+		"3702\t2\tPAL1\tAT2G37040\tPAL1A\tGeneID:2\t-\t-\tphenyalanine ammonia-lyase 1\tprotein-coding\t-\t-\t-\t-\t20260610\t-",
+		"",
+	}, "\n")
+	file, err := os.Create(path)
+	if err != nil {
+		return "", labelname.GeneInfoMetadata{}, fmt.Errorf("create sample gene_info: %w", err)
+	}
+	gz := gzip.NewWriter(file)
+	if _, err := gz.Write([]byte(content)); err != nil {
+		gz.Close()
+		file.Close()
+		return "", labelname.GeneInfoMetadata{}, fmt.Errorf("write sample gene_info: %w", err)
+	}
+	if err := gz.Close(); err != nil {
+		file.Close()
+		return "", labelname.GeneInfoMetadata{}, fmt.Errorf("close sample gene_info gzip: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return "", labelname.GeneInfoMetadata{}, fmt.Errorf("close sample gene_info file: %w", err)
+	}
+	stat, err := os.Stat(path)
+	if err != nil {
+		return "", labelname.GeneInfoMetadata{}, fmt.Errorf("stat sample gene_info: %w", err)
+	}
+	fixed := time.Date(2026, 6, 10, 5, 29, 0, 0, time.UTC)
+	remote := labelname.GeneInfoMetadata{
+		URL:             "sample://gene_info.gz",
+		LastModified:    fixed,
+		LastModifiedRaw: fixed.Format(http.TimeFormat),
+		ContentLength:   stat.Size(),
+	}
+	return path, remote, nil
+}
+
 func splitArchive(path string, partSize int64, manifest *labelname.PrebuiltGeneInfoManifest, downloadURL string) error {
 	if manifest == nil {
 		return fmt.Errorf("manifest is nil")
 	}
 	if partSize <= 0 {
-		partSize = 90 * 1024 * 1024
+		partSize = 50 * 1024 * 1024
 	}
 	if downloadURL == "" {
 		manifest.URL = path
@@ -409,6 +465,13 @@ func fileSHA256(path string) (string, error) {
 	return fmt.Sprintf("%x", hash.Sum(nil)), nil
 }
 
+func compressFile(sourcePath string, destPath string) error {
+	if strings.HasSuffix(strings.ToLower(destPath), ".zst") {
+		return zstdFile(sourcePath, destPath)
+	}
+	return gzipFile(sourcePath, destPath)
+}
+
 func gzipFile(sourcePath string, destPath string) error {
 	input, err := os.Open(sourcePath)
 	if err != nil {
@@ -420,13 +483,41 @@ func gzipFile(sourcePath string, destPath string) error {
 		return fmt.Errorf("create compressed database: %w", err)
 	}
 	defer output.Close()
-	writer := gzip.NewWriter(output)
+	writer, err := gzip.NewWriterLevel(output, gzip.BestCompression)
+	if err != nil {
+		return fmt.Errorf("create gzip writer: %w", err)
+	}
 	if _, err := io.Copy(writer, input); err != nil {
 		writer.Close()
 		return fmt.Errorf("gzip database: %w", err)
 	}
 	if err := writer.Close(); err != nil {
 		return fmt.Errorf("close gzip writer: %w", err)
+	}
+	return nil
+}
+
+func zstdFile(sourcePath string, destPath string) error {
+	input, err := os.Open(sourcePath)
+	if err != nil {
+		return fmt.Errorf("open database for zstd: %w", err)
+	}
+	defer input.Close()
+	output, err := os.Create(destPath)
+	if err != nil {
+		return fmt.Errorf("create compressed database: %w", err)
+	}
+	defer output.Close()
+	writer, err := zstd.NewWriter(output, zstd.WithEncoderLevel(zstd.SpeedBestCompression), zstd.WithEncoderConcurrency(0))
+	if err != nil {
+		return fmt.Errorf("create zstd writer: %w", err)
+	}
+	if _, err := io.Copy(writer, input); err != nil {
+		writer.Close()
+		return fmt.Errorf("zstd database: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("close zstd writer: %w", err)
 	}
 	return nil
 }

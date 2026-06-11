@@ -41,12 +41,12 @@ func TestSafeSourceFilename(t *testing.T) {
 
 func TestSplitArchiveWritesPartManifest(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "symbolname.pgd.gz")
+	path := filepath.Join(dir, "symbolname.pgd.zst")
 	if err := os.WriteFile(path, []byte("abcdefghijkl"), 0o644); err != nil {
 		t.Fatalf("write archive: %v", err)
 	}
 	manifest := labelname.PrebuiltGeneInfoManifest{ContentLength: 12}
-	if err := splitArchive(path, 5, &manifest, "https://example.test/symbolname/symbolname.pgd.gz"); err != nil {
+	if err := splitArchive(path, 5, &manifest, "https://example.test/symbolname/symbolname.pgd.zst"); err != nil {
 		t.Fatalf("splitArchive() error = %v", err)
 	}
 	if manifest.URL != "" {
@@ -58,7 +58,7 @@ func TestSplitArchiveWritesPartManifest(t *testing.T) {
 	if len(manifest.Parts) != 3 {
 		t.Fatalf("Parts=%d, want 3", len(manifest.Parts))
 	}
-	if manifest.Parts[0].URL != "https://example.test/symbolname/symbolname.pgd.gz.part001" {
+	if manifest.Parts[0].URL != "https://example.test/symbolname/symbolname.pgd.zst.part001" {
 		t.Fatalf("first part URL=%q", manifest.Parts[0].URL)
 	}
 	if manifest.Parts[2].ContentLength != 2 {

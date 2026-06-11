@@ -25,6 +25,7 @@ import (
 
 	"github.com/KiriKirby/phytozome-go/internal/netconfig"
 	kgzip "github.com/klauspost/compress/gzip"
+	"github.com/klauspost/compress/zstd"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -666,18 +667,7 @@ func DownloadPrebuiltGeneInfoDatabase(ctx context.Context, dest string, manifest
 			_ = pipeWriter.CloseWithError(err)
 			downloadErrCh <- err
 		}()
-		gzReader, err := kgzip.NewReader(pipeReader)
-		if err != nil {
-			_ = pipeReader.Close()
-			if downloadErr := <-downloadErrCh; downloadErr != nil {
-				out.Close()
-				return downloadErr
-			}
-			out.Close()
-			return fmt.Errorf("open prebuilt symbol name database split gzip stream: %w", err)
-		}
-		if _, err := io.Copy(writer, gzReader); err != nil {
-			_ = gzReader.Close()
+		if err := copyCompressedPrebuiltDatabase(writer, pipeReader, prebuiltArchiveURL(manifest)); err != nil {
 			_ = pipeReader.Close()
 			if downloadErr := <-downloadErrCh; downloadErr != nil {
 				out.Close()
@@ -686,21 +676,12 @@ func DownloadPrebuiltGeneInfoDatabase(ctx context.Context, dest string, manifest
 			out.Close()
 			return fmt.Errorf("write prebuilt symbol name database %s: %w", tmpDB, err)
 		}
-		if err := gzReader.Close(); err != nil {
-			_ = pipeReader.Close()
-			if downloadErr := <-downloadErrCh; downloadErr != nil {
-				out.Close()
-				return downloadErr
-			}
-			out.Close()
-			return fmt.Errorf("close prebuilt symbol name database split gzip stream: %w", err)
-		}
 		_ = pipeReader.Close()
 		if downloadErr := <-downloadErrCh; downloadErr != nil {
 			out.Close()
 			return downloadErr
 		}
-	} else if strings.HasSuffix(strings.ToLower(rawURL), ".gz") {
+	} else if isCompressedPrebuiltArchive(rawURL) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 		if err != nil {
 			out.Close()
@@ -717,13 +698,7 @@ func DownloadPrebuiltGeneInfoDatabase(ctx context.Context, dest string, manifest
 			out.Close()
 			return fmt.Errorf("download prebuilt symbol name database returned %s", resp.Status)
 		}
-		gzReader, err := kgzip.NewReader(&progressReader{reader: resp.Body, reporter: reporter})
-		if err != nil {
-			out.Close()
-			return fmt.Errorf("open prebuilt symbol name database gzip stream: %w", err)
-		}
-		defer gzReader.Close()
-		if _, err := io.Copy(writer, gzReader); err != nil {
+		if err := copyCompressedPrebuiltDatabase(writer, &progressReader{reader: resp.Body, reporter: reporter}, rawURL); err != nil {
 			out.Close()
 			return fmt.Errorf("write prebuilt symbol name database %s: %w", tmpDB, err)
 		}
@@ -779,6 +754,55 @@ func DownloadPrebuiltGeneInfoDatabase(ctx context.Context, dest string, manifest
 		TotalBytes:   manifest.downloadSize(),
 		Done:         true,
 	})
+	return nil
+}
+
+func prebuiltArchiveURL(manifest PrebuiltGeneInfoManifest) string {
+	if rawURL := strings.TrimSpace(manifest.URL); rawURL != "" {
+		return rawURL
+	}
+	if len(manifest.Parts) == 0 {
+		return ""
+	}
+	rawURL := strings.TrimSpace(manifest.Parts[0].URL)
+	lower := strings.ToLower(rawURL)
+	for _, suffix := range []string{".part001", ".part01", ".001", ".01"} {
+		if strings.HasSuffix(lower, suffix) {
+			return rawURL[:len(rawURL)-len(suffix)]
+		}
+	}
+	if idx := strings.LastIndex(lower, ".part"); idx >= 0 {
+		return rawURL[:idx]
+	}
+	return rawURL
+}
+
+func isCompressedPrebuiltArchive(rawURL string) bool {
+	lower := strings.ToLower(strings.TrimSpace(rawURL))
+	return strings.HasSuffix(lower, ".gz") || strings.HasSuffix(lower, ".zst") || strings.HasSuffix(lower, ".zstd")
+}
+
+func copyCompressedPrebuiltDatabase(writer io.Writer, reader io.Reader, rawURL string) error {
+	lower := strings.ToLower(strings.TrimSpace(rawURL))
+	if strings.HasSuffix(lower, ".zst") || strings.HasSuffix(lower, ".zstd") {
+		zr, err := zstd.NewReader(reader)
+		if err != nil {
+			return fmt.Errorf("open prebuilt symbol name database zstd stream: %w", err)
+		}
+		defer zr.Close()
+		if _, err := io.Copy(writer, zr); err != nil {
+			return err
+		}
+		return nil
+	}
+	gzReader, err := kgzip.NewReader(reader)
+	if err != nil {
+		return fmt.Errorf("open prebuilt symbol name database gzip stream: %w", err)
+	}
+	defer gzReader.Close()
+	if _, err := io.Copy(writer, gzReader); err != nil {
+		return err
+	}
 	return nil
 }
 

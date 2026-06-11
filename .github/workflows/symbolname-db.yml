@@ -2,6 +2,15 @@ name: Build symbolname.pgd
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "Build mode: sample validates the pipeline quickly; full rebuilds the complete database."
+        required: true
+        default: "sample"
+        type: choice
+        options:
+          - sample
+          - full
   schedule:
     # Monthly prebuilt symbol-name database refresh: day 18 at 02:18 UTC.
     - cron: "18 2 18 * *"
@@ -31,16 +40,28 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .tmp/symbolname
-          DB_BRANCH="symbolname-db"
+          MODE="${{ github.event.inputs.mode || 'full' }}"
+          if [[ "${GITHUB_EVENT_NAME}" == "schedule" ]]; then
+            MODE="full"
+          fi
+          if [[ "${MODE}" == "sample" ]]; then
+            DB_BRANCH="symbolname-db-sample"
+            SAMPLE_FLAG="-sample"
+          else
+            DB_BRANCH="symbolname-db"
+            SAMPLE_FLAG=""
+          fi
           DB_DIR="symbolname"
-          DB_URL="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${DB_BRANCH}/${DB_DIR}/symbolname.pgd.gz"
+          DB_URL="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${DB_BRANCH}/${DB_DIR}/symbolname.pgd.zst"
           go run ./cmd/build-symbolname-db \
-            -out ".tmp/${DB_DIR}/symbolname.pgd.gz" \
+            -out ".tmp/${DB_DIR}/symbolname.pgd.zst" \
             -manifest ".tmp/${DB_DIR}/manifest.json" \
             -download-url "${DB_URL}" \
             -source-url "https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/" \
-            -download-workers "8"
-          rm -f ".tmp/${DB_DIR}/symbolname.pgd.gz"
+            -download-workers "8" \
+            ${SAMPLE_FLAG}
+          rm -f ".tmp/${DB_DIR}/symbolname.pgd.zst"
+          echo "${DB_BRANCH}" > .tmp/symbolname-db-branch.txt
 
       - name: Publish symbolname-db branch
         shell: bash
@@ -49,19 +70,17 @@ jobs:
         run: |
           set -euo pipefail
           PUBLISH_DIR="$(mktemp -d)"
+          DB_BRANCH="$(cat .tmp/symbolname-db-branch.txt)"
           cp -R .tmp/symbolname "${PUBLISH_DIR}/symbolname"
-          cat > "${PUBLISH_DIR}/README.md" <<'EOF'
+          cat > "${PUBLISH_DIR}/README.md" <<EOF
           # symbolname-db
 
           This branch stores the latest prebuilt `symbolname.pgd` and `manifest.json` for phytozome GO.
           GitHub Actions rebuilds it from NCBI Gene `GENE_INFO/` split sources once per month on day 18 at 02:18 UTC, plus manual dispatch.
+          Publishing uses per-file GitHub API uploads with retry instead of one giant git pack push.
           EOF
-          cd "${PUBLISH_DIR}"
-          git init
-          git checkout -b symbolname-db
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add README.md symbolname
-          git commit -m "Update prebuilt symbolname.pgd"
-          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git push --force origin HEAD:symbolname-db
+          go run ./cmd/publish-symbolname-db \
+            -repo "${GITHUB_REPOSITORY}" \
+            -branch "${DB_BRANCH}" \
+            -source "${PUBLISH_DIR}" \
+            -message "Update prebuilt symbolname.pgd"
