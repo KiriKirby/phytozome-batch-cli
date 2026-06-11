@@ -656,27 +656,36 @@ func DownloadPrebuiltGeneInfoDatabase(ctx context.Context, dest string, manifest
 	if err != nil {
 		return fmt.Errorf("create prebuilt symbol name database %s: %w", tmpDB, err)
 	}
-	reporter := newGeneInfoProgressReporter(options.Progress, "download", manifest.downloadSize(), 1)
+	reporterWorkers := 1
+	if len(manifest.Parts) > 0 {
+		reporterWorkers = prebuiltPartDownloadWorkers(len(manifest.Parts))
+	}
+	reporter := newGeneInfoProgressReporter(options.Progress, "download", manifest.downloadSize(), reporterWorkers)
 	hasher := sha256.New()
 	writer := io.MultiWriter(out, hasher)
 	if len(manifest.Parts) > 0 {
 		pipeReader, pipeWriter := io.Pipe()
 		downloadErrCh := make(chan error, 1)
+		partCtx, partCancel := context.WithCancel(ctx)
 		go func() {
-			err := downloadPrebuiltGeneInfoParts(ctx, manifest, pipeWriter, reporter)
+			err := downloadPrebuiltGeneInfoParts(partCtx, manifest, pipeWriter, reporter)
 			_ = pipeWriter.CloseWithError(err)
 			downloadErrCh <- err
 		}()
 		if err := copyCompressedPrebuiltDatabase(writer, pipeReader, prebuiltArchiveURL(manifest)); err != nil {
+			partCancel()
 			_ = pipeReader.Close()
 			if downloadErr := <-downloadErrCh; downloadErr != nil {
 				out.Close()
-				return downloadErr
+				if !isPipeClosedAfterReaderFailure(downloadErr) {
+					return downloadErr
+				}
 			}
 			out.Close()
 			return fmt.Errorf("write prebuilt symbol name database %s: %w", tmpDB, err)
 		}
 		_ = pipeReader.Close()
+		partCancel()
 		if downloadErr := <-downloadErrCh; downloadErr != nil {
 			out.Close()
 			return downloadErr
@@ -757,6 +766,16 @@ func DownloadPrebuiltGeneInfoDatabase(ctx context.Context, dest string, manifest
 	return nil
 }
 
+func isPipeClosedAfterReaderFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.ErrClosedPipe) {
+		return true
+	}
+	return strings.Contains(err.Error(), io.ErrClosedPipe.Error())
+}
+
 func prebuiltArchiveURL(manifest PrebuiltGeneInfoManifest) string {
 	if rawURL := strings.TrimSpace(manifest.URL); rawURL != "" {
 		return rawURL
@@ -807,33 +826,197 @@ func copyCompressedPrebuiltDatabase(writer io.Writer, reader io.Reader, rawURL s
 }
 
 func downloadPrebuiltGeneInfoParts(ctx context.Context, manifest PrebuiltGeneInfoManifest, writer io.Writer, reporter *geneInfoProgressReporter) error {
-	for idx, part := range manifest.Parts {
-		rawURL := strings.TrimSpace(part.URL)
-		if rawURL == "" {
-			return fmt.Errorf("prebuilt symbol name database part %d is missing URL", idx+1)
+	if len(manifest.Parts) == 0 {
+		return nil
+	}
+	workers := prebuiltPartDownloadWorkers(len(manifest.Parts))
+	type partResult struct {
+		index int
+		data  []byte
+		err   error
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	jobs := make(chan int)
+	results := make(chan partResult)
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range jobs {
+				data, err := downloadPrebuiltGeneInfoPart(ctx, index, manifest.Parts[index])
+				select {
+				case results <- partResult{index: index, data: data, err: err}:
+				case <-ctx.Done():
+					return
+				}
+				if err != nil {
+					return
+				}
+			}
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+	nextJob := 0
+	inFlight := 0
+	sendJob := func() bool {
+		if nextJob >= len(manifest.Parts) {
+			return false
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-		if err != nil {
-			return fmt.Errorf("build prebuilt symbol name database part request: %w", err)
-		}
-		req.Header.Set("User-Agent", "phytozome-go-symbolname")
-		resp, err := geneInfoHTTP.Do(req)
-		if err != nil {
-			return fmt.Errorf("download prebuilt symbol name database part %s: %w", rawURL, err)
-		}
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			resp.Body.Close()
-			return fmt.Errorf("download prebuilt symbol name database part %s returned %s", rawURL, resp.Status)
-		}
-		if _, err := io.Copy(&progressWriter{writer: writer, reporter: reporter}, resp.Body); err != nil {
-			resp.Body.Close()
-			return fmt.Errorf("write prebuilt symbol name database part %s: %w", rawURL, err)
-		}
-		if err := resp.Body.Close(); err != nil {
-			return fmt.Errorf("close prebuilt symbol name database part %s: %w", rawURL, err)
+		select {
+		case jobs <- nextJob:
+			nextJob++
+			inFlight++
+			return true
+		case <-ctx.Done():
+			return false
 		}
 	}
+	for inFlight < workers && sendJob() {
+	}
+	nextWrite := 0
+	pending := make(map[int][]byte, workers*2)
+	progress := &progressWriter{writer: writer, reporter: reporter}
+	for nextWrite < len(manifest.Parts) {
+		if data, ok := pending[nextWrite]; ok {
+			if _, err := progress.Write(data); err != nil {
+				cancel()
+				close(jobs)
+				return fmt.Errorf("write prebuilt symbol name database part %d: %w", nextWrite+1, err)
+			}
+			delete(pending, nextWrite)
+			nextWrite++
+			for inFlight < workers && len(pending) < workers*2 && sendJob() {
+			}
+			continue
+		}
+		result, ok := <-results
+		if !ok {
+			break
+		}
+		inFlight--
+		if result.err != nil {
+			cancel()
+			close(jobs)
+			return result.err
+		}
+		if result.index == nextWrite {
+			if _, err := progress.Write(result.data); err != nil {
+				cancel()
+				close(jobs)
+				return fmt.Errorf("write prebuilt symbol name database part %d: %w", result.index+1, err)
+			}
+			nextWrite++
+		} else {
+			pending[result.index] = result.data
+		}
+		for inFlight < workers && len(pending) < workers*2 && sendJob() {
+		}
+	}
+	close(jobs)
+	if nextWrite != len(manifest.Parts) {
+		return fmt.Errorf("prebuilt symbol name database split download ended after %d/%d parts", nextWrite, len(manifest.Parts))
+	}
 	return nil
+}
+
+func prebuiltPartDownloadWorkers(total int) int {
+	workers := netconfig.NetworkWorkerCount(total)
+	if workers > 8 {
+		workers = 8
+	}
+	if configured := netconfig.ConfiguredInt("PHGO_SYMBOL_NAME_PREBUILT_PART_WORKERS", 0); configured > 0 {
+		workers = configured
+		if workers > total {
+			workers = total
+		}
+		if workers > 32 {
+			workers = 32
+		}
+	}
+	if workers < 1 {
+		workers = 1
+	}
+	return workers
+}
+
+func downloadPrebuiltGeneInfoPart(ctx context.Context, index int, part PrebuiltGeneInfoPart) ([]byte, error) {
+	rawURL := strings.TrimSpace(part.URL)
+	if rawURL == "" {
+		return nil, fmt.Errorf("prebuilt symbol name database part %d is missing URL", index+1)
+	}
+	var lastErr error
+	for attempt := 1; attempt <= 4; attempt++ {
+		data, err := downloadPrebuiltGeneInfoPartOnce(ctx, rawURL, part.ContentLength)
+		if err == nil {
+			return data, nil
+		}
+		lastErr = err
+		if !isRetryableDownloadError(err) || attempt == 4 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Duration(attempt*attempt) * 250 * time.Millisecond):
+		}
+	}
+	return nil, fmt.Errorf("download prebuilt symbol name database part %d %s: %w", index+1, rawURL, lastErr)
+}
+
+func downloadPrebuiltGeneInfoPartOnce(ctx context.Context, rawURL string, expected int64) ([]byte, error) {
+	if expected > 64*1024*1024 {
+		return nil, fmt.Errorf("prebuilt symbol name database part declares oversized content length %d", expected)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build prebuilt symbol name database part request: %w", err)
+	}
+	req.Header.Set("User-Agent", "phytozome-go-symbolname")
+	resp, err := geneInfoHTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, githubDownloadStatusError{statusCode: resp.StatusCode, status: resp.Status}
+	}
+	limit := int64(64*1024*1024 + 1)
+	if expected > 0 {
+		limit = expected + 1
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit))
+	if err != nil {
+		return nil, err
+	}
+	if expected > 0 && int64(len(data)) != expected {
+		return nil, fmt.Errorf("prebuilt symbol name database part size mismatch: got %d want %d", len(data), expected)
+	}
+	if expected <= 0 && int64(len(data)) >= limit {
+		return nil, fmt.Errorf("prebuilt symbol name database part exceeds maximum buffered size")
+	}
+	return data, nil
+}
+
+type githubDownloadStatusError struct {
+	statusCode int
+	status     string
+}
+
+func (e githubDownloadStatusError) Error() string {
+	return e.status
+}
+
+func isRetryableDownloadError(err error) bool {
+	var status githubDownloadStatusError
+	if errors.As(err, &status) {
+		return status.statusCode == http.StatusTooManyRequests || status.statusCode >= 500
+	}
+	return true
 }
 
 func SetDefaultGeneInfoDatabasePath(path string) {
