@@ -1,12 +1,14 @@
 package labelname
 
 import (
-	"compress/gzip"
 	"net/http"
-	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
+
+	bolt "go.etcd.io/bbolt"
 )
 
 func TestBestAliasPrefersCanonicalFamilyStyleOverInternalPrefix(t *testing.T) {
@@ -92,14 +94,47 @@ func TestRankAliasBatchMatchesSingleRankingWithTrimmedDuplicateInputs(t *testing
 func TestGeneInfoDatabaseRanksToSymbolName(t *testing.T) {
 	path := buildTestGeneInfoDB(t, stringsJoinLines(
 		"#tax_id\tGeneID\tSymbol\tLocusTag\tSynonyms\tdbXrefs\tchromosome\tmap_location\tdescription\ttype_of_gene\tSymbol_from_nomenclature_authority\tFull_name_from_nomenclature_authority\tNomenclature_status\tOther_designations\tModification_date\tFeature_type",
-		"3702\t838863\tVND6\t-\tANAC101|AtVND6\tTAIR:AT5G62380\t5\t-\tvascular NAC domain protein\tprotein-coding\tVND6\tvascular-related NAC-domain 6\tO\tNAC domain protein 101\t20260610\t-",
+		"3702\t836359\tNAC101\tAT5G62380\tANAC101|MMI9.6|MMI9_6|NAC-domain protein 101|VASCULAR-RELATED NAC-DOMAIN 6|VND6\tAraport:AT5G62380|TAIR:AT5G62380\t5\t-\tNAC-domain protein 101\tprotein-coding\tNAC101\tNAC-domain protein 101\tO\tNAC-domain protein 101\t20260513\t-",
 	))
 	SetDefaultGeneInfoDatabasePath(path)
 	t.Cleanup(func() { SetDefaultGeneInfoDatabasePath("") })
 
-	got := RankAliases(AliasRankRequest{DBXrefs: []string{"TAIR:AT5G62380"}})
+	got := RankAliases(AliasRankRequest{Aliases: []string{"VND6"}, DBXrefs: []string{"TAIR:AT5G62380"}})
 	if len(got.RankedAliases) == 0 || got.RankedAliases[0] != "VND6" {
-		t.Fatalf("RankAliases() = %#v, want VND6 from gene_info Symbol", got.RankedAliases)
+		t.Fatalf("RankAliases() = %#v, want VND6 from gene_info Synonyms", got.RankedAliases)
+	}
+	assertBeforeAlias(t, got.RankedAliases, "VND6", "NAC-domain protein 101")
+	assertBeforeAlias(t, got.RankedAliases, "ANAC101", "MMI9.6")
+}
+
+func TestGeneInfoDatabaseRanksLocusToAuthoritySymbol(t *testing.T) {
+	path := buildTestGeneInfoDB(t, stringsJoinLines(
+		"#tax_id\tGeneID\tSymbol\tLocusTag\tSynonyms\tdbXrefs\tchromosome\tmap_location\tdescription\ttype_of_gene\tSymbol_from_nomenclature_authority\tFull_name_from_nomenclature_authority\tNomenclature_status\tOther_designations\tModification_date\tFeature_type",
+		"3702\t818280\tPAL1\tAT2G37040\tATPAL1|CI0004|PHE ammonia lyase 1|T1J8.22|T1J8_22\tAraport:AT2G37040|TAIR:AT2G37040\t2\t-\tPHE ammonia lyase 1\tprotein-coding\tPAL1\tPHE ammonia lyase 1\tO\tPHE ammonia lyase 1\t20260610\t-",
+	))
+	SetDefaultGeneInfoDatabasePath(path)
+	t.Cleanup(func() { SetDefaultGeneInfoDatabasePath("") })
+
+	got := RankAliases(AliasRankRequest{LocusTag: "AT2G37040", DBXrefs: []string{"TAIR:AT2G37040"}})
+	if len(got.RankedAliases) == 0 || got.RankedAliases[0] != "PAL1" {
+		t.Fatalf("RankAliases() = %#v, want PAL1 first", got.RankedAliases)
+	}
+	assertBeforeAlias(t, got.RankedAliases, "PAL1", "PHE ammonia lyase 1")
+	assertBeforeAlias(t, got.RankedAliases, "ATPAL1", "T1J8.22")
+}
+
+func TestSortRankedAliasesAppendsNonPrimarySymbolNamesAlphabetically(t *testing.T) {
+	items := []rankedAlias{
+		{Text: "beta protein", Score: 999},
+		{Text: "ANAC101", Score: 20, Family: "ANAC"},
+		{Text: "MMI9.6", Score: 999, Family: "MMI"},
+		{Text: "VND6", Score: 40, Family: "VND"},
+		{Text: "alpha protein", Score: 1},
+	}
+	got := rankedAliasTexts(sortRankedAliases(items, nil))
+	want := []string{"VND6", "ANAC101", "alpha protein", "beta protein", "MMI9.6"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("sorted aliases = %#v, want %#v", got, want)
 	}
 }
 
@@ -120,32 +155,81 @@ func TestGeneInfoDatabaseMissReturnsEmpty(t *testing.T) {
 func buildTestGeneInfoDB(t testing.TB, content string) string {
 	t.Helper()
 	dir := t.TempDir()
-	gzPath := filepath.Join(dir, "gene_info.gz")
-	file, err := os.Create(gzPath)
-	if err != nil {
-		t.Fatalf("create gzip: %v", err)
-	}
-	gz := gzip.NewWriter(file)
-	if _, err := gz.Write([]byte(content)); err != nil {
-		t.Fatalf("write gzip: %v", err)
-	}
-	if err := gz.Close(); err != nil {
-		t.Fatalf("close gzip: %v", err)
-	}
-	if err := file.Close(); err != nil {
-		t.Fatalf("close file: %v", err)
-	}
 	dbPath := filepath.Join(dir, "symbolname.pgd")
 	lastModified := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
-	if err := buildGeneInfoDatabaseFromGZ(gzPath, dbPath, GeneInfoMetadata{
-		URL:             GeneInfoURL,
+	writeTestGeneInfoDB(t, dbPath, content, GeneInfoMetadata{
+		URL:             "https://example.test/GENE_INFO/",
 		LastModified:    lastModified,
 		LastModifiedRaw: lastModified.Format(http.TimeFormat),
 		ContentLength:   int64(len(content)),
-	}, DownloadOptions{}); err != nil {
-		t.Fatalf("build gene db: %v", err)
-	}
+	})
 	return dbPath
+}
+
+func writeTestGeneInfoDB(t testing.TB, dbPath string, content string, remote GeneInfoMetadata) {
+	t.Helper()
+	db, err := bolt.Open(dbPath, 0o644, &bolt.Options{Timeout: time.Second})
+	if err != nil {
+		t.Fatalf("create test symbol name db: %v", err)
+	}
+	defer db.Close()
+	if err := db.Update(func(tx *bolt.Tx) error {
+		for _, name := range []string{geneDBBucketMeta, geneDBBucketRecords, geneDBBucketIndex} {
+			if _, err := tx.CreateBucketIfNotExists([]byte(name)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("create test db buckets: %v", err)
+	}
+	var count uint64
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		record, ok := parseGeneInfoLine(line)
+		if !ok {
+			continue
+		}
+		count++
+		record.ID = count
+		if err := db.Update(func(tx *bolt.Tx) error {
+			records := tx.Bucket([]byte(geneDBBucketRecords))
+			index := tx.Bucket([]byte(geneDBBucketIndex))
+			if err := records.Put(u64key(record.ID), encodeGeneRecord(record)); err != nil {
+				return err
+			}
+			for _, term := range record.indexTerms() {
+				if err := putIndexTerm(index, term.Key, record.ID, term.Weight); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("write test record: %v", err)
+		}
+	}
+	if err := db.Update(func(tx *bolt.Tx) error {
+		meta := tx.Bucket([]byte(geneDBBucketMeta))
+		values := map[string]string{
+			"schema_version": geneDBSchemaVersion,
+			"url":            remote.URL,
+			"last_modified":  remote.LastModifiedRaw,
+			"downloaded_at":  time.Now().UTC().Format(time.RFC3339Nano),
+			"content_length": strconv.FormatInt(remote.ContentLength, 10),
+			"record_count":   strconv.FormatUint(count, 10),
+		}
+		for key, value := range values {
+			if err := meta.Put([]byte(key), []byte(value)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("write test metadata: %v", err)
+	}
 }
 
 func stringsJoinLines(lines ...string) string {
@@ -154,4 +238,26 @@ func stringsJoinLines(lines ...string) string {
 		out += line + "\n"
 	}
 	return out
+}
+
+func assertBeforeAlias(t testing.TB, aliases []string, left string, right string) {
+	t.Helper()
+	leftIndex, rightIndex := -1, -1
+	for i, alias := range aliases {
+		if alias == left && leftIndex < 0 {
+			leftIndex = i
+		}
+		if alias == right && rightIndex < 0 {
+			rightIndex = i
+		}
+	}
+	if leftIndex < 0 {
+		t.Fatalf("alias %q not found in %#v", left, aliases)
+	}
+	if rightIndex < 0 {
+		t.Fatalf("alias %q not found in %#v", right, aliases)
+	}
+	if leftIndex >= rightIndex {
+		t.Fatalf("alias order in %#v: want %q before %q", aliases, left, right)
+	}
 }

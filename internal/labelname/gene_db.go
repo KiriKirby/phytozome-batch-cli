@@ -1,7 +1,6 @@
 package labelname
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -9,10 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -30,17 +27,14 @@ import (
 )
 
 const (
-	GeneInfoURL                     = "https://ftp.ncbi.nlm.nih.gov/gene/DATA/gene_info.gz"
-	GeneInfoDirectoryURL            = "https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/"
 	DefaultGeneInfoPGD              = "symbolname.pgd"
 	DefaultPrebuiltGeneInfoManifest = "https://raw.githubusercontent.com/KiriKirby/phytozome-go-symbolname-db/symbolname-db/symbolname/manifest.json"
-	geneDBSchemaVersion             = "2"
+	geneDBSchemaVersion             = "3"
 	geneDBBucketMeta                = "meta"
 	geneDBBucketRecords             = "records"
 	geneDBBucketIndex               = "index"
 	geneDBMaxTokenHits              = 2048
-	geneDBBatchRecordCap            = 10000
-	geneDBBuildQueueCap             = 4096
+	prebuiltCopyBufferSize          = 4 * 1024 * 1024
 )
 
 type GeneInfoMetadata struct {
@@ -48,17 +42,6 @@ type GeneInfoMetadata struct {
 	LastModified    time.Time
 	LastModifiedRaw string
 	ContentLength   int64
-	AcceptRanges    bool
-	Parts           []GeneInfoSourceFile
-}
-
-type GeneInfoSourceFile struct {
-	Name            string
-	URL             string
-	LastModified    time.Time
-	LastModifiedRaw string
-	ContentLength   int64
-	AcceptRanges    bool
 }
 
 type GeneDatabaseInfo struct {
@@ -133,25 +116,26 @@ type geneRecord struct {
 }
 
 type geneDB struct {
-	path string
-	db   *bolt.DB
-}
-
-type preparedGeneRecord struct {
-	id      uint64
-	encoded []byte
-	terms   []geneInfoTerm
+	path    string
+	db      *bolt.DB
+	rankMu  sync.Mutex
+	rankLRU []string
+	rankMap map[string][]rankedAlias
 }
 
 var (
-	geneDBDefaultMu   sync.Mutex
-	geneDBDefaultPath string
-	geneDBDefault     *geneDB
-	geneDBInstallMu   sync.Mutex
-	geneInfoHTTP      = netconfig.DefaultHTTPClient()
-	symbolTokenRx     = regexp.MustCompile(`[A-Za-z][A-Za-z0-9'._-]{1,31}`)
-	geneInfoListRx    = regexp.MustCompile(`<a href="([^"]+)">([^<]+)</a>\s+([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2})\s+([0-9.]+[KMGTPE]?|-)`)
-	geneInfoStopKeys  = map[string]struct{}{
+	geneDBDefaultMu     sync.Mutex
+	geneDBDefaultPath   string
+	geneDBDefault       *geneDB
+	geneDBInstallMu     sync.Mutex
+	geneInfoHTTP        = netconfig.DefaultHTTPClient()
+	symbolTokenRx       = regexp.MustCompile(`[A-Za-z][A-Za-z0-9'._-]{1,31}`)
+	geneDBRankCacheSize = netconfig.ConfiguredInt("PHGO_SYMBOL_NAME_RANK_CACHE", 8192)
+	prebuiltCopyPool    = sync.Pool{New: func() any {
+		buffer := make([]byte, prebuiltCopyBufferSize)
+		return &buffer
+	}}
+	geneInfoStopKeys = map[string]struct{}{
 		"gene": {}, "genes": {}, "protein": {}, "proteins": {}, "domain": {}, "domains": {},
 		"family": {}, "like": {}, "related": {}, "putative": {}, "hypothetical": {},
 		"made": {}, "up": {},
@@ -183,24 +167,6 @@ func DefaultDownloadWorkers() int {
 		workers = 64
 	}
 	return workers
-}
-
-func DefaultBuildWorkers() int {
-	cpu := runtime.GOMAXPROCS(0)
-	if cpu < 1 {
-		cpu = runtime.NumCPU()
-	}
-	if cpu < 1 {
-		cpu = 1
-	}
-	workers := cpu * 8
-	if workers < 8 {
-		workers = 8
-	}
-	if workers > 64 {
-		workers = 64
-	}
-	return netconfig.ConfiguredInt("PHGO_SYMBOL_NAME_BUILD_WORKERS", workers)
 }
 
 func resolvePrebuiltGeneInfoManifestURL() string {
@@ -245,7 +211,7 @@ func (m PrebuiltGeneInfoManifest) remoteMetadata() GeneInfoMetadata {
 	lastRaw := strings.TrimSpace(m.SourceLastModified)
 	lastModified, _ := http.ParseTime(lastRaw)
 	return GeneInfoMetadata{
-		URL:             firstNonEmptyGeneInfoText(m.SourceURL, GeneInfoURL),
+		URL:             m.SourceURL,
 		LastModified:    lastModified,
 		LastModifiedRaw: lastRaw,
 		ContentLength:   m.SourceContentLength,
@@ -267,18 +233,14 @@ func (m PrebuiltGeneInfoManifest) downloadSize() int64 {
 }
 
 func PreferredGeneInfoInstallPlan(ctx context.Context) (GeneInfoInstallPlan, error) {
-	manifest, manifestErr := FetchPrebuiltGeneInfoManifest(ctx)
-	if manifestErr == nil {
-		return GeneInfoInstallPlan{
-			Remote:   manifest.remoteMetadata(),
-			Prebuilt: &manifest,
-		}, nil
+	manifest, err := FetchPrebuiltGeneInfoManifest(ctx)
+	if err != nil {
+		return GeneInfoInstallPlan{}, err
 	}
-	remote, remoteErr := FetchRemoteGeneInfoMetadata(ctx)
-	if remoteErr == nil {
-		return GeneInfoInstallPlan{Remote: remote}, nil
-	}
-	return GeneInfoInstallPlan{}, fmt.Errorf("prebuilt symbol name manifest failed: %v; direct NCBI metadata failed: %w", manifestErr, remoteErr)
+	return GeneInfoInstallPlan{
+		Remote:   manifest.remoteMetadata(),
+		Prebuilt: &manifest,
+	}, nil
 }
 
 func (p GeneInfoInstallPlan) DownloadSize() int64 {
@@ -292,10 +254,7 @@ func (p GeneInfoInstallPlan) SourceLabel() string {
 	if p.Prebuilt != nil {
 		return "GitHub prebuilt symbol name database"
 	}
-	if len(p.Remote.Parts) > 0 || strings.Contains(p.Remote.URL, "GENE_INFO") {
-		return "NCBI Gene GENE_INFO split sources"
-	}
-	return "NCBI Gene gene_info.gz"
+	return "GitHub prebuilt symbol name database"
 }
 
 func (p GeneInfoInstallPlan) SourceURL() string {
@@ -307,220 +266,9 @@ func (p GeneInfoInstallPlan) SourceURL() string {
 
 func (p GeneInfoInstallPlan) Install(ctx context.Context, dest string, options DownloadOptions) error {
 	if p.Prebuilt != nil {
-		if err := DownloadPrebuiltGeneInfoDatabase(ctx, dest, *p.Prebuilt, options); err == nil {
-			return nil
-		} else if strings.TrimSpace(p.Remote.URL) != "" {
-			options.emitProgress(GeneInfoProgress{
-				Stage:      "prepare",
-				Message:    "Prebuilt symbol name database is unavailable. Falling back to direct NCBI build...",
-				TotalBytes: p.Remote.ContentLength,
-			})
-		} else {
-			return err
-		}
+		return DownloadPrebuiltGeneInfoDatabase(ctx, dest, *p.Prebuilt, options)
 	}
-	return DownloadAndBuildGeneInfoDatabase(ctx, dest, p.Remote, options)
-}
-
-func FetchRemoteGeneInfoMetadata(ctx context.Context) (GeneInfoMetadata, error) {
-	metadata, err := FetchGeneInfoDirectoryMetadata(ctx)
-	if err == nil {
-		return metadata, nil
-	}
-	return fetchRemoteGeneInfoGZMetadata(ctx)
-}
-
-func fetchRemoteGeneInfoGZMetadata(ctx context.Context) (GeneInfoMetadata, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, GeneInfoURL, nil)
-	if err != nil {
-		return GeneInfoMetadata{}, fmt.Errorf("build NCBI Gene HEAD request: %w", err)
-	}
-	req.Header.Set("User-Agent", "phytozome-go-symbolname")
-	resp, err := geneInfoHTTP.Do(req)
-	if err != nil {
-		return GeneInfoMetadata{}, fmt.Errorf("query NCBI Gene metadata: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return GeneInfoMetadata{}, fmt.Errorf("NCBI Gene metadata returned %s", resp.Status)
-	}
-	lastRaw := strings.TrimSpace(resp.Header.Get("Last-Modified"))
-	lastModified, _ := http.ParseTime(lastRaw)
-	contentLength := resp.ContentLength
-	if contentLength <= 0 {
-		contentLength, _ = strconv.ParseInt(strings.TrimSpace(resp.Header.Get("Content-Length")), 10, 64)
-	}
-	return GeneInfoMetadata{
-		URL:             GeneInfoURL,
-		LastModified:    lastModified,
-		LastModifiedRaw: lastRaw,
-		ContentLength:   contentLength,
-		AcceptRanges:    strings.Contains(strings.ToLower(resp.Header.Get("Accept-Ranges")), "bytes"),
-	}, nil
-}
-
-func FetchGeneInfoDirectoryMetadata(ctx context.Context) (GeneInfoMetadata, error) {
-	parts, err := FetchGeneInfoDirectoryParts(ctx, GeneInfoDirectoryURL)
-	if err != nil {
-		return GeneInfoMetadata{}, err
-	}
-	return geneInfoDirectoryMetadata(parts), nil
-}
-
-func FetchGeneInfoDirectoryParts(ctx context.Context, rawURL string) ([]GeneInfoSourceFile, error) {
-	rawURL = strings.TrimSpace(rawURL)
-	if rawURL == "" {
-		rawURL = GeneInfoDirectoryURL
-	}
-	rawURL = ensureTrailingSlash(rawURL)
-	rootEntries, err := fetchGeneInfoDirectoryEntries(ctx, rawURL)
-	if err != nil {
-		return nil, err
-	}
-	var parts []GeneInfoSourceFile
-	for _, entry := range rootEntries {
-		if !strings.HasSuffix(entry.Name, "/") {
-			switch entry.Name {
-			case "Organelles.gene_info.gz", "Plasmids.gene_info.gz":
-				parts = append(parts, entry)
-			}
-			continue
-		}
-		childEntries, err := fetchGeneInfoDirectoryEntries(ctx, entry.URL)
-		if err != nil {
-			return nil, err
-		}
-		prefix := "All_"
-		for _, child := range childEntries {
-			if child.ContentLength <= 0 || strings.HasSuffix(child.Name, "/") {
-				continue
-			}
-			if strings.HasPrefix(child.Name, prefix) && strings.HasSuffix(child.Name, ".gene_info.gz") {
-				parts = append(parts, child)
-				break
-			}
-		}
-	}
-	sort.Slice(parts, func(i, j int) bool { return parts[i].URL < parts[j].URL })
-	if len(parts) == 0 {
-		return nil, fmt.Errorf("NCBI Gene GENE_INFO directory did not expose any split source files")
-	}
-	parts = enrichGeneInfoSourceFiles(ctx, parts)
-	return parts, nil
-}
-
-func enrichGeneInfoSourceFiles(ctx context.Context, parts []GeneInfoSourceFile) []GeneInfoSourceFile {
-	out := append([]GeneInfoSourceFile(nil), parts...)
-	for i := range out {
-		enriched, err := fetchGeneInfoSourceFileHead(ctx, out[i])
-		if err == nil {
-			out[i] = enriched
-		}
-	}
-	return out
-}
-
-func fetchGeneInfoSourceFileHead(ctx context.Context, part GeneInfoSourceFile) (GeneInfoSourceFile, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, part.URL, nil)
-	if err != nil {
-		return part, err
-	}
-	req.Header.Set("User-Agent", "phytozome-go-symbolname")
-	resp, err := geneInfoHTTP.Do(req)
-	if err != nil {
-		return part, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return part, fmt.Errorf("NCBI Gene split source HEAD returned %s", resp.Status)
-	}
-	if resp.ContentLength > 0 {
-		part.ContentLength = resp.ContentLength
-	} else if headerLength, err := strconv.ParseInt(strings.TrimSpace(resp.Header.Get("Content-Length")), 10, 64); err == nil && headerLength > 0 {
-		part.ContentLength = headerLength
-	}
-	if lastRaw := strings.TrimSpace(resp.Header.Get("Last-Modified")); lastRaw != "" {
-		part.LastModifiedRaw = lastRaw
-		part.LastModified, _ = http.ParseTime(lastRaw)
-	}
-	part.AcceptRanges = strings.Contains(strings.ToLower(resp.Header.Get("Accept-Ranges")), "bytes")
-	return part, nil
-}
-
-func ensureTrailingSlash(value string) string {
-	if strings.HasSuffix(value, "/") {
-		return value
-	}
-	return value + "/"
-}
-
-func fetchGeneInfoDirectoryEntries(ctx context.Context, rawURL string) ([]GeneInfoSourceFile, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build NCBI Gene directory request: %w", err)
-	}
-	req.Header.Set("User-Agent", "phytozome-go-symbolname")
-	resp, err := geneInfoHTTP.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("query NCBI Gene directory %s: %w", rawURL, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("NCBI Gene directory %s returned %s", rawURL, resp.Status)
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 8*1024*1024))
-	if err != nil {
-		return nil, fmt.Errorf("read NCBI Gene directory %s: %w", rawURL, err)
-	}
-	base, err := url.Parse(rawURL)
-	if err != nil {
-		return nil, fmt.Errorf("parse NCBI Gene directory URL %s: %w", rawURL, err)
-	}
-	matches := geneInfoListRx.FindAllStringSubmatch(string(data), -1)
-	out := make([]GeneInfoSourceFile, 0, len(matches))
-	for _, match := range matches {
-		href := html.UnescapeString(match[1])
-		name := html.UnescapeString(match[2])
-		if name == "Parent Directory" || strings.Contains(href, "..") {
-			continue
-		}
-		resolved, err := base.Parse(href)
-		if err != nil {
-			continue
-		}
-		modified, rawModified := parseGeneInfoDirectoryTime(match[3])
-		out = append(out, GeneInfoSourceFile{
-			Name:            name,
-			URL:             resolved.String(),
-			LastModified:    modified,
-			LastModifiedRaw: rawModified,
-			ContentLength:   parseGeneInfoDirectorySize(match[4]),
-		})
-	}
-	return out, nil
-}
-
-func geneInfoDirectoryMetadata(parts []GeneInfoSourceFile) GeneInfoMetadata {
-	var contentLength int64
-	var latest time.Time
-	for _, part := range parts {
-		contentLength += part.ContentLength
-		if part.LastModified.After(latest) {
-			latest = part.LastModified
-		}
-	}
-	lastRaw := ""
-	if !latest.IsZero() {
-		lastRaw = latest.UTC().Format(http.TimeFormat)
-	}
-	copied := append([]GeneInfoSourceFile(nil), parts...)
-	return GeneInfoMetadata{
-		URL:             GeneInfoDirectoryURL,
-		LastModified:    latest,
-		LastModifiedRaw: lastRaw,
-		ContentLength:   contentLength,
-		Parts:           copied,
-	}
+	return fmt.Errorf("prebuilt symbol name database manifest is required")
 }
 
 func InspectGeneInfoDatabase(path string) (GeneDatabaseInfo, error) {
@@ -555,82 +303,6 @@ func InspectGeneInfoDatabase(path string) (GeneDatabaseInfo, error) {
 		return GeneDatabaseInfo{}, err
 	}
 	return info, nil
-}
-
-func DownloadAndBuildGeneInfoDatabase(ctx context.Context, dest string, remote GeneInfoMetadata, options DownloadOptions) error {
-	dest = filepath.Clean(strings.TrimSpace(dest))
-	if dest == "" {
-		return fmt.Errorf("symbol name database path is empty")
-	}
-	if strings.TrimSpace(remote.URL) == "" {
-		remote.URL = GeneInfoURL
-	}
-	options.emitProgress(GeneInfoProgress{
-		Stage:      "prepare",
-		Message:    "Preparing symbol name database download...",
-		TotalBytes: remote.ContentLength,
-	})
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		return fmt.Errorf("create symbol name database directory: %w", err)
-	}
-	tempDir := filepath.Dir(dest)
-	var gzPaths []string
-	if len(remote.Parts) > 0 {
-		gzPaths = make([]string, 0, len(remote.Parts))
-		for i, part := range remote.Parts {
-			gzFile, err := os.CreateTemp(tempDir, "gene_info-part-*.gz")
-			if err != nil {
-				return fmt.Errorf("create temporary NCBI Gene split download: %w", err)
-			}
-			gzPath := gzFile.Name()
-			_ = gzFile.Close()
-			defer os.Remove(gzPath)
-			if err := downloadGeneInfoGZ(ctx, GeneInfoMetadata{
-				URL:             part.URL,
-				LastModified:    part.LastModified,
-				LastModifiedRaw: part.LastModifiedRaw,
-				ContentLength:   part.ContentLength,
-				AcceptRanges:    part.AcceptRanges,
-			}, gzPath, options); err != nil {
-				return err
-			}
-			options.emitProgress(GeneInfoProgress{
-				Stage:   "download",
-				Message: fmt.Sprintf("Downloaded NCBI Gene split source %d/%d.", i+1, len(remote.Parts)),
-			})
-			gzPaths = append(gzPaths, gzPath)
-		}
-	} else {
-		gzFile, err := os.CreateTemp(tempDir, "gene_info-*.gz")
-		if err != nil {
-			return fmt.Errorf("create temporary NCBI Gene download: %w", err)
-		}
-		gzPath := gzFile.Name()
-		_ = gzFile.Close()
-		defer os.Remove(gzPath)
-		if err := downloadGeneInfoGZ(ctx, remote, gzPath, options); err != nil {
-			return err
-		}
-		gzPaths = append(gzPaths, gzPath)
-	}
-	tmpDB := dest + ".tmp-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	if err := buildGeneInfoDatabaseFromGZFiles(gzPaths, tmpDB, remote, options); err != nil {
-		_ = os.Remove(tmpDB)
-		return err
-	}
-	if err := os.Rename(tmpDB, dest); err != nil {
-		_ = os.Remove(tmpDB)
-		return fmt.Errorf("install symbol name database %s: %w", dest, err)
-	}
-	resetDefaultGeneDB()
-	options.emitProgress(GeneInfoProgress{
-		Stage:        "complete",
-		Message:      "Symbol name database is ready.",
-		CurrentBytes: remote.ContentLength,
-		TotalBytes:   remote.ContentLength,
-		Done:         true,
-	})
-	return nil
 }
 
 func DownloadPrebuiltGeneInfoDatabase(ctx context.Context, dest string, manifest PrebuiltGeneInfoManifest, options DownloadOptions) error {
@@ -668,7 +340,7 @@ func DownloadPrebuiltGeneInfoDatabase(ctx context.Context, dest string, manifest
 		downloadErrCh := make(chan error, 1)
 		partCtx, partCancel := context.WithCancel(ctx)
 		go func() {
-			err := downloadPrebuiltGeneInfoParts(partCtx, manifest, pipeWriter, reporter)
+			err := downloadPrebuiltGeneInfoParts(partCtx, filepath.Dir(dest), manifest, pipeWriter, reporter)
 			_ = pipeWriter.CloseWithError(err)
 			downloadErrCh <- err
 		}()
@@ -728,7 +400,7 @@ func DownloadPrebuiltGeneInfoDatabase(ctx context.Context, dest string, manifest
 			out.Close()
 			return fmt.Errorf("download prebuilt symbol name database returned %s", resp.Status)
 		}
-		if _, err := io.Copy(&progressWriter{writer: writer, reporter: reporter}, resp.Body); err != nil {
+		if _, err := copyWithPrebuiltBuffer(&progressWriter{writer: writer, reporter: reporter}, resp.Body); err != nil {
 			out.Close()
 			return fmt.Errorf("write prebuilt symbol name database %s: %w", tmpDB, err)
 		}
@@ -809,7 +481,7 @@ func copyCompressedPrebuiltDatabase(writer io.Writer, reader io.Reader, rawURL s
 			return fmt.Errorf("open prebuilt symbol name database zstd stream: %w", err)
 		}
 		defer zr.Close()
-		if _, err := io.Copy(writer, zr); err != nil {
+		if _, err := copyWithPrebuiltBuffer(writer, zr); err != nil {
 			return err
 		}
 		return nil
@@ -819,20 +491,36 @@ func copyCompressedPrebuiltDatabase(writer io.Writer, reader io.Reader, rawURL s
 		return fmt.Errorf("open prebuilt symbol name database gzip stream: %w", err)
 	}
 	defer gzReader.Close()
-	if _, err := io.Copy(writer, gzReader); err != nil {
+	if _, err := copyWithPrebuiltBuffer(writer, gzReader); err != nil {
 		return err
 	}
 	return nil
 }
 
-func downloadPrebuiltGeneInfoParts(ctx context.Context, manifest PrebuiltGeneInfoManifest, writer io.Writer, reporter *geneInfoProgressReporter) error {
+func copyWithPrebuiltBuffer(dst io.Writer, src io.Reader) (int64, error) {
+	bufferPtr := prebuiltCopyPool.Get().(*[]byte)
+	defer prebuiltCopyPool.Put(bufferPtr)
+	return io.CopyBuffer(dst, src, *bufferPtr)
+}
+
+func downloadPrebuiltGeneInfoParts(ctx context.Context, tempRoot string, manifest PrebuiltGeneInfoManifest, writer io.Writer, reporter *geneInfoProgressReporter) error {
 	if len(manifest.Parts) == 0 {
 		return nil
 	}
+	tempRoot = filepath.Clean(strings.TrimSpace(tempRoot))
+	if tempRoot == "" {
+		tempRoot = os.TempDir()
+	}
+	tempDir, err := os.MkdirTemp(tempRoot, "symbolname-parts-*")
+	if err != nil {
+		return fmt.Errorf("create prebuilt symbol name database part staging directory: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
 	workers := prebuiltPartDownloadWorkers(len(manifest.Parts))
 	type partResult struct {
 		index int
-		data  []byte
+		path  string
+		size  int64
 		err   error
 	}
 	ctx, cancel := context.WithCancel(ctx)
@@ -845,10 +533,13 @@ func downloadPrebuiltGeneInfoParts(ctx context.Context, manifest PrebuiltGeneInf
 		go func() {
 			defer wg.Done()
 			for index := range jobs {
-				data, err := downloadPrebuiltGeneInfoPart(ctx, index, manifest.Parts[index])
+				path, size, err := downloadPrebuiltGeneInfoPart(ctx, tempDir, index, manifest.Parts[index], reporter)
 				select {
-				case results <- partResult{index: index, data: data, err: err}:
+				case results <- partResult{index: index, path: path, size: size, err: err}:
 				case <-ctx.Done():
+					if path != "" {
+						_ = os.Remove(path)
+					}
 					return
 				}
 				if err != nil {
@@ -879,15 +570,15 @@ func downloadPrebuiltGeneInfoParts(ctx context.Context, manifest PrebuiltGeneInf
 	for inFlight < workers && sendJob() {
 	}
 	nextWrite := 0
-	pending := make(map[int][]byte, workers*2)
-	progress := &progressWriter{writer: writer, reporter: reporter}
+	pending := make(map[int]partResult, workers*2)
 	for nextWrite < len(manifest.Parts) {
-		if data, ok := pending[nextWrite]; ok {
-			if _, err := progress.Write(data); err != nil {
+		if result, ok := pending[nextWrite]; ok {
+			if err := copyPrebuiltGeneInfoPartToWriter(writer, result.index, result.path, result.size); err != nil {
 				cancel()
 				close(jobs)
 				return fmt.Errorf("write prebuilt symbol name database part %d: %w", nextWrite+1, err)
 			}
+			_ = os.Remove(result.path)
 			delete(pending, nextWrite)
 			nextWrite++
 			for inFlight < workers && len(pending) < workers*2 && sendJob() {
@@ -905,14 +596,15 @@ func downloadPrebuiltGeneInfoParts(ctx context.Context, manifest PrebuiltGeneInf
 			return result.err
 		}
 		if result.index == nextWrite {
-			if _, err := progress.Write(result.data); err != nil {
+			if err := copyPrebuiltGeneInfoPartToWriter(writer, result.index, result.path, result.size); err != nil {
 				cancel()
 				close(jobs)
 				return fmt.Errorf("write prebuilt symbol name database part %d: %w", result.index+1, err)
 			}
+			_ = os.Remove(result.path)
 			nextWrite++
 		} else {
-			pending[result.index] = result.data
+			pending[result.index] = result
 		}
 		for inFlight < workers && len(pending) < workers*2 && sendJob() {
 		}
@@ -920,6 +612,25 @@ func downloadPrebuiltGeneInfoParts(ctx context.Context, manifest PrebuiltGeneInf
 	close(jobs)
 	if nextWrite != len(manifest.Parts) {
 		return fmt.Errorf("prebuilt symbol name database split download ended after %d/%d parts", nextWrite, len(manifest.Parts))
+	}
+	return nil
+}
+
+func copyPrebuiltGeneInfoPartToWriter(writer io.Writer, index int, path string, size int64) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("part %d was not staged", index+1)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	copied, err := copyWithPrebuiltBuffer(writer, file)
+	if err != nil {
+		return err
+	}
+	if size > 0 && copied != size {
+		return fmt.Errorf("staged part size changed while writing: got %d want %d", copied, size)
 	}
 	return nil
 }
@@ -944,67 +655,96 @@ func prebuiltPartDownloadWorkers(total int) int {
 	return workers
 }
 
-func downloadPrebuiltGeneInfoPart(ctx context.Context, index int, part PrebuiltGeneInfoPart) ([]byte, error) {
+func downloadPrebuiltGeneInfoPart(ctx context.Context, tempDir string, index int, part PrebuiltGeneInfoPart, reporter *geneInfoProgressReporter) (string, int64, error) {
 	rawURL := strings.TrimSpace(part.URL)
 	if rawURL == "" {
-		return nil, fmt.Errorf("prebuilt symbol name database part %d is missing URL", index+1)
+		return "", 0, fmt.Errorf("prebuilt symbol name database part %d is missing URL", index+1)
 	}
 	var lastErr error
-	for attempt := 1; attempt <= 4; attempt++ {
-		data, err := downloadPrebuiltGeneInfoPartOnce(ctx, rawURL, part.ContentLength)
+	for attempt := 1; attempt <= 6; attempt++ {
+		path, size, err := downloadPrebuiltGeneInfoPartOnce(ctx, tempDir, index, rawURL, part.ContentLength, reporter)
 		if err == nil {
-			return data, nil
+			return path, size, nil
 		}
 		lastErr = err
-		if !isRetryableDownloadError(err) || attempt == 4 {
+		if !isRetryableDownloadError(err) || attempt == 6 {
 			break
 		}
+		delay := retryDelayForDownloadError(err, attempt)
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(time.Duration(attempt*attempt) * 250 * time.Millisecond):
+			return "", 0, ctx.Err()
+		case <-time.After(delay):
 		}
 	}
-	return nil, fmt.Errorf("download prebuilt symbol name database part %d %s: %w", index+1, rawURL, lastErr)
+	return "", 0, fmt.Errorf("download prebuilt symbol name database part %d %s: %w", index+1, rawURL, lastErr)
 }
 
-func downloadPrebuiltGeneInfoPartOnce(ctx context.Context, rawURL string, expected int64) ([]byte, error) {
-	if expected > 64*1024*1024 {
-		return nil, fmt.Errorf("prebuilt symbol name database part declares oversized content length %d", expected)
-	}
+func downloadPrebuiltGeneInfoPartOnce(ctx context.Context, tempDir string, index int, rawURL string, expected int64, reporter *geneInfoProgressReporter) (string, int64, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("build prebuilt symbol name database part request: %w", err)
+		return "", 0, fmt.Errorf("build prebuilt symbol name database part request: %w", err)
 	}
 	req.Header.Set("User-Agent", "phytozome-go-symbolname")
 	resp, err := geneInfoHTTP.Do(req)
 	if err != nil {
-		return nil, err
+		return "", 0, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, githubDownloadStatusError{statusCode: resp.StatusCode, status: resp.Status}
+		return "", 0, githubDownloadStatusError{
+			statusCode: resp.StatusCode,
+			status:     resp.Status,
+			retryAfter: githubRetryAfter(resp.Header, time.Now()),
+		}
 	}
-	limit := int64(64*1024*1024 + 1)
+	file, err := os.CreateTemp(tempDir, fmt.Sprintf("symbolname-part-%03d-*", index+1))
+	if err != nil {
+		return "", 0, fmt.Errorf("create prebuilt symbol name database part file: %w", err)
+	}
+	path := file.Name()
+	ok := false
+	defer func() {
+		if !ok {
+			_ = os.Remove(path)
+		}
+	}()
+	limit := int64(0)
 	if expected > 0 {
 		limit = expected + 1
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, limit))
+	reader := resp.Body
+	if limit > 0 {
+		reader = io.NopCloser(io.LimitReader(resp.Body, limit))
+	}
+	copied, err := copyWithPrebuiltBuffer(&progressWriter{writer: file, reporter: reporter}, reader)
 	if err != nil {
-		return nil, err
+		_ = file.Close()
+		return "", 0, err
 	}
-	if expected > 0 && int64(len(data)) != expected {
-		return nil, fmt.Errorf("prebuilt symbol name database part size mismatch: got %d want %d", len(data), expected)
+	if err := file.Close(); err != nil {
+		return "", 0, fmt.Errorf("close prebuilt symbol name database part file: %w", err)
 	}
-	if expected <= 0 && int64(len(data)) >= limit {
-		return nil, fmt.Errorf("prebuilt symbol name database part exceeds maximum buffered size")
+	if expected > 0 && copied != expected {
+		return "", 0, prebuiltPartSizeError{got: copied, want: expected}
 	}
-	return data, nil
+	ok = true
+	return path, copied, nil
+}
+
+type prebuiltPartSizeError struct {
+	got  int64
+	want int64
+}
+
+func (e prebuiltPartSizeError) Error() string {
+	return fmt.Sprintf("prebuilt symbol name database part size mismatch: got %d want %d", e.got, e.want)
 }
 
 type githubDownloadStatusError struct {
 	statusCode int
 	status     string
+	retryAfter time.Duration
 }
 
 func (e githubDownloadStatusError) Error() string {
@@ -1012,11 +752,53 @@ func (e githubDownloadStatusError) Error() string {
 }
 
 func isRetryableDownloadError(err error) bool {
+	var sizeErr prebuiltPartSizeError
+	if errors.As(err, &sizeErr) {
+		return false
+	}
 	var status githubDownloadStatusError
 	if errors.As(err, &status) {
-		return status.statusCode == http.StatusTooManyRequests || status.statusCode >= 500
+		if status.statusCode == http.StatusTooManyRequests || status.statusCode >= 500 {
+			return true
+		}
+		return status.statusCode == http.StatusForbidden && status.retryAfter > 0
 	}
 	return true
+}
+
+func retryDelayForDownloadError(err error, attempt int) time.Duration {
+	var status githubDownloadStatusError
+	if errors.As(err, &status) && status.retryAfter > 0 {
+		return status.retryAfter
+	}
+	delay := time.Duration(attempt*attempt) * 500 * time.Millisecond
+	if delay > 30*time.Second {
+		return 30 * time.Second
+	}
+	return delay
+}
+
+func githubRetryAfter(header http.Header, now time.Time) time.Duration {
+	if raw := strings.TrimSpace(header.Get("Retry-After")); raw != "" {
+		if seconds, err := strconv.Atoi(raw); err == nil && seconds > 0 {
+			return time.Duration(seconds) * time.Second
+		}
+		if when, err := http.ParseTime(raw); err == nil && when.After(now) {
+			return when.Sub(now)
+		}
+	}
+	if raw := strings.TrimSpace(header.Get("X-RateLimit-Reset")); raw != "" {
+		remaining := strings.TrimSpace(header.Get("X-RateLimit-Remaining"))
+		if remaining != "" && remaining != "0" {
+			return 0
+		}
+		if unixSeconds, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			if when := time.Unix(unixSeconds, 0); when.After(now) {
+				return when.Sub(now)
+			}
+		}
+	}
+	return 0
 }
 
 func SetDefaultGeneInfoDatabasePath(path string) {
@@ -1174,6 +956,10 @@ func (g *geneDB) rank(request AliasRankRequest) ([]rankedAlias, bool) {
 	if g == nil || g.db == nil {
 		return nil, false
 	}
+	cacheKey := aliasRankCacheKey(request)
+	if cached, ok := g.rankCacheGet(cacheKey); ok {
+		return cached, true
+	}
 	queryTerms := request.geneInfoTerms()
 	if len(queryTerms) == 0 {
 		return nil, true
@@ -1215,37 +1001,40 @@ func (g *geneDB) rank(request AliasRankRequest) ([]rankedAlias, bool) {
 			if !ok {
 				continue
 			}
-			bestScore := -1
-			for _, term := range hits {
-				score := term.Weight
-				symbol := strings.TrimSpace(record.Symbol)
-				if symbol == "" || symbol == "-" {
+			for _, candidate := range record.symbolNameCandidates() {
+				key := normalizeAliasKey(candidate)
+				if key == "" {
 					continue
 				}
-				if strings.EqualFold(term.Raw, symbol) {
-					score += 80
+				bestScore := -1
+				for _, term := range hits {
+					score := term.Weight
+					if strings.EqualFold(term.Raw, candidate) {
+						score += 220
+					} else if record.hasSymbolNameCandidateEqualTo(term.Raw) {
+						score += 20
+					}
+					if strings.EqualFold(term.Raw, record.GeneID) || strings.EqualFold(term.Raw, record.LocusTag) {
+						score += 60
+					}
+					if term.TaxID != "" && term.TaxID == record.TaxID {
+						score += 40
+					}
+					if score > bestScore {
+						bestScore = score
+					}
 				}
-				if strings.EqualFold(term.Raw, record.GeneID) || strings.EqualFold(term.Raw, record.LocusTag) {
-					score += 60
+				if bestScore < 0 {
+					continue
 				}
-				if term.TaxID != "" && term.TaxID == record.TaxID {
+				score := bestScore + symbolNameCandidateScore(candidate)
+				if strings.EqualFold(candidate, record.Symbol) {
 					score += 40
 				}
-				if score > bestScore {
-					bestScore = score
+				current := scores[key]
+				if score > current.Score || (score == current.Score && len(candidate) < len(current.Text)) {
+					scores[key] = rankedAlias{Text: candidate, Score: score, Family: symbolFamily(candidate)}
 				}
-			}
-			if bestScore < 0 {
-				continue
-			}
-			symbol := strings.TrimSpace(record.Symbol)
-			if symbol == "" || symbol == "-" {
-				continue
-			}
-			key := normalizeAliasKey(symbol)
-			current := scores[key]
-			if bestScore > current.Score || (bestScore == current.Score && len(symbol) < len(current.Text)) {
-				scores[key] = rankedAlias{Text: symbol, Score: bestScore, Family: symbolFamily(symbol)}
 			}
 		}
 		return nil
@@ -1257,41 +1046,45 @@ func (g *geneDB) rank(request AliasRankRequest) ([]rankedAlias, bool) {
 	for _, item := range scores {
 		out = append(out, item)
 	}
+	g.rankCachePut(cacheKey, out)
 	return out, true
 }
 
-func downloadGeneInfoGZ(ctx context.Context, remote GeneInfoMetadata, dest string, options DownloadOptions) error {
-	options.emitProgress(GeneInfoProgress{
-		Stage:      "download",
-		Message:    "Starting single-stream NCBI Gene download...",
-		TotalBytes: remote.ContentLength,
-		Workers:    1,
-	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, remote.URL, nil)
-	if err != nil {
-		return fmt.Errorf("build NCBI Gene download request: %w", err)
+func (g *geneDB) rankCacheGet(key string) ([]rankedAlias, bool) {
+	if g == nil || strings.TrimSpace(key) == "" || geneDBRankCacheSize <= 0 {
+		return nil, false
 	}
-	req.Header.Set("User-Agent", "phytozome-go-symbolname")
-	resp, err := geneInfoHTTP.Do(req)
-	if err != nil {
-		return fmt.Errorf("download NCBI Gene gene_info.gz: %w", err)
+	g.rankMu.Lock()
+	defer g.rankMu.Unlock()
+	if g.rankMap == nil {
+		return nil, false
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download NCBI Gene gene_info.gz returned %s", resp.Status)
+	items, ok := g.rankMap[key]
+	if !ok {
+		return nil, false
 	}
-	out, err := os.Create(dest)
-	if err != nil {
-		return fmt.Errorf("create NCBI Gene download %s: %w", dest, err)
+	return cloneRankedAliases(items), true
+}
+
+func (g *geneDB) rankCachePut(key string, items []rankedAlias) {
+	if g == nil || strings.TrimSpace(key) == "" || len(items) == 0 || geneDBRankCacheSize <= 0 {
+		return
 	}
-	defer out.Close()
-	reporter := newGeneInfoProgressReporter(options.Progress, "download", remote.ContentLength, 1)
-	writer := &progressWriter{writer: out, reporter: reporter}
-	if _, err := io.Copy(writer, resp.Body); err != nil {
-		return fmt.Errorf("write NCBI Gene download %s: %w", dest, err)
+	g.rankMu.Lock()
+	defer g.rankMu.Unlock()
+	if g.rankMap == nil {
+		g.rankMap = make(map[string][]rankedAlias, geneDBRankCacheSize)
 	}
-	reporter.finish("Downloaded NCBI Gene gene_info.gz.")
-	return nil
+	if _, exists := g.rankMap[key]; !exists {
+		g.rankLRU = append(g.rankLRU, key)
+	}
+	g.rankMap[key] = cloneRankedAliases(items)
+	for len(g.rankLRU) > geneDBRankCacheSize {
+		oldest := g.rankLRU[0]
+		copy(g.rankLRU, g.rankLRU[1:])
+		g.rankLRU = g.rankLRU[:len(g.rankLRU)-1]
+		delete(g.rankMap, oldest)
+	}
 }
 
 func formatBytes(size int64) string {
@@ -1442,52 +1235,12 @@ func messageForProgressStage(stage string, message string) string {
 	}
 	switch stage {
 	case "download":
-		return "Downloading NCBI Gene gene_info.gz..."
+		return "Downloading prebuilt symbol name database..."
 	case "build":
 		return "Building symbol name database..."
 	default:
 		return "Preparing symbol name database..."
 	}
-}
-
-func parseGeneInfoDirectoryTime(value string) (time.Time, string) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return time.Time{}, ""
-	}
-	parsed, err := time.ParseInLocation("2006-01-02 15:04", value, time.UTC)
-	if err != nil {
-		return time.Time{}, value
-	}
-	return parsed.UTC(), parsed.UTC().Format(http.TimeFormat)
-}
-
-func parseGeneInfoDirectorySize(value string) int64 {
-	value = strings.TrimSpace(value)
-	if value == "" || value == "-" {
-		return 0
-	}
-	multiplier := float64(1)
-	suffix := value[len(value)-1]
-	switch suffix {
-	case 'K':
-		multiplier = 1024
-		value = strings.TrimSuffix(value, "K")
-	case 'M':
-		multiplier = 1024 * 1024
-		value = strings.TrimSuffix(value, "M")
-	case 'G':
-		multiplier = 1024 * 1024 * 1024
-		value = strings.TrimSuffix(value, "G")
-	case 'T':
-		multiplier = 1024 * 1024 * 1024 * 1024
-		value = strings.TrimSuffix(value, "T")
-	}
-	parsed, err := strconv.ParseFloat(value, 64)
-	if err != nil {
-		return 0
-	}
-	return int64(parsed * multiplier)
 }
 
 type progressWriter struct {
@@ -1516,212 +1269,14 @@ func (r *progressReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func buildGeneInfoDatabaseFromGZ(gzPath string, dbPath string, remote GeneInfoMetadata, options DownloadOptions) error {
-	return buildGeneInfoDatabaseFromGZFiles([]string{gzPath}, dbPath, remote, options)
-}
-
-func BuildGeneInfoDatabaseFromGZFiles(gzPaths []string, dbPath string, remote GeneInfoMetadata, options DownloadOptions) error {
-	return buildGeneInfoDatabaseFromGZFiles(gzPaths, dbPath, remote, options)
-}
-
-func buildGeneInfoDatabaseFromGZFiles(gzPaths []string, dbPath string, remote GeneInfoMetadata, options DownloadOptions) error {
-	if len(gzPaths) == 0 {
-		return fmt.Errorf("no NCBI Gene gzip sources provided")
-	}
-	buildTotal := remote.ContentLength
-	if buildTotal <= 0 {
-		for _, gzPath := range gzPaths {
-			if stat, err := os.Stat(gzPath); err == nil {
-				buildTotal += stat.Size()
-			}
-		}
-	}
-	workers := options.Workers
-	if workers <= 0 {
-		workers = DefaultBuildWorkers()
-	}
-	if maxWorkers := DefaultBuildWorkers(); workers > maxWorkers {
-		workers = maxWorkers
-	}
-	if workers < 1 {
-		workers = 1
-	}
-	reporter := newGeneInfoProgressReporter(options.Progress, "build", buildTotal, workers)
-	hash := sha256.New()
-	db, err := bolt.Open(dbPath, 0o644, &bolt.Options{
-		Timeout:        time.Second,
-		NoFreelistSync: true,
-		FreelistType:   bolt.FreelistMapType,
-	})
-	if err != nil {
-		return fmt.Errorf("create symbol name database %s: %w", dbPath, err)
-	}
-	defer db.Close()
-	if err := db.Update(func(tx *bolt.Tx) error {
-		for _, bucket := range []string{geneDBBucketMeta, geneDBBucketRecords, geneDBBucketIndex} {
-			if _, err := tx.CreateBucketIfNotExists([]byte(bucket)); err != nil {
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-	type buildLine struct {
-		id   uint64
-		text string
-	}
-	jobs := make(chan buildLine, geneDBBuildQueueCap)
-	prepared := make(chan preparedGeneRecord, geneDBBuildQueueCap)
-	done := make(chan struct{})
-	defer close(done)
-	var workerWG sync.WaitGroup
-	for range workers {
-		workerWG.Add(1)
-		go func() {
-			defer workerWG.Done()
-			for {
-				var job buildLine
-				var ok bool
-				select {
-				case <-done:
-					return
-				case job, ok = <-jobs:
-				}
-				if !ok {
-					return
-				}
-				record, ok := parseGeneInfoLine(job.text)
-				if !ok {
-					continue
-				}
-				record.ID = job.id
-				item := preparedGeneRecord{
-					id:      record.ID,
-					encoded: encodeGeneRecord(record),
-					terms:   record.indexTerms(),
-				}
-				select {
-				case prepared <- item:
-				case <-done:
-					return
-				}
-			}
-		}()
-	}
-	go func() {
-		workerWG.Wait()
-		close(prepared)
-	}()
-	scanErrCh := make(chan error, 1)
-	go func() {
-		defer close(jobs)
-		var lineID uint64
-		for _, gzPath := range gzPaths {
-			source, err := os.Open(gzPath)
-			if err != nil {
-				scanErrCh <- fmt.Errorf("open NCBI Gene download %s: %w", gzPath, err)
-				return
-			}
-			countedSource := &progressReader{reader: source, reporter: reporter}
-			gzReader, err := kgzip.NewReader(io.TeeReader(countedSource, hash))
-			if err != nil {
-				_ = source.Close()
-				scanErrCh <- fmt.Errorf("open NCBI Gene gzip stream %s: %w", gzPath, err)
-				return
-			}
-			scanner := bufio.NewScanner(gzReader)
-			scanner.Buffer(make([]byte, 1024*1024), 16*1024*1024)
-			for scanner.Scan() {
-				line := scanner.Text()
-				if line == "" || strings.HasPrefix(line, "#") {
-					continue
-				}
-				lineID++
-				select {
-				case jobs <- buildLine{id: lineID, text: line}:
-				case <-done:
-					_ = gzReader.Close()
-					_ = source.Close()
-					scanErrCh <- nil
-					return
-				}
-			}
-			if err := scanner.Err(); err != nil {
-				_ = gzReader.Close()
-				_ = source.Close()
-				scanErrCh <- fmt.Errorf("read NCBI Gene gene_info.gz %s: %w", gzPath, err)
-				return
-			}
-			if err := gzReader.Close(); err != nil {
-				_ = source.Close()
-				scanErrCh <- fmt.Errorf("close NCBI Gene gzip stream %s: %w", gzPath, err)
-				return
-			}
-			if err := source.Close(); err != nil {
-				scanErrCh <- fmt.Errorf("close NCBI Gene download %s: %w", gzPath, err)
-				return
-			}
-		}
-		scanErrCh <- nil
-	}()
-	var count uint64
-	batch := make([]preparedGeneRecord, 0, geneDBBatchRecordCap)
-	for item := range prepared {
-		count++
-		batch = append(batch, item)
-		if len(batch) >= geneDBBatchRecordCap {
-			if err := flushPreparedGeneBatch(db, batch); err != nil {
-				return err
-			}
-			batch = batch[:0]
-		}
-		if count%10000 == 0 {
-			reporter.setRecords(int64(count))
-		}
-	}
-	if err := <-scanErrCh; err != nil {
-		return err
-	}
-	if len(batch) > 0 {
-		if err := flushPreparedGeneBatch(db, batch); err != nil {
-			return err
-		}
-	}
-	if err := db.Sync(); err != nil {
-		return err
-	}
-	reporter.setRecords(int64(count))
-	reporter.finish("Built symbol name database.")
-	sum := fmt.Sprintf("%x", hash.Sum(nil))
-	return db.Update(func(tx *bolt.Tx) error {
-		meta := tx.Bucket([]byte(geneDBBucketMeta))
-		values := map[string]string{
-			"schema_version": geneDBSchemaVersion,
-			"url":            remote.URL,
-			"last_modified":  remote.LastModifiedRaw,
-			"downloaded_at":  time.Now().UTC().Format(time.RFC3339Nano),
-			"content_length": strconv.FormatInt(remote.ContentLength, 10),
-			"record_count":   strconv.FormatUint(count, 10),
-			"sha256":         sum,
-		}
-		for key, value := range values {
-			if err := meta.Put([]byte(key), []byte(value)); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
-
 func encodeGeneRecord(record geneRecord) []byte {
-	fields := [...]string{record.TaxID, record.GeneID, record.Symbol, record.LocusTag}
+	fields := [...]string{record.TaxID, record.GeneID, record.Symbol, record.LocusTag, record.Synonyms}
 	size := 1
 	for _, field := range fields {
 		size += binary.MaxVarintLen64 + len(field)
 	}
 	out := make([]byte, 0, size)
-	out = append(out, 1)
+	out = append(out, 2)
 	for _, field := range fields {
 		out = binary.AppendUvarint(out, uint64(len(field)))
 		out = append(out, field...)
@@ -1729,66 +1284,12 @@ func encodeGeneRecord(record geneRecord) []byte {
 	return out
 }
 
-type geneIndexEntry struct {
-	key    string
-	id     uint64
-	weight int
-}
-
-func flushPreparedGeneBatch(db *bolt.DB, batch []preparedGeneRecord) error {
-	if len(batch) == 0 {
-		return nil
-	}
-	sort.Slice(batch, func(i, j int) bool {
-		return batch[i].id < batch[j].id
-	})
-	indexEntryCount := 0
-	for _, item := range batch {
-		indexEntryCount += len(item.terms)
-	}
-	entries := make([]geneIndexEntry, 0, indexEntryCount)
-	for _, item := range batch {
-		for _, term := range item.terms {
-			if term.Key == "" {
-				continue
-			}
-			entries = append(entries, geneIndexEntry{key: term.Key, id: item.id, weight: term.Weight})
-		}
-	}
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].key != entries[j].key {
-			return entries[i].key < entries[j].key
-		}
-		return entries[i].id < entries[j].id
-	})
-	return db.Update(func(tx *bolt.Tx) error {
-		records := tx.Bucket([]byte(geneDBBucketRecords))
-		index := tx.Bucket([]byte(geneDBBucketIndex))
-		if records == nil || index == nil {
-			return fmt.Errorf("symbol name database buckets are missing")
-		}
-		records.FillPercent = 0.95
-		index.FillPercent = 0.95
-		for _, item := range batch {
-			if err := records.Put(u64key(item.id), item.encoded); err != nil {
-				return err
-			}
-		}
-		for _, entry := range entries {
-			if err := putIndexTerm(index, entry.key, entry.id, entry.weight); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
-
 func decodeGeneRecord(data []byte) (geneRecord, bool) {
-	if len(data) == 0 || data[0] != 1 {
+	if len(data) == 0 || data[0] != 2 {
 		return geneRecord{}, false
 	}
 	data = data[1:]
-	fields := [4]string{}
+	fields := [5]string{}
 	for i := range fields {
 		length, n := binary.Uvarint(data)
 		if n <= 0 || length > uint64(len(data[n:])) {
@@ -1804,6 +1305,7 @@ func decodeGeneRecord(data []byte) (geneRecord, bool) {
 		GeneID:   fields[1],
 		Symbol:   fields[2],
 		LocusTag: fields[3],
+		Synonyms: fields[4],
 	}, true
 }
 
@@ -1959,6 +1461,37 @@ func splitGeneInfoList(value string) []string {
 		}
 	}
 	return out
+}
+
+func (r geneRecord) symbolNameCandidates() []string {
+	values := make([]string, 0, 1+strings.Count(r.Synonyms, "|")+strings.Count(r.Synonyms, ";")+strings.Count(r.Synonyms, ","))
+	values = append(values, r.Symbol)
+	values = append(values, splitGeneInfoList(r.Synonyms)...)
+	return uniqueStrings(values)
+}
+
+func (r geneRecord) hasSymbolNameCandidateEqualTo(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	for _, candidate := range r.symbolNameCandidates() {
+		if strings.EqualFold(value, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func symbolNameCandidateScore(value string) int {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return -1000
+	}
+	if isPrimarySymbolNameCandidate(value) {
+		return 80 + AliasPreferenceScore(value) + QueryAliasPrimarySymbolBonus(value)
+	}
+	return -80 + AliasPreferenceScore(value)
 }
 
 func cleanGeneInfoValue(value string) string {

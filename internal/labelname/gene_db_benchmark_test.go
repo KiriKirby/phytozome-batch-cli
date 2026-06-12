@@ -1,36 +1,12 @@
 package labelname
 
 import (
-	"compress/gzip"
 	"fmt"
-	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 )
-
-func BenchmarkBuildGeneInfoDatabase(b *testing.B) {
-	content := syntheticGeneInfoRows(benchmarkGeneInfoRowCount())
-	gzPath := writeBenchmarkGeneInfoGZ(b, content)
-	lastModified := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
-	remote := GeneInfoMetadata{
-		URL:             GeneInfoURL,
-		LastModified:    lastModified,
-		LastModifiedRaw: lastModified.Format(http.TimeFormat),
-		ContentLength:   int64(len(content)),
-	}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		dbPath := filepath.Join(b.TempDir(), fmt.Sprintf("symbolname-%d.pgd", i))
-		if err := buildGeneInfoDatabaseFromGZ(gzPath, dbPath, remote, DownloadOptions{Workers: DefaultBuildWorkers()}); err != nil {
-			b.Fatalf("build gene db: %v", err)
-		}
-	}
-}
 
 func BenchmarkRankAliasBatch(b *testing.B) {
 	rowCount := benchmarkGeneInfoRowCount()
@@ -64,27 +40,6 @@ func benchmarkGeneInfoRowCount() int {
 		}
 	}
 	return 25000
-}
-
-func writeBenchmarkGeneInfoGZ(tb testing.TB, content string) string {
-	tb.Helper()
-	dir := tb.TempDir()
-	gzPath := filepath.Join(dir, "gene_info.gz")
-	file, err := os.Create(gzPath)
-	if err != nil {
-		tb.Fatalf("create gzip: %v", err)
-	}
-	gz := gzip.NewWriter(file)
-	if _, err := gz.Write([]byte(content)); err != nil {
-		tb.Fatalf("write gzip: %v", err)
-	}
-	if err := gz.Close(); err != nil {
-		tb.Fatalf("close gzip: %v", err)
-	}
-	if err := file.Close(); err != nil {
-		tb.Fatalf("close file: %v", err)
-	}
-	return gzPath
 }
 
 func syntheticGeneInfoRows(count int) string {

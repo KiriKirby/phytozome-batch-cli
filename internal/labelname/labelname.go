@@ -9,6 +9,7 @@ package labelname
 
 import (
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ var (
 	ecNumberLikePattern = regexp.MustCompile(`^(?:EC[:\-]?)?[A-Za-z]?\d+(?:\.\d+){2,3}$`)
 	lemnaGeneIDPattern  = regexp.MustCompile(`(?i)^SP\d{4}D\d{3}G\d{6}(?:_T\d+)?$`)
 	locusIDPattern      = regexp.MustCompile(`(?i)^(?:AT[1-5CM]G\d{5}|[A-Z]{2}\d+G\d+|LOC_[A-Z]{2}\d+G\d+)(?:\.\d+)?$`)
+	primarySymbolRx     = regexp.MustCompile(`^[A-Z0-9]+$`)
 )
 
 type AliasRankRequest struct {
@@ -132,9 +134,15 @@ func rankAliasRequestItemsBatch(requests []AliasRankRequest) [][]rankedAlias {
 		}
 		return out
 	}
-	workers := DefaultBuildWorkers()
+	workers := runtime.GOMAXPROCS(0) * 4
+	if workers < 8 {
+		workers = 8
+	}
 	if workers > len(requests) {
 		workers = len(requests)
+	}
+	if workers > 64 {
+		workers = 64
 	}
 	if workers < 1 {
 		workers = 1
@@ -223,24 +231,49 @@ func sortRankedAliases(items []rankedAlias, familyCounts map[string]int) []ranke
 	if len(items) == 0 {
 		return nil
 	}
-	if familyCounts == nil {
-		familyCounts = batchFamilyCounts([][]rankedAlias{items})
+	primary := make([]rankedAlias, 0, len(items))
+	secondary := make([]rankedAlias, 0)
+	for _, item := range items {
+		text := strings.TrimSpace(item.Text)
+		if text == "" {
+			continue
+		}
+		item.Text = text
+		if isPrimarySymbolNameCandidate(text) {
+			primary = append(primary, item)
+		} else {
+			secondary = append(secondary, item)
+		}
 	}
-	sort.SliceStable(items, func(i, j int) bool {
-		leftFamilyCount := familyCounts[items[i].Family]
-		rightFamilyCount := familyCounts[items[j].Family]
+	if familyCounts == nil {
+		familyCounts = batchFamilyCounts([][]rankedAlias{primary})
+	}
+	sort.SliceStable(primary, func(i, j int) bool {
+		leftFamilyCount := familyCounts[primary[i].Family]
+		rightFamilyCount := familyCounts[primary[j].Family]
 		if leftFamilyCount != rightFamilyCount {
 			return leftFamilyCount > rightFamilyCount
 		}
-		if items[i].Score != items[j].Score {
-			return items[i].Score > items[j].Score
+		if primary[i].Score != primary[j].Score {
+			return primary[i].Score > primary[j].Score
 		}
-		if items[i].Family != items[j].Family {
-			return items[i].Family < items[j].Family
+		if primary[i].Family != primary[j].Family {
+			return primary[i].Family < primary[j].Family
 		}
-		return len(items[i].Text) < len(items[j].Text)
+		if len(primary[i].Text) != len(primary[j].Text) {
+			return len(primary[i].Text) < len(primary[j].Text)
+		}
+		return strings.ToLower(primary[i].Text) < strings.ToLower(primary[j].Text)
 	})
-	return items
+	sort.SliceStable(secondary, func(i, j int) bool {
+		left := strings.ToUpper(secondary[i].Text)
+		right := strings.ToUpper(secondary[j].Text)
+		if left != right {
+			return left < right
+		}
+		return secondary[i].Text < secondary[j].Text
+	})
+	return append(primary, secondary...)
 }
 
 func batchFamilyCounts(groups [][]rankedAlias) map[string]int {
@@ -285,6 +318,19 @@ func rankedAliasTexts(items []rankedAlias) []string {
 		}
 	}
 	return uniqueStrings(out)
+}
+
+func isPrimarySymbolNameCandidate(value string) bool {
+	value = strings.TrimSpace(value)
+	if !primarySymbolRx.MatchString(value) || LooksLikeDatabaseIdentifier(value) {
+		return false
+	}
+	for _, r := range value {
+		if r >= 'A' && r <= 'Z' {
+			return true
+		}
+	}
+	return false
 }
 
 func symbolFamily(value string) string {

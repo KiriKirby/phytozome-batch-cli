@@ -615,6 +615,10 @@ func (w *BlastWizard) waitForStartupInitializationIfNeeded(ctx context.Context) 
 	if !ok || state.AllowUse {
 		return nil
 	}
+	initial := strings.TrimSpace(state.Message)
+	if initial == "" {
+		initial = "Waiting for tab 0 initialization to finish..."
+	}
 	if w.suppressTaskModals {
 		return w.pollStartupState(ctx, false, nil)
 	}
@@ -622,7 +626,7 @@ func (w *BlastWizard) waitForStartupInitializationIfNeeded(ctx context.Context) 
 		Path:        w.tuiPath("Startup", "Initialization"),
 		Title:       "Waiting for initialization",
 		Description: "phytozome GO is waiting for tab 0 to finish startup initialization.",
-		Initial:     "Waiting for tab 0 initialization to finish...",
+		Initial:     initial,
 		CancelError: prompt.ErrExitRequested,
 	}, func(taskCtx context.Context, update func(string)) (struct{}, error) {
 		return struct{}{}, w.pollStartupState(mergeContexts(ctx, taskCtx), false, update)
@@ -930,6 +934,15 @@ func (w *BlastWizard) Run(ctx context.Context) error {
 			return nil
 		}
 		return err
+	}
+	if newMainInterfaceEnabled() && strings.TrimSpace(w.transferKind) == "" && (strings.TrimSpace(w.instanceID) == "" || isRootInstanceID(w.instanceID)) {
+		if err := w.runNewMainInterface(ctx); err != nil {
+			if errors.Is(err, prompt.ErrExitRequested) {
+				return nil
+			}
+			return err
+		}
+		return nil
 	}
 databaseLoop:
 	for {
@@ -7694,6 +7707,7 @@ func (w *BlastWizard) autoIdentifyBlastLabelResultForTask(ctx context.Context, p
 		aliases = append(aliases, fastaHeaderFallbackAliases(item)...)
 	}
 	request := aliasRankRequestFromBlastItem(taskTimestamp, itemIndex, item, aliases)
+	removeBlastItemHeaderFallbackFromAliasRankRequest(item, &request)
 	if pinnedLabel == "" && len(aliases) == 0 {
 		fallback := blastLabelIdentityFallback(item)
 		if item.QuerySource != nil {
@@ -7720,6 +7734,36 @@ func (w *BlastWizard) autoIdentifyBlastLabelResultForTask(ctx context.Context, p
 		TaskTimestamp: ranked.TaskTimestamp,
 		ItemIndex:     ranked.ItemIndex,
 	}
+}
+
+func removeBlastItemHeaderFallbackFromAliasRankRequest(item blastQueryItem, request *labelname.AliasRankRequest) {
+	if request == nil {
+		return
+	}
+	headerLabels := map[string]struct{}{}
+	if header, _ := splitFastaHeaderAndSequence(item.RawInput); header != "" {
+		if parsed, ok := parsePhgoFastaHeader(header); ok {
+			if key := strings.ToLower(strings.TrimSpace(parsed.LabelName)); key != "" {
+				headerLabels[key] = struct{}{}
+			}
+		}
+		if label := labelname.FastaHeaderLabelNameFromInput(item.RawInput); label != "" {
+			headerLabels[strings.ToLower(strings.TrimSpace(label))] = struct{}{}
+		}
+	}
+	if len(headerLabels) == 0 {
+		return
+	}
+	clearIfHeaderLabel := func(value *string) {
+		if value == nil {
+			return
+		}
+		if _, ok := headerLabels[strings.ToLower(strings.TrimSpace(*value))]; ok {
+			*value = ""
+		}
+	}
+	clearIfHeaderLabel(&request.Symbol)
+	clearIfHeaderLabel(&request.SymbolAuthority)
 }
 
 func aliasRankRequestFromBlastItem(taskTimestamp string, itemIndex int, item blastQueryItem, aliases []string) labelname.AliasRankRequest {
@@ -7807,11 +7851,40 @@ func collectBlastItemAliasCandidates(item blastQueryItem) []string {
 	if item.QuerySource != nil {
 		aliases = append(aliases, querySourceLabelnameCandidates(item.QuerySource)...)
 	}
+	aliases = removeBlastItemHeaderFallbackAliases(item, aliases)
 	aliases = uniqueStrings(aliases)
 	if len(aliases) == 0 && item.QuerySource != nil {
 		aliases = append(aliases, labelname.SplitAliases(item.QuerySource.PhgoAliases)...)
 	}
 	return uniqueStrings(aliases)
+}
+
+func removeBlastItemHeaderFallbackAliases(item blastQueryItem, aliases []string) []string {
+	if len(aliases) == 0 {
+		return nil
+	}
+	headerLabels := map[string]struct{}{}
+	if header, _ := splitFastaHeaderAndSequence(item.RawInput); header != "" {
+		if parsed, ok := parsePhgoFastaHeader(header); ok {
+			if key := strings.ToLower(strings.TrimSpace(parsed.LabelName)); key != "" {
+				headerLabels[key] = struct{}{}
+			}
+		}
+		if label := labelname.FastaHeaderLabelNameFromInput(item.RawInput); label != "" {
+			headerLabels[strings.ToLower(strings.TrimSpace(label))] = struct{}{}
+		}
+	}
+	if len(headerLabels) == 0 {
+		return aliases
+	}
+	out := make([]string, 0, len(aliases))
+	for _, alias := range aliases {
+		if _, skip := headerLabels[strings.ToLower(strings.TrimSpace(alias))]; skip {
+			continue
+		}
+		out = append(out, alias)
+	}
+	return out
 }
 
 func querySourceLabelnameCandidates(source *model.QuerySequenceSource) []string {

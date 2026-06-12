@@ -2,18 +2,26 @@ package workflow
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/KiriKirby/phytozome-go/internal/labelname"
+	"github.com/klauspost/compress/zstd"
+	bolt "go.etcd.io/bbolt"
 )
+
+var workflowSymbolTokenRx = regexp.MustCompile(`[A-Za-z][A-Za-z0-9'._-]{1,31}`)
 
 func TestMain(m *testing.M) {
 	code := runWorkflowTestsWithSymbolNameDB(m)
@@ -27,28 +35,42 @@ func runWorkflowTestsWithSymbolNameDB(m *testing.M) int {
 	}
 	defer os.RemoveAll(dir)
 
-	var gz bytes.Buffer
-	writer := gzip.NewWriter(&gz)
-	_, _ = writer.Write([]byte(workflowTestGeneInfo()))
+	sourceDB := filepath.Join(dir, "source-symbolname.pgd")
+	if err := writeWorkflowTestSymbolNameDB(sourceDB, workflowTestGeneInfo()); err != nil {
+		return 1
+	}
+	dbData, err := os.ReadFile(sourceDB)
+	if err != nil {
+		return 1
+	}
+	var archive bytes.Buffer
+	writer, err := zstd.NewWriter(&archive, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
+	if err != nil {
+		return 1
+	}
+	if _, err := writer.Write(dbData); err != nil {
+		return 1
+	}
 	if err := writer.Close(); err != nil {
 		return 1
 	}
-	payload := gz.Bytes()
+	payload := archive.Bytes()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Last-Modified", time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC).Format(http.TimeFormat))
-		w.Header().Set("Content-Type", "application/gzip")
+		w.Header().Set("Content-Type", "application/zstd")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(payload)
 	}))
 	defer server.Close()
 
 	dbPath := filepath.Join(dir, labelname.DefaultGeneInfoPGD)
-	lastModified := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
-	if err := labelname.DownloadAndBuildGeneInfoDatabase(context.Background(), dbPath, labelname.GeneInfoMetadata{
-		URL:             server.URL,
-		LastModified:    lastModified,
-		LastModifiedRaw: lastModified.Format(http.TimeFormat),
-		ContentLength:   int64(len(payload)),
+	if err := labelname.DownloadPrebuiltGeneInfoDatabase(context.Background(), dbPath, labelname.PrebuiltGeneInfoManifest{
+		SchemaVersion:      "3",
+		URL:                server.URL + "/symbolname.pgd.zst",
+		SHA256:             fmt.Sprintf("%x", sha256.Sum256(dbData)),
+		RecordCount:        13,
+		SourceURL:          "https://example.test/GENE_INFO/",
+		SourceLastModified: time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC).Format(http.TimeFormat),
+		ContentLength:      int64(len(payload)),
 	}, labelname.DownloadOptions{Workers: 1}); err != nil {
 		return 1
 	}
@@ -73,4 +95,177 @@ func workflowTestGeneInfo() string {
 		"3702\t100011\tTT10\t-\tLAC2|AT2G29130|AT2G29130.1\tTAIR:AT2G29130\t2\t-\ttransparent testa 10\tprotein-coding\tTT10\ttransparent testa 10\tO\t-\t20260610\t-",
 		"3702\t100012\t4CLL4\t-\tOs03g0132000|LOC_Os03g04000|OsJ_09299|Sp9509d008g014760_T001\t-\t3\t-\t4-coumarate CoA ligase-like 4\tprotein-coding\t4CLL4\t4-coumarate CoA ligase-like 4\tO\t-\t20260610\t-",
 	}, "\n") + "\n"
+}
+
+func writeWorkflowTestSymbolNameDB(path string, content string) error {
+	db, err := bolt.Open(path, 0o644, &bolt.Options{Timeout: time.Second})
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := db.Update(func(tx *bolt.Tx) error {
+		for _, bucket := range []string{"meta", "records", "index"} {
+			if _, err := tx.CreateBucketIfNotExists([]byte(bucket)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	var count uint64
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) < 16 {
+			continue
+		}
+		count++
+		record := workflowTestGeneRecord{
+			id:       count,
+			taxID:    cleanWorkflowGeneInfoValue(fields[0]),
+			geneID:   cleanWorkflowGeneInfoValue(fields[1]),
+			symbol:   cleanWorkflowGeneInfoValue(fields[2]),
+			locusTag: cleanWorkflowGeneInfoValue(fields[3]),
+			synonyms: cleanWorkflowGeneInfoValue(fields[4]),
+			values: []string{
+				fields[2], fields[10], fields[1], fields[3], fields[4], fields[5],
+				fields[13], fields[11], fields[8], fields[9], fields[15], fields[6], fields[7],
+			},
+		}
+		if err := db.Update(func(tx *bolt.Tx) error {
+			if err := tx.Bucket([]byte("records")).Put(u64WorkflowKey(record.id), encodeWorkflowGeneRecord(record)); err != nil {
+				return err
+			}
+			for _, term := range workflowGeneInfoTerms(record) {
+				if err := putWorkflowIndexTerm(tx.Bucket([]byte("index")), term.key, record.id, term.weight); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+	return db.Update(func(tx *bolt.Tx) error {
+		meta := tx.Bucket([]byte("meta"))
+		values := map[string]string{
+			"schema_version": "3",
+			"url":            "https://example.test/GENE_INFO/",
+			"last_modified":  time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC).Format(http.TimeFormat),
+			"downloaded_at":  time.Now().UTC().Format(time.RFC3339Nano),
+			"content_length": strconv.Itoa(len(content)),
+			"record_count":   fmt.Sprintf("%d", count),
+		}
+		for key, value := range values {
+			if err := meta.Put([]byte(key), []byte(value)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+type workflowTestGeneRecord struct {
+	id       uint64
+	taxID    string
+	geneID   string
+	symbol   string
+	locusTag string
+	synonyms string
+	values   []string
+}
+
+type workflowGeneTerm struct {
+	key    string
+	weight int
+}
+
+func encodeWorkflowGeneRecord(record workflowTestGeneRecord) []byte {
+	fields := [...]string{record.taxID, record.geneID, record.symbol, record.locusTag, record.synonyms}
+	out := []byte{2}
+	for _, field := range fields {
+		out = binary.AppendUvarint(out, uint64(len(field)))
+		out = append(out, field...)
+	}
+	return out
+}
+
+func workflowGeneInfoTerms(record workflowTestGeneRecord) []workflowGeneTerm {
+	weights := []int{100, 100, 92, 88, 82, 72, 62, 45, 45, 25, 25, 25, 25}
+	best := make(map[string]int)
+	for i, value := range record.values {
+		weight := 25
+		if i < len(weights) {
+			weight = weights[i]
+		}
+		for _, candidate := range workflowGeneInfoCandidates(value) {
+			key := normalizeWorkflowGeneInfoKey(candidate)
+			if key == "" {
+				continue
+			}
+			if current, ok := best[key]; !ok || weight > current {
+				best[key] = weight
+			}
+		}
+	}
+	out := make([]workflowGeneTerm, 0, len(best))
+	for key, weight := range best {
+		out = append(out, workflowGeneTerm{key: key, weight: weight})
+	}
+	return out
+}
+
+func workflowGeneInfoCandidates(value string) []string {
+	value = cleanWorkflowGeneInfoValue(value)
+	if value == "" {
+		return nil
+	}
+	out := []string{value}
+	for _, part := range strings.FieldsFunc(value, func(r rune) bool {
+		return r == '|' || r == ';' || r == ',' || r == '\t' || r == '\n' || r == '\r'
+	}) {
+		part = cleanWorkflowGeneInfoValue(part)
+		if part != "" {
+			out = append(out, part)
+			if i := strings.LastIndex(part, ":"); i >= 0 && i+1 < len(part) {
+				out = append(out, strings.TrimSpace(part[i+1:]))
+			}
+		}
+	}
+	out = append(out, workflowSymbolTokenRx.FindAllString(value, -1)...)
+	return out
+}
+
+func putWorkflowIndexTerm(bucket *bolt.Bucket, key string, id uint64, weight int) error {
+	if weight > 255 {
+		weight = 255
+	}
+	indexKey := append([]byte(key), 0)
+	indexKey = append(indexKey, u64WorkflowKey(id)...)
+	return bucket.Put(indexKey, []byte{byte(weight)})
+}
+
+func u64WorkflowKey(id uint64) []byte {
+	var key [8]byte
+	binary.BigEndian.PutUint64(key[:], id)
+	return key[:]
+}
+
+func cleanWorkflowGeneInfoValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "-" {
+		return ""
+	}
+	return value
+}
+
+func normalizeWorkflowGeneInfoKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.Trim(value, `"'()[]{}<>`)
+	value = strings.Join(strings.Fields(value), " ")
+	return value
 }
