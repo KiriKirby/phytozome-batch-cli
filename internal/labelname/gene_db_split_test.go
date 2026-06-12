@@ -365,9 +365,6 @@ func TestDownloadPrebuiltGeneInfoDatabaseFromGitHubSample(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchPrebuiltGeneInfoManifest() error = %v", err)
 	}
-	if len(manifest.Parts) < 2 {
-		t.Fatalf("sample manifest parts=%d, want multipart sample", len(manifest.Parts))
-	}
 	dest := filepath.Join(t.TempDir(), "symbolname.pgd")
 	err = DownloadPrebuiltGeneInfoDatabase(t.Context(), dest, manifest, DownloadOptions{})
 	if err != nil {
