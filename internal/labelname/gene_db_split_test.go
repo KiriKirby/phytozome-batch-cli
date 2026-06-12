@@ -360,7 +360,7 @@ func TestDownloadPrebuiltGeneInfoDatabaseFromGitHubSample(t *testing.T) {
 	if os.Getenv("PHGO_TEST_GITHUB_SAMPLE") != "1" {
 		t.Skip("set PHGO_TEST_GITHUB_SAMPLE=1 to verify real GitHub sample split download")
 	}
-	t.Setenv("PHGO_SYMBOL_NAME_PGD_MANIFEST_URL", "https://raw.githubusercontent.com/KiriKirby/phytozome-go/symbolname-db-sample/symbolname/manifest.json")
+	t.Setenv("PHGO_SYMBOL_NAME_PGD_MANIFEST_URL", "https://raw.githubusercontent.com/KiriKirby/phytozome-go-symbolname-db/symbolname-db-sample/symbolname/manifest.json")
 	manifest, err := FetchPrebuiltGeneInfoManifest(t.Context())
 	if err != nil {
 		t.Fatalf("FetchPrebuiltGeneInfoManifest() error = %v", err)

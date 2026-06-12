@@ -33,7 +33,7 @@ const (
 	GeneInfoURL                     = "https://ftp.ncbi.nlm.nih.gov/gene/DATA/gene_info.gz"
 	GeneInfoDirectoryURL            = "https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/"
 	DefaultGeneInfoPGD              = "symbolname.pgd"
-	DefaultPrebuiltGeneInfoManifest = "https://raw.githubusercontent.com/KiriKirby/phytozome-go/symbolname-db/symbolname/manifest.json"
+	DefaultPrebuiltGeneInfoManifest = "https://raw.githubusercontent.com/KiriKirby/phytozome-go-symbolname-db/symbolname-db/symbolname/manifest.json"
 	geneDBSchemaVersion             = "2"
 	geneDBBucketMeta                = "meta"
 	geneDBBucketRecords             = "records"
