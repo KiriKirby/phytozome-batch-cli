@@ -20,7 +20,7 @@ import (
 var (
 	ecNumberLikePattern = regexp.MustCompile(`^(?:EC[:\-]?)?[A-Za-z]?\d+(?:\.\d+){2,3}$`)
 	lemnaGeneIDPattern  = regexp.MustCompile(`(?i)^SP\d{4}D\d{3}G\d{6}(?:_T\d+)?$`)
-	locusIDPattern      = regexp.MustCompile(`(?i)^(?:AT[1-5CM]G\d{5}|[A-Z]{2}\d+G\d+|LOC_[A-Z]{2}\d+G\d+)(?:\.\d+)?$`)
+	locusIDPattern      = regexp.MustCompile(`(?i)^(?:AT[1-5CM]G\d{5}|[A-Z]{2}\d+G\d+|LOC[A-Z_]*\d+|[A-Z][a-z]\d{2}g\d{5,})(?:[._-]?[A-Z]?\d+)?$`)
 	primarySymbolRx     = regexp.MustCompile(`^[A-Z0-9]+$`)
 )
 
@@ -249,13 +249,13 @@ func sortRankedAliases(items []rankedAlias, familyCounts map[string]int) []ranke
 		familyCounts = batchFamilyCounts([][]rankedAlias{primary})
 	}
 	sort.SliceStable(primary, func(i, j int) bool {
+		if primary[i].Score != primary[j].Score {
+			return primary[i].Score > primary[j].Score
+		}
 		leftFamilyCount := familyCounts[primary[i].Family]
 		rightFamilyCount := familyCounts[primary[j].Family]
 		if leftFamilyCount != rightFamilyCount {
 			return leftFamilyCount > rightFamilyCount
-		}
-		if primary[i].Score != primary[j].Score {
-			return primary[i].Score > primary[j].Score
 		}
 		if primary[i].Family != primary[j].Family {
 			return primary[i].Family < primary[j].Family

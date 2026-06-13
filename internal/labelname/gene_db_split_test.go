@@ -19,6 +19,7 @@ import (
 )
 
 const fullGitHubDBEnv = "PHGO_TEST_GITHUB_FULL_SYMBOLNAME"
+const realOutputEnv = "PHGO_TEST_REAL_OUTPUT_DIR"
 
 func TestDownloadPrebuiltGeneInfoDatabaseFromSplitArchive(t *testing.T) {
 	dbPath := buildTestGeneInfoDB(t, stringsJoinLines(
@@ -522,6 +523,15 @@ func TestDownloadPrebuiltGeneInfoDatabaseFromGitHubFull(t *testing.T) {
 		}
 		t.Logf("full DB result %d: %v", i, result.RankedAliases[:minIntForTest(3, len(result.RankedAliases))])
 	}
+	if !containsAliasForTest(results[0].RankedAliases, "VND6") || looksLikeLocusForTest(results[0].RankedAliases[0]) {
+		t.Fatalf("full DB VND6/NAC result = %v, want symbol-name aliases before locus-like values", results[0].RankedAliases[:minIntForTest(8, len(results[0].RankedAliases))])
+	}
+	if results[1].RankedAliases[0] != "PAL1" {
+		t.Fatalf("full DB PAL result = %v, want PAL1 first", results[1].RankedAliases[:minIntForTest(8, len(results[1].RankedAliases))])
+	}
+	if !containsAliasForTest(results[2].RankedAliases, "C4H") || looksLikeLocusForTest(results[2].RankedAliases[0]) {
+		t.Fatalf("full DB C4H result = %v, want C4H-family symbol names before locus-like values", results[2].RankedAliases[:minIntForTest(8, len(results[2].RankedAliases))])
+	}
 }
 
 func TestRankAliasBatchPerformanceWithGitHubFullDatabase(t *testing.T) {
@@ -567,6 +577,51 @@ func TestRankAliasBatchPerformanceWithGitHubFullDatabase(t *testing.T) {
 	t.Logf("full DB RankAliasBatch %d requests: first=%s cached=%s", len(requests), firstElapsed, secondElapsed)
 }
 
+func TestRankAliasBatchWithFullDatabaseRealOutputHeaders(t *testing.T) {
+	if os.Getenv(fullGitHubDBEnv) != "1" {
+		t.Skip("set PHGO_TEST_GITHUB_FULL_SYMBOLNAME=1 to run full DB real-output ranking checks")
+	}
+	dest := fullGitHubSymbolNameDBPath(t)
+	if _, err := InspectGeneInfoDatabase(dest); err != nil {
+		t.Fatalf("full symbol name database is not ready at %s: %v", dest, err)
+	}
+	outputDir := realOutputDirForTest()
+	if info, err := os.Stat(outputDir); err != nil || !info.IsDir() {
+		t.Skipf("real output directory is not available: %s", outputDir)
+	}
+	SetDefaultGeneInfoDatabasePath(dest)
+	t.Cleanup(func() { SetDefaultGeneInfoDatabasePath("") })
+
+	sourceBatch := realOutputAliasRequestsFromFasta(t, outputDir, "Monolignol Biosynthesis.fasta", 64)
+	if len(sourceBatch) < 6 {
+		t.Fatalf("source batch headers=%d, want at least 6", len(sourceBatch))
+	}
+	sourceResults := RankAliasBatch(sourceBatch)
+	assertRealOutputTopAlias(t, sourceResults, "PAL1")
+	assertRealOutputTopAlias(t, sourceResults, "C4H")
+	assertRealOutputTopAlias(t, sourceResults, "FAH1")
+	assertRealOutputTopAlias(t, sourceResults, "4CL1")
+	assertRealOutputTopAlias(t, sourceResults, "4CL2")
+	assertNoLocusFirstForTest(t, sourceResults)
+
+	tableBatch := realOutputAliasRequestsFromFasta(t, outputDir, filepath.Join("Monolignol_Biosynthesis", "4CL.fasta"), 12)
+	if len(tableBatch) < 4 {
+		t.Fatalf("4CL table headers=%d, want at least 4", len(tableBatch))
+	}
+	tableResults := RankAliasBatch(tableBatch)
+	assertRealOutputTopAlias(t, tableResults, "4CL1")
+	assertRealOutputTopAlias(t, tableResults, "4CL2")
+	assertNoLocusFirstForTest(t, tableResults)
+
+	c4hBatch := realOutputAliasRequestsFromFasta(t, outputDir, filepath.Join("Monolignol_Biosynthesis", "C4H.fasta"), 8)
+	if len(c4hBatch) < 2 {
+		t.Fatalf("C4H table headers=%d, want at least 2", len(c4hBatch))
+	}
+	c4hResults := RankAliasBatch(c4hBatch)
+	assertRealOutputTopAlias(t, c4hResults, "C4H")
+	assertNoLocusFirstForTest(t, c4hResults)
+}
+
 func TestPrebuiltPartDownloadWorkersBounds(t *testing.T) {
 	if got := prebuiltPartDownloadWorkers(0); got != 1 {
 		t.Fatalf("workers(0)=%d, want 1", got)
@@ -599,11 +654,177 @@ func fullGitHubSymbolNameDBPath(t testing.TB) string {
 	return filepath.Join(dir, DefaultGeneInfoPGD)
 }
 
+func realOutputDirForTest() string {
+	if value := strings.TrimSpace(os.Getenv(realOutputEnv)); value != "" {
+		return filepath.Clean(value)
+	}
+	return filepath.Clean(`C:\Users\wangsychn\OneDrive - Kyoto University\研\2026年5月14日\output`)
+}
+
+func realOutputAliasRequestsFromFasta(t testing.TB, outputDir string, relativePath string, limit int) []AliasRankRequest {
+	t.Helper()
+	path := filepath.Join(outputDir, relativePath)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read real output FASTA %s: %v", path, err)
+	}
+	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+	requests := make([]AliasRankRequest, 0, limit)
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, ">") {
+			continue
+		}
+		request, ok := aliasRankRequestFromRealOutputHeader(line)
+		if !ok {
+			continue
+		}
+		request.TaskTimestamp = "real-output"
+		request.ItemIndex = len(requests)
+		requests = append(requests, request)
+		if limit > 0 && len(requests) >= limit {
+			break
+		}
+	}
+	return requests
+}
+
+func aliasRankRequestFromRealOutputHeader(header string) (AliasRankRequest, bool) {
+	header = strings.TrimSpace(strings.TrimPrefix(header, ">"))
+	if !strings.HasPrefix(strings.ToLower(header), "phgo://") {
+		return AliasRankRequest{}, false
+	}
+	body := strings.TrimSpace(header[len("phgo://"):])
+	groups := strings.Split(body, `\`)
+	mainParts := strings.SplitN(groups[0], "/", 3)
+	if len(mainParts) < 3 {
+		return AliasRankRequest{}, false
+	}
+	request := AliasRankRequest{
+		SearchTerm: strings.TrimSpace(mainParts[1]),
+		Aliases:    []string{strings.TrimSpace(mainParts[1])},
+	}
+	fillIDFieldsForTest(&request, strings.TrimSpace(mainParts[2]))
+	if len(groups) >= 2 && strings.Contains(groups[1], "/") {
+		sourceParts := strings.SplitN(groups[1], "/", 2)
+		if len(sourceParts) >= 1 {
+			request.Aliases = append(request.Aliases, strings.TrimSpace(sourceParts[0]))
+		}
+		if len(sourceParts) >= 2 {
+			fillIDFieldsForTest(&request, strings.TrimSpace(sourceParts[1]))
+		}
+	}
+	request.Aliases = uniqueStrings(request.Aliases)
+	return request, len(request.Aliases) > 0 || request.GeneID != "" || request.ProteinID != ""
+}
+
+func fillIDFieldsForTest(request *AliasRankRequest, value string) {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "~" {
+		return
+	}
+	request.ProteinID = firstNonEmptyForTest(request.ProteinID, value)
+	request.SequenceID = firstNonEmptyForTest(request.SequenceID, value)
+	geneID := stripTranscriptSuffixForTest(value)
+	request.GeneID = firstNonEmptyForTest(request.GeneID, geneID)
+	request.LocusTag = firstNonEmptyForTest(request.LocusTag, geneID)
+	request.DBXrefs = append(request.DBXrefs, value, geneID, "TAIR:"+geneID, "Araport:"+geneID)
+}
+
+func stripTranscriptSuffixForTest(value string) string {
+	value = strings.TrimSpace(value)
+	if i := strings.LastIndex(value, "."); i > 0 && i+1 < len(value) {
+		allDigits := true
+		for _, r := range value[i+1:] {
+			if r < '0' || r > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if allDigits {
+			return value[:i]
+		}
+	}
+	if i := strings.LastIndex(value, "_T"); i > 0 && i+2 < len(value) {
+		allDigits := true
+		for _, r := range value[i+2:] {
+			if r < '0' || r > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if allDigits {
+			return value[:i]
+		}
+	}
+	return value
+}
+
+func firstNonEmptyForTest(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func assertRealOutputTopAlias(t testing.TB, results []AliasRankResult, want string) {
+	t.Helper()
+	for _, result := range results {
+		if len(result.RankedAliases) == 0 {
+			continue
+		}
+		if result.RankedAliases[0] == want {
+			t.Logf("real output %s aliases: %v", want, result.RankedAliases[:minIntForTest(6, len(result.RankedAliases))])
+			return
+		}
+	}
+	t.Fatalf("no real-output result ranked %s first; top aliases by row: %v", want, topAliasesForTest(results, 24))
+}
+
+func assertNoLocusFirstForTest(t testing.TB, results []AliasRankResult) {
+	t.Helper()
+	for _, result := range results {
+		if len(result.RankedAliases) > 0 && looksLikeLocusForTest(result.RankedAliases[0]) {
+			t.Fatalf("locus-like alias ranked first: %v", result.RankedAliases[:minIntForTest(8, len(result.RankedAliases))])
+		}
+	}
+}
+
+func topAliasesForTest(results []AliasRankResult, limit int) []string {
+	out := make([]string, 0, minIntForTest(limit, len(results)))
+	for _, result := range results {
+		if len(result.RankedAliases) > 0 {
+			out = append(out, result.RankedAliases[0])
+		} else {
+			out = append(out, "")
+		}
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
 func minIntForTest(a int, b int) int {
 	if a < b {
 		return a
 	}
 	return b
+}
+
+func looksLikeLocusForTest(value string) bool {
+	return LooksLikeDatabaseIdentifier(value) || strings.HasPrefix(strings.ToUpper(strings.TrimSpace(value)), "LOC")
+}
+
+func containsAliasForTest(aliases []string, want string) bool {
+	for _, alias := range aliases {
+		if alias == want {
+			return true
+		}
+	}
+	return false
 }
 
 func zstdCompressForTest(t testing.TB, data []byte) []byte {
