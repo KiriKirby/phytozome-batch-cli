@@ -2120,6 +2120,61 @@ func withTestApp(t *testing.T, width int, height int, beforeStop func(*tview.App
 	})
 }
 
+func TestRunActionModalPageHandlesButtonShortcuts(t *testing.T) {
+	oldNewApp := newApp
+	oldRunApp := runApp
+	defer func() {
+		newApp = oldNewApp
+		runApp = oldRunApp
+	}()
+	newApp = func() *tview.Application {
+		configStyles()
+		return tview.NewApplication()
+	}
+	runApp = func(app *tview.Application) error {
+		capture := app.GetInputCapture()
+		if capture == nil {
+			t.Fatal("expected input capture")
+		}
+		capture(tcell.NewEventKey(tcell.KeyEscape, 0, tcell.ModNone))
+		return nil
+	}
+	result, err := RunActionModalPage(ActionModalPage{
+		Title:        "BLAST input",
+		Message:      "Set species.",
+		Actions:      []Action{{Value: "close", Label: ButtonClose, Shortcut: ShortcutBack}},
+		ConfirmText:  ButtonOK,
+		ConfirmValue: "ok",
+	})
+	if err != nil {
+		t.Fatalf("RunActionModalPage returned error: %v", err)
+	}
+	if result.Value != "close" {
+		t.Fatalf("Esc should choose close, got %q", result.Value)
+	}
+	runApp = func(app *tview.Application) error {
+		capture := app.GetInputCapture()
+		if capture == nil {
+			t.Fatal("expected input capture")
+		}
+		capture(tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone))
+		return nil
+	}
+	result, err = RunActionModalPage(ActionModalPage{
+		Title:        "BLAST input",
+		Message:      "Set species.",
+		Actions:      []Action{{Value: "close", Label: ButtonClose, Shortcut: ShortcutBack}},
+		ConfirmText:  ButtonOK,
+		ConfirmValue: "ok",
+	})
+	if err != nil {
+		t.Fatalf("RunActionModalPage returned error: %v", err)
+	}
+	if result.Value != "ok" {
+		t.Fatalf("Enter should choose confirm, got %q", result.Value)
+	}
+}
+
 func containsText(value string, text string) bool {
 	return strings.Contains(value, text)
 }

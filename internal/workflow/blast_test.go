@@ -3722,9 +3722,9 @@ func TestApplyNCBIProteinReplacementChoiceUsesNewRows(t *testing.T) {
 		}},
 	}}
 
-	out, err := w.applyNCBIProteinReplacementChoices(context.Background(), selected, groups)
+	out, err := w.applyNCBIReplacementChoices(context.Background(), selected, groups)
 	if err != nil {
-		t.Fatalf("applyNCBIProteinReplacementChoices returned error: %v", err)
+		t.Fatalf("applyNCBIReplacementChoices returned error: %v", err)
 	}
 	if got := out[0].Rows[0].ProteinID; got != "NP_001409439.1" {
 		t.Fatalf("replacement ProteinID = %q, want NP_001409439.1", got)
@@ -3759,15 +3759,35 @@ func TestApplyNCBIProteinReplacementChoiceMarksKeptOldSearchType(t *testing.T) {
 		}},
 	}}
 
-	out, err := w.applyNCBIProteinReplacementChoices(context.Background(), model.SpeciesCandidate{}, groups)
+	out, err := w.applyNCBIReplacementChoices(context.Background(), model.SpeciesCandidate{}, groups)
 	if err != nil {
-		t.Fatalf("applyNCBIProteinReplacementChoices returned error: %v", err)
+		t.Fatalf("applyNCBIReplacementChoices returned error: %v", err)
 	}
 	if got := out[0].Rows[0].SearchType; !strings.Contains(got, "kept old; NCBI update available") {
 		t.Fatalf("kept-old SearchType = %q, want update marker", got)
 	}
 	if out[0].SearchType != out[0].Rows[0].SearchType {
 		t.Fatalf("group SearchType should follow row update marker: group=%q row=%q", out[0].SearchType, out[0].Rows[0].SearchType)
+	}
+}
+
+func TestNCBIGroupReplacementRecognizesNonProteinNCBIAccessionFields(t *testing.T) {
+	oldAccession, newAccession, ok := ncbiGroupReplacement(model.KeywordSearchGroup{
+		SearchTerm: "RCV000000001",
+		Rows: []model.KeywordResultRow{{
+			SourceDatabase: "ncbi",
+			GeneIdentifier: "8456",
+			ExtraColumns: map[string]string{
+				"ncbi_clinvar_accession": "RCV000000001",
+				"ncbi_replaced_by":       "RCV000000999",
+			},
+		}},
+	})
+	if !ok {
+		t.Fatal("expected replacement to be detected")
+	}
+	if oldAccession != "RCV000000001" || newAccession != "RCV000000999" {
+		t.Fatalf("replacement = %q -> %q", oldAccession, newAccession)
 	}
 }
 

@@ -58,6 +58,14 @@ func TestWriteReadKeywordSnapshotRoundTrip(t *testing.T) {
 				EngineSchema:      "ncbiprotein-v3",
 				Accessions:        []string{"XP_015650724.1"},
 				UIDs:              []string{"123"},
+				LinkResolution:    "elink",
+				LinkedFromDB:      "gene",
+				LinkedToDB:        "protein",
+				LinkedFromTypes:   []string{"gene"},
+				LinkedToTypes:     []string{"protein"},
+				LinkNames:         []string{"gene_protein_refseq"},
+				LinkSourceIDs:     []string{"4345054"},
+				LinkTargetIDs:     []string{"XP_015650724.1"},
 			},
 		},
 		KeywordReview: &KeywordReviewStateV1{
@@ -98,6 +106,9 @@ func TestWriteReadKeywordSnapshotRoundTrip(t *testing.T) {
 	}
 	if out.KeywordSource == nil || out.KeywordSource.NCBI == nil || out.KeywordSource.NCBI.RecordType != "protein" {
 		t.Fatalf("keyword source module did not round-trip: %#v", out.KeywordSource)
+	}
+	if out.KeywordSource.NCBI.LinkResolution != "elink" || len(out.KeywordSource.NCBI.LinkNames) != 1 || out.KeywordSource.NCBI.LinkNames[0] != "gene_protein_refseq" {
+		t.Fatalf("keyword source link provenance did not round-trip: %#v", out.KeywordSource.NCBI)
 	}
 	if out.KeywordReview == nil || !out.KeywordReview.SelectionState.Valid || out.KeywordReview.SelectionState.SelectedRow != 3 {
 		t.Fatalf("keyword review state did not round-trip: %#v", out.KeywordReview)

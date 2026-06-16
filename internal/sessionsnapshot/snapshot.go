@@ -119,6 +119,14 @@ type NCBIKeywordSourceV3 struct {
 	EngineSchema      string   `json:"engine_schema"`
 	Accessions        []string `json:"accessions,omitempty"`
 	UIDs              []string `json:"uids,omitempty"`
+	LinkResolution    string   `json:"link_resolution,omitempty"`
+	LinkedFromDB      string   `json:"linked_from_db,omitempty"`
+	LinkedToDB        string   `json:"linked_to_db,omitempty"`
+	LinkedFromTypes   []string `json:"linked_from_search_types,omitempty"`
+	LinkedToTypes     []string `json:"linked_to_search_types,omitempty"`
+	LinkNames         []string `json:"link_names,omitempty"`
+	LinkSourceIDs     []string `json:"link_source_ids,omitempty"`
+	LinkTargetIDs     []string `json:"link_target_ids,omitempty"`
 }
 
 type ReportContextV2 struct {

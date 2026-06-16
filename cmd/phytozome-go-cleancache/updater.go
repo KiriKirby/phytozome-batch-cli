@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/KiriKirby/phytozome-go/internal/startupstate"
 	"golang.org/x/term"
 )
 
@@ -56,7 +57,7 @@ type stagedUpdatePlan struct {
 	BackupDir      string
 }
 
-func maybeHandleReleaseUpdate(args []string) bool {
+func maybeHandleReleaseUpdate(appDir string, args []string) bool {
 	if shouldSkipReleaseUpdateCheck() {
 		return false
 	}
@@ -67,6 +68,7 @@ func maybeHandleReleaseUpdate(args []string) bool {
 		currentVersion = "unknown"
 	}
 	_, _ = fmt.Fprintf(os.Stdout, "Checking for updates on GitHub (%s)...\n", currentVersion)
+	writeStartupStatus(appDir, startupstate.StatusInitializing, false, "Checking GitHub for application updates.", "")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
@@ -87,6 +89,7 @@ func maybeHandleReleaseUpdate(args []string) bool {
 	}
 	if !hasUpdate {
 		appendUpdateDebugLog("already on latest release")
+		writeStartupStatus(appDir, startupstate.StatusInitializing, false, "Application update check complete.", "")
 		_, _ = fmt.Fprintln(os.Stdout, "Update check: already on the latest release.")
 		return false
 	}
@@ -112,6 +115,7 @@ func maybeHandleReleaseUpdate(args []string) bool {
 		return false
 	}
 
+	writeStartupStatus(appDir, startupstate.StatusInitializing, false, "Downloading and staging application update.", "")
 	if err := runSpinner("Downloading and staging update", func() error {
 		return prepareAndLaunchStagedUpdate(context.Background(), plan, args)
 	}); err != nil {

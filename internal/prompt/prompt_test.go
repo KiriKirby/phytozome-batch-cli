@@ -988,6 +988,31 @@ func TestKeywordRowDetailPagesPutNCBIInlineFASTAOnlyOnFASTATab(t *testing.T) {
 	}
 }
 
+func TestKeywordDetailColumnIDsForRowUsesNCBISearchTypeSpecificSchema(t *testing.T) {
+	geneRow := model.KeywordResultRow{
+		SourceDatabase: "ncbi",
+		ExtraColumns: map[string]string{
+			"ncbi_search_type_id": "gene",
+			"ncbi_result_domain":  "gene-record",
+		},
+	}
+	nuccoreRow := model.KeywordResultRow{
+		SourceDatabase: "ncbi",
+		ExtraColumns: map[string]string{
+			"ncbi_search_type_id": "nuccore",
+			"ncbi_result_domain":  "sequence-record",
+		},
+	}
+	geneIDs := keywordDetailColumnIDsForRow(geneRow)
+	nuccoreIDs := keywordDetailColumnIDsForRow(nuccoreRow)
+	if !slices.Contains(geneIDs, "gene_locus") || !slices.Contains(geneIDs, "symbols") {
+		t.Fatalf("gene detail ids missing expected fields: %#v", geneIDs)
+	}
+	if slices.Contains(nuccoreIDs, "gene_locus") || !slices.Contains(nuccoreIDs, "transcript") {
+		t.Fatalf("nuccore detail ids should be nucleotide-oriented: %#v", nuccoreIDs)
+	}
+}
+
 func TestDetailPageIsFASTADetectsLastTabOnly(t *testing.T) {
 	if !detailPageIsFASTA(2, 0, 3) {
 		t.Fatal("expected last page first item to be FASTA")

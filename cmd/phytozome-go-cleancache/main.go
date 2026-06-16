@@ -67,6 +67,7 @@ func run() error {
 		return err
 	}
 	_ = startupstate.Write(appDir, startupstate.State{Status: startupstate.StatusInitializing, Message: "Startup helper is preparing phytozome GO."})
+	mainAlreadyLaunched := false
 	if shouldSkipBundleMaintenancePreflight() {
 		_, _ = fmt.Fprintln(os.Stdout)
 		_, _ = fmt.Fprintln(os.Stdout, "Bundle cache cleanup and release update check skipped for relaunch.")
@@ -82,6 +83,7 @@ func run() error {
 			_, _ = fmt.Fprintf(os.Stdout, "  - %s\n", target)
 		}
 
+		writeStartupStatus(appDir, startupstate.StatusInitializing, false, "Deleting startup cache directories.", "")
 		if err := runSpinner("Deleting .cache directories", func() error {
 			return removeCacheTargets(cacheTargets)
 		}); err != nil {
@@ -89,21 +91,33 @@ func run() error {
 		}
 
 		_, _ = fmt.Fprintln(os.Stdout, "Cache cleanup complete.")
-		if updateLaunched := maybeHandleReleaseUpdate(os.Args[1:]); updateLaunched {
+		writeStartupStatus(appDir, startupstate.StatusInitializing, false, "Checking for application updates.", "")
+		if updateLaunched := maybeHandleReleaseUpdate(appDir, os.Args[1:]); updateLaunched {
 			_ = startupstate.Complete(appDir)
 			return nil
 		}
 	}
-	mainAlreadyLaunched, err := maybeEnsureSymbolNameDatabase(appDir, os.Args[1:])
+	writeStartupStatus(appDir, startupstate.StatusInitializing, false, "Checking symbol name database.", "")
+	symbolLaunched, err := maybeEnsureSymbolNameDatabase(appDir, os.Args[1:])
 	if err != nil {
 		_ = startupstate.Complete(appDir)
 		return err
 	}
+	mainAlreadyLaunched = mainAlreadyLaunched || symbolLaunched
 	_ = startupstate.Complete(appDir)
 	if mainAlreadyLaunched {
 		return nil
 	}
 	return launchMainProgram(os.Args[1:])
+}
+
+func writeStartupStatus(appDir string, status string, allowUse bool, message string, dbPath string) {
+	_ = startupstate.Write(appDir, startupstate.State{
+		Status:   status,
+		AllowUse: allowUse,
+		Message:  message,
+		DBPath:   dbPath,
+	})
 }
 
 func printStartupNotice() {
@@ -318,12 +332,14 @@ func removeCacheTargets(targets []string) error {
 func maybeEnsureSymbolNameDatabase(appDir string, args []string) (bool, error) {
 	dbPath := labelname.DefaultGeneInfoDatabasePath(appDir)
 	labelname.SetDefaultGeneInfoDatabasePath(dbPath)
+	writeStartupStatus(appDir, startupstate.StatusInitializing, false, "Checking remote symbol name database manifest.", dbPath)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	plan, err := labelname.PreferredGeneInfoInstallPlan(ctx)
 	if err != nil {
 		return false, err
 	}
+	writeStartupStatus(appDir, startupstate.StatusInitializing, false, "Inspecting local symbol name database.", dbPath)
 	remote := plan.Remote
 	local, localErr := labelname.InspectGeneInfoDatabase(dbPath)
 	if localErr != nil {
@@ -343,7 +359,7 @@ func maybeEnsureSymbolNameDatabase(appDir string, args []string) (bool, error) {
 		}
 		launchNow := promptYesNo(os.Stdin, os.Stdout, "Open phytozome GO while the symbol name library downloads? [y/N]: ")
 		if launchNow {
-			_ = startupstate.Write(appDir, startupstate.State{Status: startupstate.StatusDownloading, AllowUse: true, Message: "Symbol name library is downloading.", DBPath: dbPath})
+			writeStartupStatus(appDir, startupstate.StatusDownloading, true, "Symbol name library is downloading.", dbPath)
 			_, _ = fmt.Fprintln(os.Stdout, "Opening phytozome GO in a new tab while download continues in tab 0...")
 			if err := launchMainProgramInNewTab(args); err != nil {
 				return false, err
@@ -355,6 +371,7 @@ func maybeEnsureSymbolNameDatabase(appDir string, args []string) (bool, error) {
 		return launchNow, nil
 	}
 	if remote.LastModified.IsZero() || local.LastModified.IsZero() || !remote.LastModified.After(local.LastModified) {
+		writeStartupStatus(appDir, startupstate.StatusInitializing, false, "Symbol name database is current.", dbPath)
 		_, _ = fmt.Fprintf(os.Stdout, "Symbol name library: current (%d records).\n", local.RecordCount)
 		return false, nil
 	}
@@ -381,7 +398,7 @@ func maybeEnsureSymbolNameDatabase(appDir string, args []string) (bool, error) {
 	}
 	launchNow := promptYesNo(os.Stdin, os.Stdout, "Open phytozome GO while the symbol name library update downloads? [y/N]: ")
 	if launchNow {
-		_ = startupstate.Write(appDir, startupstate.State{Status: startupstate.StatusDownloading, AllowUse: true, Message: "Symbol name library update is downloading.", DBPath: dbPath})
+		writeStartupStatus(appDir, startupstate.StatusDownloading, true, "Symbol name library update is downloading.", dbPath)
 		_, _ = fmt.Fprintln(os.Stdout, "Opening phytozome GO in a new tab while update continues in tab 0...")
 		if err := launchMainProgramInNewTab(args); err != nil {
 			return false, err
@@ -395,8 +412,8 @@ func maybeEnsureSymbolNameDatabase(appDir string, args []string) (bool, error) {
 
 func downloadSymbolNameDatabaseStartupWithRetry(appDir string, label string, dbPath string, plan labelname.GeneInfoInstallPlan, allowUse bool) error {
 	for {
-		_ = startupstate.Write(appDir, startupstate.State{Status: startupstate.StatusDownloading, AllowUse: allowUse, Message: label, DBPath: dbPath})
-		err := downloadSymbolNameDatabaseWithProgress(label, dbPath, plan)
+		writeStartupStatus(appDir, startupstate.StatusDownloading, allowUse, label, dbPath)
+		err := downloadSymbolNameDatabaseWithProgress(appDir, label, dbPath, plan, allowUse)
 		if err == nil {
 			return nil
 		}
@@ -415,7 +432,7 @@ func downloadSymbolNameDatabaseStartupWithRetry(appDir string, label string, dbP
 	}
 }
 
-func downloadSymbolNameDatabaseWithProgress(label string, dbPath string, plan labelname.GeneInfoInstallPlan) error {
+func downloadSymbolNameDatabaseWithProgress(appDir string, label string, dbPath string, plan labelname.GeneInfoInstallPlan, allowUse bool) error {
 	_, _ = fmt.Fprintf(os.Stdout, "%s...\n", label)
 	_, _ = fmt.Fprintf(os.Stdout, "Writing database to: %s\n", dbPath)
 	progress := newConsoleProgress(os.Stdout)
@@ -425,7 +442,9 @@ func downloadSymbolNameDatabaseWithProgress(label string, dbPath string, plan la
 		Workers: labelname.DefaultDownloadWorkers(),
 		Stdout:  os.Stdout,
 		Progress: func(event labelname.GeneInfoProgress) {
-			progress.Update(labelname.FormatGeneInfoProgress(event), event.Done)
+			message := labelname.FormatGeneInfoProgress(event)
+			progress.Update(message, event.Done)
+			writeStartupStatus(appDir, startupstate.StatusDownloading, allowUse, message, dbPath)
 		},
 	})
 	progress.Finish(err == nil)

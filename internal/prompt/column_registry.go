@@ -10,6 +10,8 @@ package prompt
 import (
 	"sort"
 	"strings"
+
+	"github.com/KiriKirby/phytozome-go/internal/ncbi"
 )
 
 type ColumnDisplayOptions struct {
@@ -137,6 +139,66 @@ var keywordReportExtraColumnIDsByDatabase = map[string][]string{
 		"ncbi_fasta_header",
 		"ncbi_protein_sequence",
 		"ncbi_fasta",
+		"ncbi_link_resolution",
+		"ncbi_linked_from_db",
+		"ncbi_linked_to_db",
+		"ncbi_linked_from_search_type_id",
+		"ncbi_linked_to_search_type_id",
+		"ncbi_linkname",
+		"ncbi_link_source_ids",
+		"ncbi_link_target_ids",
+		"ncbi_link_source_keyword",
+		"ncbi_jump_targets",
+		"ncbi_assembly_accession",
+		"ncbi_assembly_name",
+		"ncbi_assembly_level",
+		"ncbi_assembly_status",
+		"ncbi_ftp_path",
+		"ncbi_bioproject_accession",
+		"ncbi_biosample_accession",
+		"ncbi_sample_name",
+		"ncbi_isolation_source",
+		"ncbi_host",
+		"ncbi_geo_loc_name",
+		"ncbi_collection_date",
+		"ncbi_library_strategy",
+		"ncbi_library_source",
+		"ncbi_platform",
+		"ncbi_study_accession",
+		"ncbi_experiment_accession",
+		"ncbi_run_accession",
+		"ncbi_layout",
+		"ncbi_instrument_model",
+		"ncbi_spots",
+		"ncbi_bases",
+		"ncbi_taxonomy_id",
+		"ncbi_common_name",
+		"ncbi_rank",
+		"ncbi_lineage_summary",
+		"ncbi_division",
+		"ncbi_parent_taxonomy_id",
+		"ncbi_rsid",
+		"ncbi_dbvar_accession",
+		"ncbi_phenotype",
+		"ncbi_clinical_assertion",
+		"ncbi_medgen_id",
+		"ncbi_condition_summary",
+		"ncbi_related_gene_summary",
+		"ncbi_omim_id",
+		"ncbi_clinvar_accession",
+		"ncbi_clinical_significance",
+		"ncbi_review_status",
+		"ncbi_condition",
+		"ncbi_variant_type",
+		"ncbi_gtr_accession",
+		"ncbi_test_name",
+		"ncbi_test_type",
+		"ncbi_method",
+		"ncbi_lab",
+		"ncbi_replaced_by",
+		"ncbi_replacement_decision",
+		"ncbi_requested_accession",
+		"ncbi_replacement_accession",
 	},
 }
 
@@ -228,6 +290,66 @@ var columnMetadataByID = map[string]columnMetadata{
 	"gene_report_url":                  {CompactHeader: "gene_report_url", DetailLabel: "gene_report_url", ExportHeader: "gene_report_url"},
 	"sequence_header_label":            {CompactHeader: "sequence_header_label", DetailLabel: "sequence_header_label", ExportHeader: "sequence_header_label"},
 	"sequence_id":                      {CompactHeader: "sequence_id", DetailLabel: "sequence_id", ExportHeader: "sequence_id"},
+	"ncbi_assembly_accession":          {CompactHeader: "assembly\naccession", DetailLabel: "assembly accession", ExportHeader: "assembly_accession"},
+	"ncbi_assembly_name":               {CompactHeader: "assembly name", DetailLabel: "assembly name", ExportHeader: "assembly_name"},
+	"ncbi_assembly_level":              {CompactHeader: "assembly level", DetailLabel: "assembly level", ExportHeader: "assembly_level"},
+	"ncbi_assembly_status":             {CompactHeader: "assembly status", DetailLabel: "assembly status", ExportHeader: "assembly_status"},
+	"ncbi_ftp_path":                    {CompactHeader: "FTP path", DetailLabel: "FTP path", ExportHeader: "ftp_path"},
+	"ncbi_bioproject_accession":        {CompactHeader: "BioProject", DetailLabel: "BioProject accession", ExportHeader: "bioproject_accession"},
+	"ncbi_biosample_accession":         {CompactHeader: "BioSample", DetailLabel: "BioSample accession", ExportHeader: "biosample_accession"},
+	"ncbi_sample_name":                 {CompactHeader: "sample name", DetailLabel: "sample name", ExportHeader: "sample_name"},
+	"ncbi_isolation_source":            {CompactHeader: "isolation\nsource", DetailLabel: "isolation source", ExportHeader: "isolation_source"},
+	"ncbi_host":                        {CompactHeader: "host", DetailLabel: "host", ExportHeader: "host"},
+	"ncbi_geo_loc_name":                {CompactHeader: "geo_loc_name", DetailLabel: "geo_loc_name", ExportHeader: "geo_loc_name"},
+	"ncbi_collection_date":             {CompactHeader: "collection\ndate", DetailLabel: "collection date", ExportHeader: "collection_date"},
+	"ncbi_library_strategy":            {CompactHeader: "library\nstrategy", DetailLabel: "library strategy", ExportHeader: "library_strategy"},
+	"ncbi_library_source":              {CompactHeader: "library\nsource", DetailLabel: "library source", ExportHeader: "library_source"},
+	"ncbi_platform":                    {CompactHeader: "platform", DetailLabel: "platform", ExportHeader: "platform"},
+	"ncbi_study_accession":             {CompactHeader: "study", DetailLabel: "study accession", ExportHeader: "study_accession"},
+	"ncbi_experiment_accession":        {CompactHeader: "experiment", DetailLabel: "experiment accession", ExportHeader: "experiment_accession"},
+	"ncbi_run_accession":               {CompactHeader: "run", DetailLabel: "run accession", ExportHeader: "run_accession"},
+	"ncbi_layout":                      {CompactHeader: "layout", DetailLabel: "layout", ExportHeader: "layout"},
+	"ncbi_instrument_model":            {CompactHeader: "instrument", DetailLabel: "instrument model", ExportHeader: "instrument_model"},
+	"ncbi_spots":                       {CompactHeader: "spots", DetailLabel: "spots", ExportHeader: "spots"},
+	"ncbi_bases":                       {CompactHeader: "bases", DetailLabel: "bases", ExportHeader: "bases"},
+	"ncbi_taxonomy_id":                 {CompactHeader: "tax_id", DetailLabel: "tax_id", ExportHeader: "tax_id"},
+	"ncbi_scientific_name":             {CompactHeader: "scientific name", DetailLabel: "scientific name", ExportHeader: "scientific_name"},
+	"ncbi_common_name":                 {CompactHeader: "common name", DetailLabel: "common name", ExportHeader: "common_name"},
+	"ncbi_rank":                        {CompactHeader: "rank", DetailLabel: "rank", ExportHeader: "rank"},
+	"ncbi_lineage_summary":             {CompactHeader: "lineage", DetailLabel: "lineage summary", ExportHeader: "lineage_summary"},
+	"ncbi_division":                    {CompactHeader: "division", DetailLabel: "division", ExportHeader: "division"},
+	"ncbi_parent_taxonomy_id":          {CompactHeader: "parent tax", DetailLabel: "parent tax_id", ExportHeader: "parent_tax_id"},
+	"ncbi_rsid":                        {CompactHeader: "rsid", DetailLabel: "rsid", ExportHeader: "rsid"},
+	"ncbi_snp_title":                   {CompactHeader: "SNP title", DetailLabel: "SNP title", ExportHeader: "snp_title"},
+	"ncbi_variant_class":               {CompactHeader: "variant class", DetailLabel: "variant class", ExportHeader: "variant_class"},
+	"ncbi_chromosome":                  {CompactHeader: "chrom", DetailLabel: "chromosome", ExportHeader: "chromosome"},
+	"ncbi_chrpos":                      {CompactHeader: "position", DetailLabel: "chromosome position", ExportHeader: "chromosome_position"},
+	"ncbi_dbvar_accession":             {CompactHeader: "dbVar", DetailLabel: "dbVar accession", ExportHeader: "dbvar_accession"},
+	"ncbi_phenotype":                   {CompactHeader: "phenotype", DetailLabel: "phenotype", ExportHeader: "phenotype"},
+	"ncbi_clinical_assertion":          {CompactHeader: "clinical\nassertion", DetailLabel: "clinical assertion", ExportHeader: "clinical_assertion"},
+	"ncbi_medgen_id":                   {CompactHeader: "MedGen", DetailLabel: "MedGen ID", ExportHeader: "medgen_id"},
+	"ncbi_condition_summary":           {CompactHeader: "condition\nsummary", DetailLabel: "condition summary", ExportHeader: "condition_summary"},
+	"ncbi_related_gene_summary":        {CompactHeader: "related gene", DetailLabel: "related gene summary", ExportHeader: "related_gene_summary"},
+	"ncbi_preferred_title":             {CompactHeader: "preferred title", DetailLabel: "preferred title", ExportHeader: "preferred_title"},
+	"ncbi_definition":                  {CompactHeader: "definition", DetailLabel: "definition", ExportHeader: "definition"},
+	"ncbi_source":                      {CompactHeader: "source", DetailLabel: "source", ExportHeader: "source"},
+	"ncbi_omim_id":                     {CompactHeader: "OMIM", DetailLabel: "OMIM ID", ExportHeader: "omim_id"},
+	"ncbi_omim_title":                  {CompactHeader: "OMIM title", DetailLabel: "OMIM title", ExportHeader: "omim_title"},
+	"ncbi_omim_text":                   {CompactHeader: "OMIM text", DetailLabel: "OMIM text", ExportHeader: "omim_text"},
+	"ncbi_clinvar_accession":           {CompactHeader: "ClinVar", DetailLabel: "ClinVar accession", ExportHeader: "clinvar_accession"},
+	"ncbi_clinical_significance":       {CompactHeader: "clinical\nsignificance", DetailLabel: "clinical significance", ExportHeader: "clinical_significance"},
+	"ncbi_review_status":               {CompactHeader: "review status", DetailLabel: "review status", ExportHeader: "review_status"},
+	"ncbi_condition":                   {CompactHeader: "condition", DetailLabel: "condition", ExportHeader: "condition"},
+	"ncbi_variant_type":                {CompactHeader: "variant type", DetailLabel: "variant type", ExportHeader: "variant_type"},
+	"ncbi_gtr_accession":               {CompactHeader: "GTR", DetailLabel: "GTR accession", ExportHeader: "gtr_accession"},
+	"ncbi_test_name":                   {CompactHeader: "test name", DetailLabel: "test name", ExportHeader: "test_name"},
+	"ncbi_test_type":                   {CompactHeader: "test type", DetailLabel: "test type", ExportHeader: "test_type"},
+	"ncbi_method":                      {CompactHeader: "method", DetailLabel: "method", ExportHeader: "method"},
+	"ncbi_lab":                         {CompactHeader: "lab", DetailLabel: "lab", ExportHeader: "lab"},
+	"ncbi_replaced_by":                 {CompactHeader: "replaced by", DetailLabel: "replaced by", ExportHeader: "replaced_by"},
+	"ncbi_replacement_decision":        {CompactHeader: "update\ndecision", DetailLabel: "update decision", ExportHeader: "replacement_decision"},
+	"ncbi_requested_accession":         {CompactHeader: "requested", DetailLabel: "requested accession", ExportHeader: "requested_accession"},
+	"ncbi_replacement_accession":       {CompactHeader: "replacement", DetailLabel: "replacement accession", ExportHeader: "replacement_accession"},
 	"source_database":                  {CompactHeader: "source_database", DetailLabel: "source_database", ExportHeader: "source_database"},
 	"blast_program":                    {CompactHeader: "blast_program", DetailLabel: "blast_program", ExportHeader: "blast_program"},
 	"hit_number":                       {CompactHeader: "hit_number", DetailLabel: "hit_number", ExportHeader: "hit_number"},
@@ -494,6 +616,56 @@ var supplementalColumnHelpText = map[string]string{
 		"从匹配 TAIR FASTA header 解析出的 symbol 文本。它记录的是序列侧的 symbol 提示，可用于补充或校验从 GFF 注释得到的编号和标签。",
 		"一致した TAIR FASTA header から解析した symbol テキストです。GFF 注釈から得た ID やラベルを補強・確認する sequence 側 symbol ヒントを記録します。",
 	),
+	"ncbi_link_resolution": columnHelp(
+		"NCBI linked-resolution mode that produced the row when direct search in the target database returned nothing usable. The current implemented explicit value is elink, meaning the workflow first searched a different Entrez database and then followed an official ELink relationship into the final target database.",
+		"当目标数据库直接搜索没有得到可用结果时，生成该行所使用的 NCBI 链接解析模式。当前已实现的明确取值是 elink，表示工作流先搜索了另一个 Entrez 数据库，再沿官方 ELink 关系跳转到最终目标数据库。",
+		"対象データベースの直接検索で使える結果が得られなかったとき、この行を生成した NCBI の linked-resolution 方式です。現在の明示的な実装値は elink で、まず別の Entrez database を検索し、その後公式 ELink 関係をたどって最終ターゲット database へ移動したことを意味します。",
+	),
+	"ncbi_linked_from_db": columnHelp(
+		"Entrez source database used as the origin of an executed NCBI linked fallback. It tells you which upstream database actually matched the keyword before the workflow followed an official cross-database link into the current result database.",
+		"执行 NCBI 跳链回退时所使用的 Entrez 源数据库。它说明在工作流沿官方跨库链接跳入当前结果数据库之前，真正先命中关键词的是哪个上游数据库。",
+		"実行された NCBI linked fallback の起点になった Entrez source database です。ワークフローが公式のクロスデータベース link をたどって現在の結果 database へ移る前に、実際にキーワードへ最初に一致した上流 database が何だったかを示します。",
+	),
+	"ncbi_linked_to_db": columnHelp(
+		"Entrez target database reached after the linked fallback finished. In normal direct-search rows this field may be blank, but in linked rows it confirms which NCBI database the final summary rows were actually fetched from.",
+		"链路回退完成后到达的 Entrez 目标数据库。在普通直接搜索行中它可能为空，但在跳链行中，它确认最终 summary 行实际上是从哪个 NCBI 数据库抓取的。",
+		"linked fallback 完了後に到達した Entrez target database です。通常の直接検索行では空の場合がありますが、linked 行では最終 summary 行を実際にどの NCBI database から取得したかを確認できます。",
+	),
+	"ncbi_linked_from_search_type_id": columnHelp(
+		"NCBI internal search-type identifier for the source side of an executed linked fallback, such as gene, clinvar, medgen, or pubmed. It is more stable for workflow logic and snapshots than the human-facing search_type label.",
+		"执行跳链回退时源侧使用的 NCBI 内部 search-type 标识，例如 gene、clinvar、medgen 或 pubmed。相对于面向用户的 search_type 标签，它对工作流逻辑和快照更稳定。",
+		"実行された linked fallback の source 側に対応する NCBI 内部 search-type ID です。gene、clinvar、medgen、pubmed などが入り、ユーザー向け search_type ラベルよりワークフローや snapshot で安定して使えます。",
+	),
+	"ncbi_linked_to_search_type_id": columnHelp(
+		"NCBI internal search-type identifier for the target side of an executed linked fallback. It records the intended logical result family even when several human-facing tables may later present the rows in slightly different specialized layouts.",
+		"执行跳链回退时目标侧使用的 NCBI 内部 search-type 标识。即使后续不同的人类可读表格布局会以稍有差异的专业化方式展示这些行，它仍记录了预期的逻辑结果族。",
+		"実行された linked fallback の target 側に対応する NCBI 内部 search-type ID です。後段の人向けテーブル表示が少し異なる specialized layout を使っても、意図された論理的な結果ファミリーを記録します。",
+	),
+	"ncbi_linkname": columnHelp(
+		"Exact NCBI ELink linkname that connected the source database rows to the final target database rows. This is the most important audit field for understanding why a linked fallback produced the current result set and for reproducing the same jump path later.",
+		"把源数据库行连接到最终目标数据库行所使用的精确 NCBI ELink linkname。这是理解为什么某次跳链回退会产生当前结果集，以及之后复现同一路径时最重要的审计字段。",
+		"source database 行と最終 target database 行を接続した正確な NCBI ELink linkname です。なぜその linked fallback が現在の結果集合を生んだのかを理解し、後で同じ jump path を再現するための最重要監査項目です。",
+	),
+	"ncbi_link_source_ids": columnHelp(
+		"Comma-separated upstream Entrez IDs that the workflow used as ELink source IDs before jumping into the current database. These IDs usually belong to the database named by ncbi_linked_from_db rather than the final row database itself.",
+		"工作流在跳入当前数据库之前，作为 ELink 源 ID 使用的上游 Entrez ID 列表，以逗号分隔。这些 ID 通常属于 ncbi_linked_from_db 所指的数据库，而不是当前最终行所在的数据库。",
+		"ワークフローが現在の database へジャンプする前に ELink source ID として使った上流 Entrez ID のカンマ区切り一覧です。通常は最終行の database 自体ではなく、ncbi_linked_from_db が指す database に属します。",
+	),
+	"ncbi_link_target_ids": columnHelp(
+		"Comma-separated Entrez IDs resolved by ELink in the final target database. They are the IDs later used to fetch the summary rows that became the visible result rows.",
+		"由 ELink 在最终目标数据库中解析得到的 Entrez ID 列表，以逗号分隔。它们就是随后被用来抓取 summary 行并形成可见结果行的那些 ID。",
+		"ELink により最終 target database 側で解決された Entrez ID のカンマ区切り一覧です。後で summary 行を取得し、可視の結果行へ変換するために使われた ID 群そのものです。",
+	),
+	"ncbi_link_source_keyword": columnHelp(
+		"Original user keyword that was applied to the source database before the linked jump. This keeps the linked workflow auditable even when the final target rows no longer obviously contain the original search text.",
+		"在执行跳链之前应用到源数据库上的原始用户关键词。即使最终目标行里已经不再明显包含原始搜索文本，这一列仍能让跳链工作流保持可审计性。",
+		"linked jump 前に source database へ適用した元のユーザーキーワードです。最終 target 行に元の検索語が明白に残っていなくても、linked workflow を監査可能なまま保ちます。",
+	),
+	"ncbi_jump_targets": columnHelp(
+		"Static preview of official NCBI link targets known for the row's current search-type family. It does not prove those jumps were executed for this row; instead it advertises which cross-database jump directions the product currently knows how to describe or may later expose directly in the UI.",
+		"该行当前 search-type 族已知的官方 NCBI 跳转目标的静态预览。它并不证明这些跳转已经对这行实际执行过；它的作用是提示产品当前已知、或未来可能在 UI 中直接暴露的跨数据库跳转方向。",
+		"この行の現在の search-type ファミリーについて既知の公式 NCBI jump target の静的プレビューです。これらの jump がこの行に対して実行済みであることを証明するものではなく、製品が現在説明可能、または将来 UI で直接公開しうるクロスデータベース jump 方向を示します。",
+	),
 }
 
 func ColumnHelpText(id string) string {
@@ -608,15 +780,126 @@ func KnownColumnHelpIDs() []string {
 }
 
 func KeywordDisplayColumnIDs(database string) []string {
+	if strings.EqualFold(strings.TrimSpace(database), "ncbi:gene") {
+		return []string{"search_term", "search_type", "gene_locus", "label_name", "labelname_type", "phgo_alias", "gene_identifier", "symbols", "description", "genome"}
+	}
+	if strings.EqualFold(strings.TrimSpace(database), "ncbi:nuccore") || strings.EqualFold(strings.TrimSpace(database), "ncbi:nucleotide") {
+		return []string{"search_term", "search_type", "label_name", "transcript", "gene_identifier", "description", "genome", "location", "gene_report_url"}
+	}
+	if strings.EqualFold(strings.TrimSpace(database), "ncbi:assembly") {
+		return []string{"search_term", "search_type", "ncbi_assembly_accession", "label_name", "genome", "ncbi_assembly_level", "ncbi_assembly_status", "ncbi_bioproject_accession"}
+	}
+	if strings.EqualFold(strings.TrimSpace(database), "ncbi:clinvar") {
+		return []string{"search_term", "search_type", "ncbi_clinvar_accession", "label_name", "gene_identifier", "ncbi_clinical_significance", "ncbi_review_status", "ncbi_condition"}
+	}
+	if strings.EqualFold(strings.TrimSpace(database), "ncbi:snp") || strings.EqualFold(strings.TrimSpace(database), "ncbi:dbvar") || strings.EqualFold(strings.TrimSpace(database), "ncbi:medgen") || strings.EqualFold(strings.TrimSpace(database), "ncbi:gtr") || strings.EqualFold(strings.TrimSpace(database), "ncbi:omim") {
+		if strings.EqualFold(strings.TrimSpace(database), "ncbi:gtr") {
+			return []string{"search_term", "search_type", "ncbi_gtr_accession", "label_name", "ncbi_condition", "gene_identifier", "ncbi_lab"}
+		}
+		if strings.EqualFold(strings.TrimSpace(database), "ncbi:snp") {
+			return []string{"search_term", "search_type", "ncbi_rsid", "gene_identifier", "label_name", "ncbi_variant_type", "ncbi_clinical_significance", "genome"}
+		}
+		if strings.EqualFold(strings.TrimSpace(database), "ncbi:dbvar") {
+			return []string{"search_term", "search_type", "ncbi_dbvar_accession", "ncbi_variant_type", "gene_identifier", "ncbi_phenotype", "ncbi_clinical_assertion"}
+		}
+		if strings.EqualFold(strings.TrimSpace(database), "ncbi:medgen") {
+			return []string{"search_term", "search_type", "ncbi_medgen_id", "label_name", "ncbi_condition_summary", "ncbi_related_gene_summary"}
+		}
+		if strings.EqualFold(strings.TrimSpace(database), "ncbi:omim") {
+			return []string{"search_term", "search_type", "ncbi_omim_id", "label_name", "ncbi_condition_summary", "ncbi_related_gene_summary"}
+		}
+		return []string{"search_term", "search_type", "label_name", "gene_identifier", "description", "comments", "gene_report_url"}
+	}
+	if strings.EqualFold(strings.TrimSpace(database), "ncbi:pubmed") || strings.EqualFold(strings.TrimSpace(database), "ncbi:pmc") {
+		return []string{"search_term", "search_type", "label_name", "gene_identifier", "description", "genome", "comments", "gene_report_url"}
+	}
+	if strings.EqualFold(strings.TrimSpace(database), "ncbi:bioproject") || strings.EqualFold(strings.TrimSpace(database), "ncbi:biosample") || strings.EqualFold(strings.TrimSpace(database), "ncbi:sra") {
+		if strings.EqualFold(strings.TrimSpace(database), "ncbi:biosample") {
+			return []string{"search_term", "search_type", "ncbi_biosample_accession", "label_name", "genome", "ncbi_isolation_source", "ncbi_host", "ncbi_geo_loc_name"}
+		}
+		if strings.EqualFold(strings.TrimSpace(database), "ncbi:sra") {
+			return []string{"search_term", "search_type", "ncbi_sra_accession", "label_name", "genome", "ncbi_library_strategy", "ncbi_library_source", "ncbi_platform", "ncbi_bioproject_accession"}
+		}
+		return []string{"search_term", "search_type", "label_name", "gene_identifier", "description", "genome", "comments", "gene_report_url"}
+	}
+	if strings.EqualFold(strings.TrimSpace(database), "ncbi:taxonomy") {
+		return []string{"search_term", "search_type", "ncbi_taxonomy_id", "label_name", "ncbi_common_name", "ncbi_rank", "ncbi_lineage_summary"}
+	}
+	if strings.EqualFold(strings.TrimSpace(database), "ncbi:gene-record") {
+		return []string{"search_term", "search_type", "gene_locus", "label_name", "labelname_type", "phgo_alias", "gene_identifier", "description", "genome"}
+	}
+	if strings.EqualFold(strings.TrimSpace(database), "ncbi:literature-reference") {
+		return []string{"search_term", "search_type", "label_name", "description", "genome", "gene_report_url"}
+	}
+	if strings.EqualFold(strings.TrimSpace(database), "ncbi:sample-project") || strings.EqualFold(strings.TrimSpace(database), "ncbi:genome-resource") || strings.EqualFold(strings.TrimSpace(database), "ncbi:variant-clinical") || strings.EqualFold(strings.TrimSpace(database), "ncbi:taxonomy-reference") || strings.EqualFold(strings.TrimSpace(database), "ncbi:chemical-bioassay") || strings.EqualFold(strings.TrimSpace(database), "ncbi:catalog-reference") || strings.EqualFold(strings.TrimSpace(database), "ncbi:annotation-record") {
+		return []string{"search_term", "search_type", "label_name", "gene_identifier", "description", "genome", "gene_report_url"}
+	}
 	return copyColumnIDs(keywordDisplayColumnIDsByDatabase[normalizedDatabaseKey(database)])
 }
 
 func KeywordDetailColumnIDs(database string) []string {
+	if strings.EqualFold(strings.TrimSpace(database), "ncbi:gene") {
+		return []string{"search_term", "search_type", "gene_locus", "label_name", "labelname_type", "phgo_alias", "alias", "symbols", "synonyms", "gene_identifier", "genome", "location", "description", "comments", "auto_define", "gene_report_url"}
+	}
+	if strings.EqualFold(strings.TrimSpace(database), "ncbi:nuccore") || strings.EqualFold(strings.TrimSpace(database), "ncbi:nucleotide") {
+		return []string{"search_term", "search_type", "label_name", "transcript", "gene_identifier", "genome", "location", "description", "comments", "auto_define", "gene_report_url"}
+	}
+	if strings.EqualFold(strings.TrimSpace(database), "ncbi:assembly") {
+		return []string{"search_term", "search_type", "ncbi_assembly_accession", "label_name", "genome", "description", "ncbi_assembly_name", "ncbi_assembly_level", "ncbi_assembly_status", "ncbi_bioproject_accession", "ncbi_biosample_accession", "ncbi_taxonomy_id", "comments", "auto_define", "gene_report_url", "ncbi_ftp_path", "ncbi_replaced_by", "ncbi_requested_accession", "ncbi_replacement_accession", "ncbi_replacement_decision"}
+	}
+	if strings.EqualFold(strings.TrimSpace(database), "ncbi:clinvar") {
+		return []string{"search_term", "search_type", "ncbi_clinvar_accession", "label_name", "gene_identifier", "description", "ncbi_clinical_significance", "ncbi_review_status", "ncbi_condition", "comments", "auto_define", "gene_report_url", "ncbi_variant_type", "ncbi_replaced_by", "ncbi_requested_accession", "ncbi_replacement_accession", "ncbi_replacement_decision"}
+	}
+	if strings.EqualFold(strings.TrimSpace(database), "ncbi:snp") || strings.EqualFold(strings.TrimSpace(database), "ncbi:dbvar") || strings.EqualFold(strings.TrimSpace(database), "ncbi:medgen") || strings.EqualFold(strings.TrimSpace(database), "ncbi:gtr") || strings.EqualFold(strings.TrimSpace(database), "ncbi:omim") {
+		if strings.EqualFold(strings.TrimSpace(database), "ncbi:gtr") {
+			return []string{"search_term", "search_type", "ncbi_gtr_accession", "label_name", "ncbi_condition", "gene_identifier", "ncbi_lab", "comments", "auto_define", "gene_report_url", "ncbi_test_type", "ncbi_method", "ncbi_requested_accession", "ncbi_replacement_accession", "ncbi_replacement_decision"}
+		}
+		if strings.EqualFold(strings.TrimSpace(database), "ncbi:snp") {
+			return []string{"search_term", "search_type", "ncbi_rsid", "label_name", "gene_identifier", "genome", "description", "ncbi_variant_type", "ncbi_clinical_significance", "comments", "auto_define", "gene_report_url", "ncbi_taxonomy_id", "ncbi_chromosome", "ncbi_chrpos", "ncbi_requested_accession", "ncbi_replacement_accession", "ncbi_replacement_decision"}
+		}
+		if strings.EqualFold(strings.TrimSpace(database), "ncbi:dbvar") {
+			return []string{"search_term", "search_type", "ncbi_dbvar_accession", "label_name", "gene_identifier", "genome", "description", "ncbi_variant_type", "ncbi_phenotype", "ncbi_clinical_assertion", "ncbi_bioproject_accession", "ncbi_biosample_accession", "comments", "auto_define", "gene_report_url", "ncbi_requested_accession", "ncbi_replacement_accession", "ncbi_replacement_decision"}
+		}
+		if strings.EqualFold(strings.TrimSpace(database), "ncbi:medgen") {
+			return []string{"search_term", "search_type", "ncbi_medgen_id", "label_name", "gene_identifier", "description", "ncbi_condition_summary", "ncbi_related_gene_summary", "comments", "auto_define", "gene_report_url", "ncbi_definition", "ncbi_source", "ncbi_requested_accession", "ncbi_replacement_accession", "ncbi_replacement_decision"}
+		}
+		if strings.EqualFold(strings.TrimSpace(database), "ncbi:omim") {
+			return []string{"search_term", "search_type", "ncbi_omim_id", "label_name", "gene_identifier", "description", "ncbi_condition_summary", "ncbi_related_gene_summary", "comments", "auto_define", "gene_report_url", "ncbi_omim_text", "ncbi_requested_accession", "ncbi_replacement_accession", "ncbi_replacement_decision"}
+		}
+		return []string{"search_term", "search_type", "label_name", "gene_identifier", "description", "comments", "auto_define", "gene_report_url"}
+	}
+	if strings.EqualFold(strings.TrimSpace(database), "ncbi:pubmed") || strings.EqualFold(strings.TrimSpace(database), "ncbi:pmc") {
+		return []string{"search_term", "search_type", "label_name", "gene_identifier", "genome", "description", "comments", "auto_define", "gene_report_url"}
+	}
+	if strings.EqualFold(strings.TrimSpace(database), "ncbi:bioproject") || strings.EqualFold(strings.TrimSpace(database), "ncbi:biosample") || strings.EqualFold(strings.TrimSpace(database), "ncbi:sra") {
+		if strings.EqualFold(strings.TrimSpace(database), "ncbi:biosample") {
+			return []string{"search_term", "search_type", "ncbi_biosample_accession", "label_name", "genome", "description", "ncbi_isolation_source", "ncbi_host", "ncbi_geo_loc_name", "ncbi_collection_date", "comments", "auto_define", "gene_report_url", "ncbi_bioproject_accession"}
+		}
+		if strings.EqualFold(strings.TrimSpace(database), "ncbi:sra") {
+			return []string{"search_term", "search_type", "ncbi_sra_accession", "label_name", "genome", "description", "ncbi_library_strategy", "ncbi_library_source", "ncbi_platform", "ncbi_bioproject_accession", "ncbi_biosample_accession", "ncbi_study_accession", "ncbi_experiment_accession", "ncbi_run_accession", "ncbi_layout", "ncbi_instrument_model", "comments", "auto_define", "gene_report_url"}
+		}
+		return []string{"search_term", "search_type", "label_name", "gene_identifier", "genome", "description", "comments", "auto_define", "gene_report_url"}
+	}
+	if strings.EqualFold(strings.TrimSpace(database), "ncbi:taxonomy") {
+		return []string{"search_term", "search_type", "ncbi_taxonomy_id", "label_name", "genome", "description", "ncbi_common_name", "ncbi_rank", "ncbi_lineage_summary", "comments", "auto_define", "gene_report_url", "ncbi_scientific_name", "ncbi_division", "ncbi_parent_taxonomy_id", "ncbi_requested_accession", "ncbi_replacement_accession", "ncbi_replacement_decision"}
+	}
+	if strings.EqualFold(strings.TrimSpace(database), "ncbi:gene-record") {
+		return []string{"search_term", "search_type", "gene_locus", "label_name", "labelname_type", "phgo_alias", "symbols", "synonyms", "gene_identifier", "genome", "location", "description", "comments", "auto_define", "gene_report_url", "sequence_id"}
+	}
+	if strings.EqualFold(strings.TrimSpace(database), "ncbi:literature-reference") {
+		return []string{"search_term", "search_type", "label_name", "gene_identifier", "description", "comments", "auto_define", "gene_report_url"}
+	}
+	if strings.EqualFold(strings.TrimSpace(database), "ncbi:sample-project") || strings.EqualFold(strings.TrimSpace(database), "ncbi:genome-resource") || strings.EqualFold(strings.TrimSpace(database), "ncbi:variant-clinical") || strings.EqualFold(strings.TrimSpace(database), "ncbi:taxonomy-reference") || strings.EqualFold(strings.TrimSpace(database), "ncbi:chemical-bioassay") || strings.EqualFold(strings.TrimSpace(database), "ncbi:catalog-reference") || strings.EqualFold(strings.TrimSpace(database), "ncbi:annotation-record") {
+		return []string{"search_term", "search_type", "label_name", "gene_identifier", "genome", "description", "comments", "auto_define", "gene_report_url", "sequence_id"}
+	}
 	return copyColumnIDs(keywordDetailColumnIDsByDatabase[normalizedDatabaseKey(database)])
 }
 
 func KeywordExportColumnIDs(database string, includeProteinID bool, extraHeaders []string) []string {
-	base := copyColumnIDs(keywordExportColumnIDsByDatabase[normalizedDatabaseKey(database)])
+	base := KeywordDetailColumnIDs(database)
+	if !strings.Contains(strings.Join(base, ","), "row") {
+		base = append([]string{"row"}, base...)
+	}
 	if !includeProteinID {
 		base = filteredColumnIDs(base, "protein_id")
 	}
@@ -756,6 +1039,9 @@ func normalizedDatabaseKey(database string) string {
 	if key == "" {
 		return "phytozome"
 	}
+	if strings.HasPrefix(key, "ncbi:") {
+		return "ncbi"
+	}
 	return key
 }
 
@@ -892,14 +1178,56 @@ func dynamicColumnHelpText(id string) string {
 		)
 	case strings.HasPrefix(id, "ncbi_"):
 		name := humanizeColumnSuffix(strings.TrimPrefix(id, "ncbi_"))
+		if strings.EqualFold(id, "ncbi_result_domain") {
+			return columnHelp(
+				"NCBI result-domain classification chosen by phytozome GO for this Entrez row, such as sequence-record, gene-record, genome-resource, sample-project, variant-clinical, or literature-reference. The program uses it to decide table columns, detail pages, export shape, and snapshot metadata.",
+				"phytozome GO 为该 NCBI Entrez 结果行判定的结果域分类，例如 sequence-record、gene-record、genome-resource、sample-project、variant-clinical 或 literature-reference。程序会用它决定表格列、详情页、导出形状和快照元数据。",
+				"この NCBI Entrez 行に対して phytozome GO が選んだ result-domain 分類です。sequence-record、gene-record、genome-resource、sample-project、variant-clinical、literature-reference などがあり、table 列、detail page、export 形状、snapshot metadata を決めるために使います。",
+			)
+		}
 		return columnHelp(
-			"NCBI E-utilities field \""+name+"\" captured while building the protein keyword row. It comes from Protein ESearch/ESummary/EFetch or linked Gene ESummary data.",
-			"构建 protein keyword 行时捕获的 NCBI E-utilities 字段 \""+name+"\"。它来自 Protein ESearch/ESummary/EFetch 或关联的 Gene ESummary 数据。",
-			"protein keyword 行の構築時に取得した NCBI E-utilities フィールド \""+name+"\" です。Protein ESearch/ESummary/EFetch または linked Gene ESummary に由来します。",
+			"NCBI E-utilities field \""+name+"\" captured while building this Entrez row. Depending on the selected search type, it may come from ESearch, ESummary, EFetch, linked Gene summaries, or summary JSON flattening for the current NCBI database.",
+			"构建这个 Entrez 结果行时捕获的 NCBI E-utilities 字段 \""+name+"\"。根据所选搜索类型，它可能来自 ESearch、ESummary、EFetch、关联 Gene summary，或当前 NCBI 数据库的 summary JSON 扁平化结果。",
+			"この Entrez 行の構築時に取得した NCBI E-utilities フィールド \""+name+"\" です。選択した search type に応じて、ESearch、ESummary、EFetch、linked Gene summary、または現在の NCBI database の summary JSON 展開結果に由来します。",
 		)
 	default:
 		return ""
 	}
+}
+
+func NCBIKeywordDatabaseKey(rows []string, resultDomain string) string {
+	_ = rows
+	resultDomain = strings.TrimSpace(resultDomain)
+	if resultDomain == "" {
+		return "ncbi"
+	}
+	return "ncbi:" + resultDomain
+}
+
+func NCBIKeywordDatabaseKeyForResultDomain(resultDomain string) string {
+	return NCBIKeywordDatabaseKey(nil, resultDomain)
+}
+
+func NCBIResultDomainDatabaseKey(rowsResultDomain string) string {
+	resultDomain := strings.TrimSpace(rowsResultDomain)
+	if resultDomain == "" {
+		return "ncbi"
+	}
+	switch resultDomain {
+	case ncbi.ResultDomainGeneRecord, ncbi.ResultDomainLiterature, ncbi.ResultDomainSampleProject, ncbi.ResultDomainGenomeResource, ncbi.ResultDomainVariantClinical, ncbi.ResultDomainTaxonomyReference, ncbi.ResultDomainChemicalBioassay, ncbi.ResultDomainCatalogReference, ncbi.ResultDomainAnnotationRecord, ncbi.ResultDomainSequenceRecord:
+		return "ncbi:" + resultDomain
+	default:
+		return "ncbi"
+	}
+}
+
+func NCBIKeywordDatabaseKeyForSearchType(searchTypeID string, resultDomain string) string {
+	searchTypeID = strings.ToLower(strings.TrimSpace(searchTypeID))
+	switch searchTypeID {
+	case "gene", "nuccore", "nucleotide", "assembly", "bioproject", "biosample", "taxonomy", "sra", "clinvar", "snp", "dbvar", "medgen", "gtr", "omim", "pubmed", "pmc":
+		return "ncbi:" + searchTypeID
+	}
+	return NCBIResultDomainDatabaseKey(resultDomain)
 }
 
 func extractColumnHelpSection(text string, marker string, endMarker string) string {

@@ -20,6 +20,7 @@ import (
 
 	"github.com/KiriKirby/phytozome-go/internal/appfs"
 	"github.com/KiriKirby/phytozome-go/internal/model"
+	"github.com/KiriKirby/phytozome-go/internal/ncbi"
 	"github.com/KiriKirby/phytozome-go/internal/phylo"
 	"github.com/KiriKirby/phytozome-go/internal/prompt"
 	"github.com/KiriKirby/phytozome-go/internal/sessionsnapshot"
@@ -1736,8 +1737,14 @@ func snapshotKeywordSourceState(src source.DataSource, groups []model.KeywordSea
 		SearchTypes:  keywordSnapshotSearchTypes(groups),
 	}
 	if strings.EqualFold(database, "ncbi") {
+		resultDomain := firstNonEmpty(keywordSnapshotFirstExtraValue(groups, "ncbi_result_domain"), ncbi.ResultDomainFromKeywordRows(flattenKeywordSearchGroups(groups)), ncbi.ResultDomainSequenceRecord)
+		searchTypeID := firstNonEmpty(keywordSnapshotFirstExtraValue(groups, "ncbi_search_type_id"), "protein")
 		state.Engine = "ncbi-eutilities-keyword"
-		state.ResultDomain = "sequence-record"
+		state.ResultDomain = resultDomain
+		if state.Extra == nil {
+			state.Extra = map[string]string{}
+		}
+		state.Extra["ncbi_search_type_id"] = searchTypeID
 		state.NCBI = &sessionsnapshot.NCBIKeywordSourceV3{
 			EntrezDatabase:    firstNonEmpty(keywordSnapshotFirstExtraValue(groups, "ncbi_entrez_database"), "protein"),
 			RecordType:        firstNonEmpty(keywordSnapshotFirstExtraValue(groups, "ncbi_record_type"), "protein"),
@@ -1745,6 +1752,14 @@ func snapshotKeywordSourceState(src source.DataSource, groups []model.KeywordSea
 			EngineSchema:      firstNonEmpty(keywordSnapshotFirstExtraValue(groups, "ncbi_engine_schema"), "ncbiprotein-v3"),
 			Accessions:        keywordSnapshotExtraValues(groups, "ncbi_accession"),
 			UIDs:              keywordSnapshotExtraValues(groups, "ncbi_uid"),
+			LinkResolution:    keywordSnapshotFirstExtraValue(groups, "ncbi_link_resolution"),
+			LinkedFromDB:      keywordSnapshotFirstExtraValue(groups, "ncbi_linked_from_db"),
+			LinkedToDB:        keywordSnapshotFirstExtraValue(groups, "ncbi_linked_to_db"),
+			LinkedFromTypes:   keywordSnapshotExtraValues(groups, "ncbi_linked_from_search_type_id"),
+			LinkedToTypes:     keywordSnapshotExtraValues(groups, "ncbi_linked_to_search_type_id"),
+			LinkNames:         keywordSnapshotExtraValues(groups, "ncbi_linkname"),
+			LinkSourceIDs:     keywordSnapshotCSVExtraValues(groups, "ncbi_link_source_ids"),
+			LinkTargetIDs:     keywordSnapshotCSVExtraValues(groups, "ncbi_link_target_ids"),
 		}
 	}
 	return state
@@ -1802,6 +1817,18 @@ func keywordSnapshotExtraValues(groups []model.KeywordSearchGroup, key string) [
 			}
 			if value := strings.TrimSpace(row.ExtraColumns[key]); value != "" {
 				values = append(values, value)
+			}
+		}
+	}
+	return uniqueStrings(values)
+}
+
+func keywordSnapshotCSVExtraValues(groups []model.KeywordSearchGroup, key string) []string {
+	values := make([]string, 0)
+	for _, value := range keywordSnapshotExtraValues(groups, key) {
+		for _, piece := range strings.Split(value, ",") {
+			if piece = strings.TrimSpace(piece); piece != "" {
+				values = append(values, piece)
 			}
 		}
 	}
@@ -1889,6 +1916,8 @@ func normalizeSnapshotDatabase(database string) string {
 		return "lemna"
 	case "tair", "arabidopsis":
 		return "tair"
+	case "ncbi", "ncbi:sequence-record", "ncbi:gene-record", "ncbi:genome-resource", "ncbi:sample-project", "ncbi:variant-clinical", "ncbi:literature-reference", "ncbi:taxonomy-reference", "ncbi:chemical-bioassay", "ncbi:catalog-reference", "ncbi:annotation-record":
+		return "ncbi"
 	default:
 		return strings.ToLower(strings.TrimSpace(database))
 	}

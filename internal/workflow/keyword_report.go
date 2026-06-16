@@ -20,6 +20,7 @@ import (
 
 	"github.com/KiriKirby/phytozome-go/internal/appfs"
 	"github.com/KiriKirby/phytozome-go/internal/model"
+	"github.com/KiriKirby/phytozome-go/internal/ncbi"
 	"github.com/KiriKirby/phytozome-go/internal/prompt"
 	"github.com/KiriKirby/phytozome-go/internal/report"
 	"github.com/KiriKirby/phytozome-go/internal/tui"
@@ -744,6 +745,13 @@ func keywordReportHeaders(rows []model.KeywordResultRow) []string {
 }
 
 func sourceDatabaseForKeywordRows(rows []model.KeywordResultRow) string {
+	if strings.EqualFold(keywordRowsSourceDatabaseName(rows), "ncbi") {
+		return prompt.NCBIResultDomainDatabaseKey(ncbi.ResultDomainFromKeywordRows(rows))
+	}
+	return keywordRowsSourceDatabaseName(rows)
+}
+
+func keywordRowsSourceDatabaseName(rows []model.KeywordResultRow) string {
 	for _, row := range rows {
 		if value := strings.TrimSpace(row.SourceDatabase); value != "" {
 			return value

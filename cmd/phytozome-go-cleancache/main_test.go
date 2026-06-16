@@ -129,3 +129,14 @@ func TestShouldSkipBundleMaintenancePreflight(t *testing.T) {
 		t.Fatal("shouldSkipBundleMaintenancePreflight returned false for set env")
 	}
 }
+
+func TestShouldSpawnMainProgramInNewTabOnlyInsideWezTerm(t *testing.T) {
+	t.Setenv("WEZTERM_PANE", "1")
+	if !shouldSpawnMainProgramInNewTab() {
+		t.Fatal("expected helper to detect WezTerm pane")
+	}
+	t.Setenv("WEZTERM_PANE", "")
+	if shouldSpawnMainProgramInNewTab() {
+		t.Fatal("expected direct launch outside WezTerm")
+	}
+}

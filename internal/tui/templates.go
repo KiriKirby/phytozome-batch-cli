@@ -7004,14 +7004,18 @@ func RunActionModalPage(page ActionModalPage) (ActionModalResult, error) {
 	setFocusBorder(modalBody.Box, true)
 	attachFocusBorder(modalBody.Box)
 	modalBody.AddItem(textPanel(page.Title, page.Message), 0, 1, true)
-	addButtonRow(modalBody, modalButtons(actions, true, page.ConfirmText, "Enter", func(nav NavAction) {
+	buttons := modalButtons(actions, true, page.ConfirmText, "Enter", func(nav NavAction) {
 		result.Nav = nav
 		app.Stop()
-	}, confirm))
+	}, confirm)
+	addButtonRow(modalBody, buttons)
 
 	setPageRoot(app, infoModalRoot(modalFramePage(page.Breadcrumb, page.Path, page.Title), modalBody, 90, 18))
-	app.SetFocus(modalBody)
+	app.SetFocus(buttons)
 	installInputCapture(app, func(event *tcell.EventKey) *tcell.EventKey {
+		if buttonRowHandlesShortcut(buttons, event) {
+			return nil
+		}
 		switch event.Key() {
 		case tcell.KeyEnter:
 			confirm()

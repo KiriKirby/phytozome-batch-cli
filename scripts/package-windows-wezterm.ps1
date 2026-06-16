@@ -15,6 +15,17 @@ param(
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "windows-wezterm-common.ps1")
 
+function Invoke-GoBuild {
+	param(
+		[string]$Label,
+		[string[]]$Arguments
+	)
+	go @Arguments
+	if ($LASTEXITCODE -ne 0) {
+		throw "$Label failed with exit code $LASTEXITCODE"
+	}
+}
+
 $repoRoot = Get-PhytozomeRepoRoot
 $release = Resolve-WezTermWindowsRelease $Version
 $preparedDir = Get-PreparedWindowsWezTermDir $repoRoot $release.Tag
@@ -46,9 +57,10 @@ Remove-Item -LiteralPath (Join-Path $bundleDir "phytozome-go-window-icon.png") -
 
 Push-Location $repoRoot
 try {
-	go build -trimpath -ldflags="-X main.version=$BuildVersion" -o $appPath .\cmd\phytozome-go
-	go build -trimpath -ldflags="-H=windowsgui -X main.version=$BuildVersion" -o (Join-Path $bundleDir "phytozome-go.exe") .\cmd\phytozome-go-winlauncher
-	go build -trimpath -ldflags="-X main.version=$BuildVersion" -o (Join-Path $bundleDir "phgohelper.bin") .\cmd\phytozome-go-cleancache
+	$coreLdflags = "-X main.version=$BuildVersion"
+	Invoke-GoBuild "go build core" @("build", "-trimpath", "-ldflags=$coreLdflags", "-o", $appPath, ".\cmd\phytozome-go")
+	Invoke-GoBuild "go build launcher" @("build", "-trimpath", "-ldflags=-H=windowsgui -X main.version=$BuildVersion", "-o", (Join-Path $bundleDir "phytozome-go.exe"), ".\cmd\phytozome-go-winlauncher")
+	Invoke-GoBuild "go build startup helper" @("build", "-trimpath", "-ldflags=-X main.version=$BuildVersion", "-o", (Join-Path $bundleDir "phgohelper.bin"), ".\cmd\phytozome-go-cleancache")
 } finally {
 	Pop-Location
 }

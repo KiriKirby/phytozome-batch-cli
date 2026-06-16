@@ -8,6 +8,7 @@
 package prompt
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -84,6 +85,24 @@ func TestColumnSchemasExistPerDatabaseModeAndView(t *testing.T) {
 	if ids := KeywordExportColumnIDs("phytozome", true, nil); len(ids) == 0 {
 		t.Fatal("expected phytozome keyword export schema")
 	}
+	if ids := KeywordDisplayColumnIDs("ncbi:gene"); len(ids) == 0 {
+		t.Fatal("expected ncbi gene keyword display schema")
+	}
+	if ids := KeywordDetailColumnIDs("ncbi:nuccore"); len(ids) == 0 {
+		t.Fatal("expected ncbi nuccore keyword detail schema")
+	}
+	if ids := KeywordDetailColumnIDs("ncbi:assembly"); len(ids) == 0 {
+		t.Fatal("expected ncbi assembly keyword detail schema")
+	}
+	if ids := KeywordDetailColumnIDs("ncbi:clinvar"); len(ids) == 0 {
+		t.Fatal("expected ncbi clinvar keyword detail schema")
+	}
+	if ids := KeywordDetailColumnIDs("ncbi:pubmed"); len(ids) == 0 {
+		t.Fatal("expected ncbi pubmed keyword detail schema")
+	}
+	if ids := KeywordDetailColumnIDs("ncbi:omim"); len(ids) == 0 {
+		t.Fatal("expected ncbi omim keyword detail schema")
+	}
 	if ids := KeywordExportColumnIDs("tair", true, nil); len(ids) == 0 {
 		t.Fatal("expected tair keyword export schema")
 	}
@@ -98,6 +117,74 @@ func TestColumnSchemasExistPerDatabaseModeAndView(t *testing.T) {
 	}
 	if ids := BlastExportColumnIDs("lemna", true, true); len(ids) == 0 {
 		t.Fatal("expected lemna blast export schema")
+	}
+}
+
+func TestNCBIKeywordDatabaseKeyForSearchTypePrefersSpecializedBuckets(t *testing.T) {
+	for _, tc := range []struct {
+		searchType string
+		domain     string
+		want       string
+	}{
+		{searchType: "gene", domain: "gene-record", want: "ncbi:gene"},
+		{searchType: "nuccore", domain: "sequence-record", want: "ncbi:nuccore"},
+		{searchType: "assembly", domain: "genome-resource", want: "ncbi:assembly"},
+		{searchType: "biosample", domain: "sample-project", want: "ncbi:biosample"},
+		{searchType: "taxonomy", domain: "taxonomy-reference", want: "ncbi:taxonomy"},
+		{searchType: "pubmed", domain: "literature-reference", want: "ncbi:pubmed"},
+		{searchType: "pmc", domain: "literature-reference", want: "ncbi:pmc"},
+		{searchType: "clinvar", domain: "variant-clinical", want: "ncbi:clinvar"},
+		{searchType: "omim", domain: "variant-clinical", want: "ncbi:omim"},
+	} {
+		if got := NCBIKeywordDatabaseKeyForSearchType(tc.searchType, tc.domain); got != tc.want {
+			t.Fatalf("searchType=%q domain=%q => %q, want %q", tc.searchType, tc.domain, got, tc.want)
+		}
+	}
+}
+
+func TestNCBISpecializedDisplaySchemasExposeNewVisibleMetadataColumns(t *testing.T) {
+	for _, tc := range []struct {
+		database string
+		want     []string
+	}{
+		{database: "ncbi:assembly", want: []string{"ncbi_assembly_accession", "ncbi_assembly_level", "ncbi_assembly_status"}},
+		{database: "ncbi:biosample", want: []string{"ncbi_biosample_accession", "ncbi_isolation_source", "ncbi_geo_loc_name"}},
+		{database: "ncbi:sra", want: []string{"ncbi_sra_accession", "ncbi_library_strategy", "ncbi_bioproject_accession"}},
+		{database: "ncbi:clinvar", want: []string{"ncbi_clinvar_accession", "ncbi_clinical_significance", "ncbi_review_status"}},
+		{database: "ncbi:gtr", want: []string{"ncbi_gtr_accession", "ncbi_condition", "ncbi_lab"}},
+		{database: "ncbi:taxonomy", want: []string{"ncbi_taxonomy_id", "ncbi_rank", "ncbi_lineage_summary"}},
+		{database: "ncbi:snp", want: []string{"ncbi_rsid", "ncbi_variant_type", "ncbi_clinical_significance"}},
+		{database: "ncbi:dbvar", want: []string{"ncbi_dbvar_accession", "ncbi_phenotype", "ncbi_clinical_assertion"}},
+		{database: "ncbi:medgen", want: []string{"ncbi_medgen_id", "ncbi_condition_summary", "ncbi_related_gene_summary"}},
+		{database: "ncbi:omim", want: []string{"ncbi_omim_id", "ncbi_condition_summary", "ncbi_related_gene_summary"}},
+	} {
+		ids := KeywordDisplayColumnIDs(tc.database)
+		for _, required := range tc.want {
+			if !slices.Contains(ids, required) {
+				t.Fatalf("%s display schema missing %q: %#v", tc.database, required, ids)
+			}
+		}
+	}
+}
+
+func TestNCBISpecializedDetailSchemasExposeReplacementAndDeepFields(t *testing.T) {
+	for _, tc := range []struct {
+		database string
+		want     []string
+	}{
+		{database: "ncbi:assembly", want: []string{"ncbi_taxonomy_id", "ncbi_replaced_by", "ncbi_replacement_decision"}},
+		{database: "ncbi:taxonomy", want: []string{"ncbi_scientific_name", "ncbi_replacement_accession"}},
+		{database: "ncbi:snp", want: []string{"ncbi_taxonomy_id", "ncbi_chromosome", "ncbi_chrpos", "ncbi_replacement_decision"}},
+		{database: "ncbi:dbvar", want: []string{"ncbi_bioproject_accession", "ncbi_replacement_accession"}},
+		{database: "ncbi:medgen", want: []string{"ncbi_definition", "ncbi_source", "ncbi_replacement_decision"}},
+		{database: "ncbi:omim", want: []string{"ncbi_omim_text", "ncbi_replacement_accession"}},
+	} {
+		ids := KeywordDetailColumnIDs(tc.database)
+		for _, required := range tc.want {
+			if !slices.Contains(ids, required) {
+				t.Fatalf("%s detail schema missing %q: %#v", tc.database, required, ids)
+			}
+		}
 	}
 }
 
@@ -156,6 +243,27 @@ func TestKeywordReportColumnIDsIncludeFormalNonDisplayColumns(t *testing.T) {
 	for _, required := range []string{"row", "sequence_header_label", "sequence_id", "gene_report_url", "protein_id"} {
 		if !seen[required] {
 			t.Fatalf("keyword report schema missing %q", required)
+		}
+	}
+}
+
+func TestKeywordReportColumnIDsIncludeNCBILinkProvenanceColumns(t *testing.T) {
+	ids := KeywordReportColumnIDs("ncbi:clinvar", true, nil)
+	seen := map[string]bool{}
+	for _, id := range ids {
+		seen[id] = true
+	}
+	for _, required := range []string{
+		"ncbi_link_resolution",
+		"ncbi_linked_from_db",
+		"ncbi_linked_to_db",
+		"ncbi_linkname",
+		"ncbi_link_source_ids",
+		"ncbi_link_target_ids",
+		"ncbi_jump_targets",
+	} {
+		if !seen[required] {
+			t.Fatalf("ncbi keyword report schema missing %q", required)
 		}
 	}
 }

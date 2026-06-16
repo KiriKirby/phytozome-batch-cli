@@ -341,6 +341,7 @@ return {
   window_close_confirmation = 'NeverPrompt',
   automatically_reload_config = false,
   quit_when_all_windows_are_closed = true,
+  exit_behavior = 'CloseOnCleanExit',
   default_prog = is_windows and { '.\\core.bin' } or { './core.bin' },
 
   front_end = 'WebGpu',

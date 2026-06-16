@@ -2102,7 +2102,7 @@ keywordInputLoop:
 				}
 				continue
 			}
-			groups, err = w.applyNCBIProteinReplacementChoicesWithProgress(ctx, selected, groups)
+			groups, err = w.applyNCBIReplacementChoicesWithProgress(ctx, selected, groups)
 			if err != nil {
 				if errors.Is(err, prompt.ErrDialogClosed) || errors.Is(err, prompt.ErrBackToQueryInput) {
 					continue keywordInputLoop
@@ -2110,7 +2110,7 @@ keywordInputLoop:
 				if errors.Is(err, prompt.ErrBackToSpeciesSelection) || errors.Is(err, prompt.ErrBackToModeSelection) || errors.Is(err, prompt.ErrBackToDatabaseSelection) || errors.Is(err, prompt.ErrExitRequested) {
 					return err
 				}
-				retry, navErr := w.retryWorkflowStep(fmt.Sprintf("resolve NCBI protein updates: %v", err), prompt.ErrBackToQueryInput)
+				retry, navErr := w.retryWorkflowStep(fmt.Sprintf("resolve NCBI record updates: %v", err), prompt.ErrBackToQueryInput)
 				if navErr != nil {
 					return navErr
 				}
@@ -13529,7 +13529,7 @@ type ncbiReplacementPlan struct {
 	decision     string
 }
 
-func (w *BlastWizard) applyNCBIProteinReplacementChoicesWithProgress(ctx context.Context, selected model.SpeciesCandidate, groups []model.KeywordSearchGroup) ([]model.KeywordSearchGroup, error) {
+func (w *BlastWizard) applyNCBIReplacementChoicesWithProgress(ctx context.Context, selected model.SpeciesCandidate, groups []model.KeywordSearchGroup) ([]model.KeywordSearchGroup, error) {
 	if len(groups) == 0 || !strings.EqualFold(sourceDatabaseName(w.source), "ncbi") {
 		return groups, nil
 	}
@@ -13584,7 +13584,7 @@ func (w *BlastWizard) applyNCBIProteinReplacementChoicesWithProgress(ctx context
 			label := firstNonEmpty(strings.TrimSpace(applied[plan.groupIndex].SearchTerm), plan.oldAccession)
 			switch plan.decision {
 			case "new":
-				progress(i, fmt.Sprintf("Reloading updated NCBI protein %d/%d (%s)...", i+1, len(plans), oneLinePreview(label)))
+				progress(i, fmt.Sprintf("Reloading updated NCBI record %d/%d (%s)...", i+1, len(plans), oneLinePreview(label)))
 				rows, err := w.source.SearchKeywordRows(runCtx, selected, plan.newAccession)
 				if err != nil {
 					return nil, err
@@ -13597,12 +13597,12 @@ func (w *BlastWizard) applyNCBIProteinReplacementChoicesWithProgress(ctx context
 				applied[plan.groupIndex].Rows = rows
 				applied[plan.groupIndex].SearchType = keywordRowsSearchType(rows, applied[plan.groupIndex].SearchTerm, false)
 			default:
-				progress(i, fmt.Sprintf("Keeping requested NCBI protein %d/%d (%s)...", i+1, len(plans), oneLinePreview(label)))
+				progress(i, fmt.Sprintf("Keeping requested NCBI record %d/%d (%s)...", i+1, len(plans), oneLinePreview(label)))
 				applied[plan.groupIndex].Rows = annotateNCBIReplacementRows(applied[plan.groupIndex].Rows, plan.oldAccession, plan.newAccession, "old")
 				applied[plan.groupIndex].SearchType = keywordRowsSearchType(applied[plan.groupIndex].Rows, applied[plan.groupIndex].SearchTerm, false)
 			}
 		}
-		progress(len(plans), "NCBI protein updates are ready.")
+		progress(len(plans), "NCBI updates are ready.")
 		return applied, nil
 	}
 	if w.suppressTaskModals || !needsReload {
@@ -13613,10 +13613,10 @@ func (w *BlastWizard) applyNCBIProteinReplacementChoicesWithProgress(ctx context
 		return applied, nil
 	}
 	applied, err := tui.RunProgressTaskValueContext(tui.TaskPage{
-		Path:        w.tuiPath("Keyword", "NCBI protein update"),
-		Title:       "Loading updated NCBI proteins",
-		Description: "Reloading replacement accessions after your NCBI update choices.",
-		Initial:     "Loading updated NCBI proteins...",
+		Path:        w.tuiPath("Keyword", "NCBI update"),
+		Title:       "Loading updated NCBI records",
+		Description: "Reloading replacement records after your NCBI update choices.",
+		Initial:     "Loading updated NCBI records...",
 		Total:       len(plans),
 		CancelError: prompt.ErrBackToQueryInput,
 	}, run)
@@ -13626,8 +13626,8 @@ func (w *BlastWizard) applyNCBIProteinReplacementChoicesWithProgress(ctx context
 	return applied, nil
 }
 
-func (w *BlastWizard) applyNCBIProteinReplacementChoices(ctx context.Context, selected model.SpeciesCandidate, groups []model.KeywordSearchGroup) ([]model.KeywordSearchGroup, error) {
-	return w.applyNCBIProteinReplacementChoicesWithProgress(ctx, selected, groups)
+func (w *BlastWizard) applyNCBIReplacementChoices(ctx context.Context, selected model.SpeciesCandidate, groups []model.KeywordSearchGroup) ([]model.KeywordSearchGroup, error) {
+	return w.applyNCBIReplacementChoicesWithProgress(ctx, selected, groups)
 }
 
 func ncbiGroupReplacement(group model.KeywordSearchGroup) (string, string, bool) {
@@ -13642,7 +13642,22 @@ func ncbiGroupReplacement(group model.KeywordSearchGroup) (string, string, bool)
 		if replacedBy == "" {
 			continue
 		}
-		oldAccession := firstNonEmpty(strings.TrimSpace(row.ExtraColumns["ncbi_accession"]), strings.TrimSpace(row.SequenceID), strings.TrimSpace(row.ProteinID), strings.TrimSpace(group.SearchTerm))
+		oldAccession := firstNonEmpty(
+			strings.TrimSpace(row.ExtraColumns["ncbi_accession"]),
+			strings.TrimSpace(row.ExtraColumns["ncbi_clinvar_accession"]),
+			strings.TrimSpace(row.ExtraColumns["ncbi_gtr_accession"]),
+			strings.TrimSpace(row.ExtraColumns["ncbi_dbvar_accession"]),
+			strings.TrimSpace(row.ExtraColumns["ncbi_bioproject_accession"]),
+			strings.TrimSpace(row.ExtraColumns["ncbi_biosample_accession"]),
+			strings.TrimSpace(row.ExtraColumns["ncbi_assembly_accession"]),
+			strings.TrimSpace(row.ExtraColumns["ncbi_omim_id"]),
+			strings.TrimSpace(row.ExtraColumns["ncbi_medgen_id"]),
+			strings.TrimSpace(row.ExtraColumns["ncbi_rsid"]),
+			strings.TrimSpace(row.SequenceID),
+			strings.TrimSpace(row.ProteinID),
+			strings.TrimSpace(row.GeneIdentifier),
+			strings.TrimSpace(group.SearchTerm),
+		)
 		if oldAccession == "" {
 			continue
 		}

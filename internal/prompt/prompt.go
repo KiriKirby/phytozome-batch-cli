@@ -24,6 +24,7 @@ import (
 	"sync"
 
 	"github.com/KiriKirby/phytozome-go/internal/model"
+	"github.com/KiriKirby/phytozome-go/internal/ncbi"
 	"github.com/KiriKirby/phytozome-go/internal/notifyaudio"
 	"github.com/KiriKirby/phytozome-go/internal/phylo"
 	"github.com/KiriKirby/phytozome-go/internal/tui"
@@ -6739,6 +6740,31 @@ func keywordDisplayColumns(rows []model.KeywordResultRow) []tableColumnValue[mod
 			},
 		},
 	}
+	for _, id := range []string{
+		"ncbi_assembly_accession", "ncbi_assembly_name", "ncbi_assembly_level", "ncbi_assembly_status", "ncbi_ftp_path",
+		"ncbi_bioproject_accession", "ncbi_biosample_accession", "ncbi_sample_name", "ncbi_isolation_source", "ncbi_host",
+		"ncbi_geo_loc_name", "ncbi_collection_date", "ncbi_library_strategy", "ncbi_library_source", "ncbi_platform",
+		"ncbi_study_accession", "ncbi_experiment_accession", "ncbi_run_accession", "ncbi_layout", "ncbi_instrument_model",
+		"ncbi_spots", "ncbi_bases", "ncbi_taxonomy_id", "ncbi_common_name", "ncbi_rank", "ncbi_lineage_summary",
+		"ncbi_division", "ncbi_parent_taxonomy_id", "ncbi_rsid", "ncbi_dbvar_accession", "ncbi_phenotype",
+		"ncbi_clinical_assertion", "ncbi_medgen_id", "ncbi_condition_summary", "ncbi_related_gene_summary", "ncbi_omim_id",
+		"ncbi_clinvar_accession", "ncbi_clinical_significance", "ncbi_review_status",
+		"ncbi_condition", "ncbi_variant_type", "ncbi_gtr_accession", "ncbi_test_name", "ncbi_test_type", "ncbi_method", "ncbi_lab",
+		"ncbi_replaced_by", "ncbi_replacement_decision", "ncbi_requested_accession", "ncbi_replacement_accession",
+	} {
+		columnID := id
+		defByID[columnID] = tableColumnValue[model.KeywordResultRow]{
+			ID:       columnID,
+			Header:   ColumnCompactHeader(columnID, options),
+			Sortable: true,
+			Value: func(row model.KeywordResultRow) string {
+				if row.ExtraColumns == nil {
+					return ""
+				}
+				return strings.TrimSpace(row.ExtraColumns[columnID])
+			},
+		}
+	}
 	ids := keywordDisplayColumnIDsForRows(rows)
 	defs := make([]tableColumnValue[model.KeywordResultRow], 0, len(ids))
 	for _, id := range ids {
@@ -6773,6 +6799,15 @@ func keywordDisplayColumnIDsForRows(rows []model.KeywordResultRow) []string {
 }
 
 func keywordDetailColumnIDsForRow(row model.KeywordResultRow) []string {
+	if strings.EqualFold(strings.TrimSpace(row.SourceDatabase), "ncbi") {
+		searchTypeID := ""
+		resultDomain := ""
+		if row.ExtraColumns != nil {
+			searchTypeID = strings.TrimSpace(row.ExtraColumns["ncbi_search_type_id"])
+			resultDomain = strings.TrimSpace(row.ExtraColumns["ncbi_result_domain"])
+		}
+		return KeywordDetailColumnIDs(NCBIKeywordDatabaseKeyForSearchType(searchTypeID, resultDomain))
+	}
 	return KeywordDetailColumnIDs(strings.TrimSpace(row.SourceDatabase))
 }
 
@@ -6826,6 +6861,24 @@ func sourceDatabaseForBlastRows(rows []model.BlastResultRow) string {
 }
 
 func sourceDatabaseForKeywordRows(rows []model.KeywordResultRow) string {
+	if strings.EqualFold(keywordRowsSourceDatabaseName(rows), "ncbi") {
+		searchTypeID := ""
+		resultDomain := ncbi.ResultDomainFromKeywordRows(rows)
+		for _, row := range rows {
+			if row.ExtraColumns == nil {
+				continue
+			}
+			if value := strings.TrimSpace(row.ExtraColumns["ncbi_search_type_id"]); value != "" {
+				searchTypeID = value
+				break
+			}
+		}
+		return NCBIKeywordDatabaseKeyForSearchType(searchTypeID, resultDomain)
+	}
+	return keywordRowsSourceDatabaseName(rows)
+}
+
+func keywordRowsSourceDatabaseName(rows []model.KeywordResultRow) string {
 	for _, row := range rows {
 		if value := strings.TrimSpace(row.SourceDatabase); value != "" {
 			return value
