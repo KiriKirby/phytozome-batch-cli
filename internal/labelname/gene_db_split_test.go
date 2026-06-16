@@ -252,6 +252,38 @@ func TestDownloadPrebuiltGeneInfoDatabaseRetriesTransientSplitPartFailure(t *tes
 	}
 }
 
+func TestDownloadPrebuiltGeneInfoDatabaseSplitFailureDoesNotLoseStagedPartPaths(t *testing.T) {
+	dbPath := buildTestGeneInfoDB(t, stringsJoinLines(
+		"3702\t1\tVND6\tAT5G62380\tVND6A\tGeneID:1\t-\t-\tvascular-related NAC-domain 6\tprotein-coding\t-\t-\t-\t-\t20260610\t-",
+		"3702\t2\tPAL1\tAT2G37040\tPAL1A\tGeneID:2\t-\t-\tphenylalanine ammonia-lyase 1\tprotein-coding\t-\t-\t-\t-\t20260610\t-",
+	))
+	dbData, err := os.ReadFile(dbPath)
+	if err != nil {
+		t.Fatalf("read source db: %v", err)
+	}
+	archiveData := zstdCompressForTest(t, dbData)
+	partData := splitBytesForTest(archiveData, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		idx := partIndexFromPath(t, r.URL.Path)
+		if idx == 1 {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+		_, _ = w.Write(partData[idx])
+	}))
+	defer server.Close()
+
+	dest := filepath.Join(t.TempDir(), "symbolname.pgd")
+	err = DownloadPrebuiltGeneInfoDatabase(t.Context(), dest, splitManifestForTest(server.URL, "symbolname.pgd.zst", partData, dbData, 1), DownloadOptions{})
+	if err == nil {
+		t.Fatal("DownloadPrebuiltGeneInfoDatabase returned nil error, want failure")
+	}
+	if strings.Contains(err.Error(), "The system cannot find the path specified") || strings.Contains(strings.ToLower(err.Error()), "cannot find the path") {
+		t.Fatalf("download failure exposed deleted staged part path race: %v", err)
+	}
+}
+
 func TestDownloadPrebuiltGeneInfoDatabaseRejectsShortSplitPart(t *testing.T) {
 	dbPath := buildTestGeneInfoDB(t, stringsJoinLines(
 		"3702\t1\tVND6\tAT5G62380\tVND6A\tGeneID:1\t-\t-\tvascular-related NAC-domain 6\tprotein-coding\t-\t-\t-\t-\t20260610\t-",

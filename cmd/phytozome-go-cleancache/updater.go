@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/KiriKirby/phytozome-go/internal/startupstate"
@@ -116,9 +117,14 @@ func maybeHandleReleaseUpdate(appDir string, args []string) bool {
 	}
 
 	writeStartupStatus(appDir, startupstate.StatusInitializing, false, "Downloading and staging application update.", "")
-	if err := runSpinner("Downloading and staging update", func() error {
-		return prepareAndLaunchStagedUpdate(context.Background(), plan, args)
-	}); err != nil {
+	if err := writeUpdatePendingMarker(appDir, plan.LatestVersion); err != nil {
+		appendUpdateDebugLog("update marker write failed: " + err.Error())
+		_, _ = fmt.Fprintf(os.Stdout, "Update skipped: %s\n", err.Error())
+		return false
+	}
+	_, _ = fmt.Fprintln(os.Stdout, "Downloading and staging application update...")
+	if err := prepareAndLaunchStagedUpdate(context.Background(), plan, args); err != nil {
+		_ = removeUpdatePendingMarker(appDir)
 		appendUpdateDebugLog("update staging failed: " + err.Error())
 		_, _ = fmt.Fprintf(os.Stdout, "Update skipped: %s\n", err.Error())
 		return false
@@ -354,12 +360,12 @@ func prepareAndLaunchStagedUpdate(ctx context.Context, plan stagedUpdatePlan, ar
 	downloadCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 
-	if err := downloadFile(downloadCtx, plan.Asset.BrowserDownloadURL, archivePath); err != nil {
+	if err := downloadFile(downloadCtx, plan.Asset.BrowserDownloadURL, archivePath, os.Stdout); err != nil {
 		_ = os.RemoveAll(plan.StageDir)
 		return err
 	}
 	appendUpdateDebugLog("archive downloaded: " + archivePath)
-	if err := extractArchiveToStage(archivePath, plan.Spec, plan.StageDir); err != nil {
+	if err := extractArchiveToStage(archivePath, plan.Spec, plan.StageDir, os.Stdout); err != nil {
 		_ = os.RemoveAll(plan.StageDir)
 		return err
 	}
@@ -395,7 +401,7 @@ func archiveSuffix(kind string) string {
 	}
 }
 
-func downloadFile(ctx context.Context, rawURL string, dest string) error {
+func downloadFile(ctx context.Context, rawURL string, dest string, output io.Writer) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return fmt.Errorf("build update download request: %w", err)
@@ -417,29 +423,54 @@ func downloadFile(ctx context.Context, rawURL string, dest string) error {
 	}
 	defer file.Close()
 
-	if _, err := io.Copy(file, resp.Body); err != nil {
+	progress := newDetailedProgress(output, "Downloading application update...", resp.ContentLength, 0)
+	if _, err := io.Copy(file, io.TeeReader(resp.Body, progress.byteWriter())); err != nil {
+		progress.Finish("Application update download complete.", false)
 		return fmt.Errorf("write update archive %s: %w", dest, err)
 	}
+	progress.Finish("Application update download complete.", true)
 	return nil
 }
 
-func extractArchiveToStage(archivePath string, spec updateAssetSpec, stageDir string) error {
+func extractArchiveToStage(archivePath string, spec updateAssetSpec, stageDir string, output io.Writer) error {
 	switch spec.ArchiveKind {
 	case "zip":
-		return extractZipArchive(archivePath, spec.StripPrefix, stageDir)
+		return extractZipArchive(archivePath, spec.StripPrefix, stageDir, output)
 	case "tar.gz":
-		return extractTarGzArchive(archivePath, spec.StripPrefix, stageDir)
+		return extractTarGzArchive(archivePath, spec.StripPrefix, stageDir, output)
 	default:
 		return fmt.Errorf("unsupported update archive kind %q", spec.ArchiveKind)
 	}
 }
 
-func extractZipArchive(archivePath string, stripPrefix string, dest string) error {
+func extractZipArchive(archivePath string, stripPrefix string, dest string, output io.Writer) error {
 	reader, err := zip.OpenReader(archivePath)
 	if err != nil {
 		return fmt.Errorf("open update zip %s: %w", archivePath, err)
 	}
 	defer reader.Close()
+
+	totalBytes := int64(0)
+	totalFiles := 0
+	for _, file := range reader.File {
+		entryName, ok := archiveEntryTargetName(file.Name, stripPrefix)
+		if !ok {
+			continue
+		}
+		if strings.HasSuffix(strings.ReplaceAll(file.Name, "\\", "/"), "/") {
+			continue
+		}
+		if entryName == "" {
+			continue
+		}
+		totalFiles++
+		totalBytes += int64(file.UncompressedSize64)
+	}
+	progress := newDetailedProgress(output, "Extracting application update...", totalBytes, totalFiles)
+	success := false
+	defer func() {
+		progress.Finish("Application update extraction complete.", success)
+	}()
 
 	for _, file := range reader.File {
 		entryName, ok := archiveEntryTargetName(file.Name, stripPrefix)
@@ -475,11 +506,18 @@ func extractZipArchive(archivePath string, stripPrefix string, dest string) erro
 		}
 		out.Close()
 		rc.Close()
+		progress.AddBytes(int64(file.UncompressedSize64))
+		progress.AddFile()
 	}
+	success = true
 	return nil
 }
 
-func extractTarGzArchive(archivePath string, stripPrefix string, dest string) error {
+func extractTarGzArchive(archivePath string, stripPrefix string, dest string, output io.Writer) error {
+	totalBytes, totalFiles, err := scanTarGzArchiveTotals(archivePath, stripPrefix)
+	if err != nil {
+		return err
+	}
 	file, err := os.Open(archivePath)
 	if err != nil {
 		return fmt.Errorf("open update archive %s: %w", archivePath, err)
@@ -492,10 +530,17 @@ func extractTarGzArchive(archivePath string, stripPrefix string, dest string) er
 	}
 	defer gzReader.Close()
 
+	progress := newDetailedProgress(output, "Extracting application update...", totalBytes, totalFiles)
+	success := false
+	defer func() {
+		progress.Finish("Application update extraction complete.", success)
+	}()
+
 	tarReader := tar.NewReader(gzReader)
 	for {
 		header, err := tarReader.Next()
 		if err == io.EOF {
+			success = true
 			return nil
 		}
 		if err != nil {
@@ -529,6 +574,8 @@ func extractTarGzArchive(archivePath string, stripPrefix string, dest string) er
 				return fmt.Errorf("extract tar entry %s: %w", header.Name, err)
 			}
 			out.Close()
+			progress.AddBytes(header.Size)
+			progress.AddFile()
 		case tar.TypeSymlink:
 			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
 				return fmt.Errorf("create update directory %s: %w", filepath.Dir(targetPath), err)
@@ -536,8 +583,170 @@ func extractTarGzArchive(archivePath string, stripPrefix string, dest string) er
 			if err := os.Symlink(header.Linkname, targetPath); err != nil && !os.IsExist(err) {
 				return fmt.Errorf("create update symlink %s: %w", targetPath, err)
 			}
+			progress.AddFile()
 		}
 	}
+}
+
+func scanTarGzArchiveTotals(archivePath string, stripPrefix string) (int64, int, error) {
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return 0, 0, fmt.Errorf("open update archive %s: %w", archivePath, err)
+	}
+	defer file.Close()
+	gzReader, err := gzip.NewReader(file)
+	if err != nil {
+		return 0, 0, fmt.Errorf("open gzip stream %s: %w", archivePath, err)
+	}
+	defer gzReader.Close()
+	tarReader := tar.NewReader(gzReader)
+	var totalBytes int64
+	totalFiles := 0
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			return totalBytes, totalFiles, nil
+		}
+		if err != nil {
+			return 0, 0, fmt.Errorf("scan tar archive %s: %w", archivePath, err)
+		}
+		if _, ok := archiveEntryTargetName(header.Name, stripPrefix); !ok {
+			continue
+		}
+		switch header.Typeflag {
+		case tar.TypeReg, tar.TypeRegA:
+			totalBytes += header.Size
+			totalFiles++
+		case tar.TypeSymlink:
+			totalFiles++
+		}
+	}
+}
+
+type detailedProgress struct {
+	mu          sync.Mutex
+	message     string
+	totalBytes  int64
+	current     int64
+	filesTotal  int
+	filesDone   int
+	started     time.Time
+	lastEmit    time.Time
+	console     *consoleProgress
+}
+
+func newDetailedProgress(output io.Writer, message string, totalBytes int64, filesTotal int) *detailedProgress {
+	now := time.Now()
+	progress := &detailedProgress{
+		message:    strings.TrimSpace(message),
+		totalBytes: totalBytes,
+		filesTotal: filesTotal,
+		started:    now,
+		lastEmit:   now.Add(-time.Second),
+		console:    newConsoleProgress(output),
+	}
+	progress.emitLocked(false, true)
+	return progress
+}
+
+func (p *detailedProgress) byteWriter() io.Writer {
+	return progressByteWriter{progress: p}
+}
+
+func (p *detailedProgress) AddBytes(n int64) {
+	if p == nil || n <= 0 {
+		return
+	}
+	p.mu.Lock()
+	p.current += n
+	p.emitLocked(false, false)
+	p.mu.Unlock()
+}
+
+func (p *detailedProgress) AddFile() {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	p.filesDone++
+	p.emitLocked(false, false)
+	p.mu.Unlock()
+}
+
+func (p *detailedProgress) Finish(successMessage string, ok bool) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	if ok {
+		if p.totalBytes > 0 && p.current < p.totalBytes {
+			p.current = p.totalBytes
+		}
+		if p.filesTotal > 0 && p.filesDone < p.filesTotal {
+			p.filesDone = p.filesTotal
+		}
+		p.emitLocked(true, true)
+	}
+	p.mu.Unlock()
+	p.console.Finish(successMessage, ok)
+}
+
+func (p *detailedProgress) emitLocked(done bool, force bool) {
+	now := time.Now()
+	if !force && now.Sub(p.lastEmit) < 250*time.Millisecond {
+		return
+	}
+	p.lastEmit = now
+	parts := []string{firstNonEmptyText(p.message, "Working...")}
+	if percent := detailedProgressPercent(p.current, p.totalBytes, p.filesDone, p.filesTotal); percent >= 0 {
+		parts = append(parts, fmt.Sprintf("%.1f%%", percent))
+	}
+	if p.totalBytes > 0 && p.current > 0 {
+		parts = append(parts, fmt.Sprintf("%s/%s", humanBytes(p.current), humanBytes(p.totalBytes)))
+	} else if p.totalBytes > 0 {
+		parts = append(parts, humanBytes(p.totalBytes))
+	}
+	if !done {
+		if speed := detailedProgressSpeed(p.started, p.current); speed > 0 {
+			parts = append(parts, fmt.Sprintf("%s/s", humanBytes(int64(speed))))
+		}
+	}
+	if p.filesTotal > 0 {
+		parts = append(parts, fmt.Sprintf("%d/%d files", p.filesDone, p.filesTotal))
+	}
+	p.console.Update(strings.Join(parts, " | "), done)
+}
+
+func detailedProgressPercent(current int64, total int64, filesDone int, filesTotal int) float64 {
+	if total > 0 {
+		return float64(current) * 100 / float64(total)
+	}
+	if filesTotal > 0 {
+		return float64(filesDone) * 100 / float64(filesTotal)
+	}
+	return -1
+}
+
+func detailedProgressSpeed(started time.Time, current int64) float64 {
+	if current <= 0 {
+		return 0
+	}
+	elapsed := time.Since(started).Seconds()
+	if elapsed <= 0 {
+		return 0
+	}
+	return float64(current) / elapsed
+}
+
+type progressByteWriter struct {
+	progress *detailedProgress
+}
+
+func (w progressByteWriter) Write(p []byte) (int, error) {
+	if w.progress != nil && len(p) > 0 {
+		w.progress.AddBytes(int64(len(p)))
+	}
+	return len(p), nil
 }
 
 func archiveEntryTargetName(rawName string, stripPrefix string) (string, bool) {
@@ -736,6 +945,27 @@ function Assert-KeyFilesUpdated {
     }
 }
 
+function Test-LauncherAlreadyRunning {
+    param([string]$LauncherPath)
+    $name = [System.IO.Path]::GetFileName($LauncherPath)
+    if ([string]::IsNullOrWhiteSpace($name)) {
+        return $false
+    }
+    foreach ($proc in (Get-CimInstance Win32_Process -Filter ("Name = '" + $name.Replace("'", "''") + "'"))) {
+        $procPath = ''
+        try {
+            $procPath = [string]$proc.ExecutablePath
+        } catch {
+            $procPath = ''
+        }
+        if (-not [string]::IsNullOrWhiteSpace($procPath) -and ([string]::Equals($procPath, $LauncherPath, [System.StringComparison]::OrdinalIgnoreCase))) {
+            Write-UpdateLog ("launcher already running: " + $LauncherPath)
+            return $true
+        }
+    }
+    return $false
+}
+
 Write-UpdateLog ("updater start; parent pid=" + $ParentPid)
 while (Get-Process -Id $ParentPid -ErrorAction SilentlyContinue) {
     Start-Sleep -Milliseconds 200
@@ -769,18 +999,28 @@ if (-not $UpdateSucceeded) {
         $LastUpdateError = 'unknown update failure'
     }
     [Environment]::SetEnvironmentVariable($LastUpdateErrorEnvName, $LastUpdateError, 'Process')
-    Write-UpdateLog ("launching after failed update: " + $Launcher)
-    %s
-    Write-UpdateLog "launch command returned after failed update"
+    Remove-Item -LiteralPath (Join-Path $TargetDir %s) -Force -ErrorAction SilentlyContinue
+    if (-not (Test-LauncherAlreadyRunning -LauncherPath $Launcher)) {
+        Write-UpdateLog ("launching after failed update: " + $Launcher)
+        %s
+        Write-UpdateLog "launch command returned after failed update"
+    } else {
+        Write-UpdateLog "skip launch after failed update because launcher is already running"
+    }
     exit 0
 }
 
 [Environment]::SetEnvironmentVariable($LastUpdateErrorEnvName, $null, 'Process')
+Remove-Item -LiteralPath (Join-Path $TargetDir %s) -Force -ErrorAction SilentlyContinue
 $env:%s = '1'
-Write-UpdateLog ("launching after successful update: " + $Launcher)
-%s
-Write-UpdateLog "launch command returned after successful update"
-`, os.Getpid(), psQuote(plan.InstallRoot), psQuote(plan.StageDir), psQuote(plan.RelaunchPath), psQuote(filepath.Dir(plan.RelaunchPath)), psQuote(plan.Spec.OutputRelative), strings.Join(psQuoteSlice(preserveRelative), ", "), strings.Join(psQuoteSlice(plan.Spec.VerifyRelative), ", "), psQuote(updateDebugLogEnv), psQuote(lastUpdateErrorEnv), startProcessLine, skipBundlePreflightEnv, startProcessLine)
+if (-not (Test-LauncherAlreadyRunning -LauncherPath $Launcher)) {
+    Write-UpdateLog ("launching after successful update: " + $Launcher)
+    %s
+    Write-UpdateLog "launch command returned after successful update"
+} else {
+    Write-UpdateLog "skip launch after successful update because launcher is already running"
+}
+`, os.Getpid(), psQuote(plan.InstallRoot), psQuote(plan.StageDir), psQuote(plan.RelaunchPath), psQuote(filepath.Dir(plan.RelaunchPath)), psQuote(plan.Spec.OutputRelative), strings.Join(psQuoteSlice(preserveRelative), ", "), strings.Join(psQuoteSlice(plan.Spec.VerifyRelative), ", "), psQuote(updateDebugLogEnv), psQuote(lastUpdateErrorEnv), psQuote(updatePendingMarkerName), startProcessLine, psQuote(updatePendingMarkerName), skipBundlePreflightEnv, startProcessLine)
 }
 
 func writeShellUpdater(plan stagedUpdatePlan, args []string) (string, error) {
@@ -811,6 +1051,7 @@ LAUNCHER=%s
 WORKING_DIR=%s
 OUTPUT_REL=%s
 PRESERVE_RELATIVES=%s
+PENDING_MARKER=%s
 
 preserve_output() {
   REL="$1"
@@ -844,10 +1085,13 @@ if [ -e "$TARGET_DIR" ]; then
 fi
 mv "$STAGE_DIR" "$TARGET_DIR"
 rm -rf "$BACKUP_DIR"
+rm -f "$TARGET_DIR/$PENDING_MARKER"
 
 cd "$WORKING_DIR"
-env %s=1 "$LAUNCHER"%s >/dev/null 2>&1 &
-`, os.Getpid(), shQuote(plan.InstallRoot), shQuote(plan.StageDir), shQuote(plan.BackupDir), shQuote(plan.RelaunchPath), shQuote(filepath.Dir(plan.RelaunchPath)), shQuote(plan.Spec.OutputRelative), preserveList, skipBundlePreflightEnv, argsSuffix)
+if ! pgrep -f "$LAUNCHER" >/dev/null 2>&1; then
+  env %s=1 "$LAUNCHER"%s >/dev/null 2>&1 &
+fi
+`, os.Getpid(), shQuote(plan.InstallRoot), shQuote(plan.StageDir), shQuote(plan.BackupDir), shQuote(plan.RelaunchPath), shQuote(filepath.Dir(plan.RelaunchPath)), shQuote(plan.Spec.OutputRelative), preserveList, shQuote(updatePendingMarkerName), skipBundlePreflightEnv, argsSuffix)
 
 	if _, err := scriptFile.WriteString(script); err != nil {
 		return "", fmt.Errorf("write updater script %s: %w", scriptFile.Name(), err)

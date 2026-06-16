@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -64,6 +65,9 @@ func run() error {
 	printLastUpdateErrorNotice()
 	appDir, err := applicationDir()
 	if err != nil {
+		return err
+	}
+	if err := waitForPendingBundleUpdate(appDir); err != nil {
 		return err
 	}
 	_ = startupstate.Write(appDir, startupstate.State{Status: startupstate.StatusInitializing, Message: "Startup helper is preparing phytozome GO."})
@@ -357,15 +361,8 @@ func maybeEnsureSymbolNameDatabase(appDir string, args []string) (bool, error) {
 			_, _ = fmt.Fprintln(os.Stdout, "Skipping symbol name library download. It will be required when symbol names are used.")
 			return false, nil
 		}
-		launchNow := promptYesNo(os.Stdin, os.Stdout, "Open phytozome GO while the symbol name library downloads? [y/N]: ")
-		if launchNow {
-			writeStartupStatus(appDir, startupstate.StatusDownloading, true, "Symbol name library is downloading.", dbPath)
-			_, _ = fmt.Fprintln(os.Stdout, "Opening phytozome GO in a new tab while download continues in tab 0...")
-			if err := launchMainProgramInNewTab(args); err != nil {
-				return false, err
-			}
-		}
-		if err := downloadSymbolNameDatabaseStartupWithRetry(appDir, "Downloading and preparing symbol name library", dbPath, plan, launchNow); err != nil {
+		launchNow, err := downloadSymbolNameDatabaseInteractiveFirstAttemptWithRetry(appDir, args, dbPath, plan, "Downloading and preparing symbol name library", "Open phytozome GO while the symbol name library downloads? [y/N]: ")
+		if err != nil {
 			return launchNow, err
 		}
 		return launchNow, nil
@@ -396,15 +393,8 @@ func maybeEnsureSymbolNameDatabase(appDir string, args []string) (bool, error) {
 		_, _ = fmt.Fprintln(os.Stdout, "Keeping existing symbol name library.")
 		return false, nil
 	}
-	launchNow := promptYesNo(os.Stdin, os.Stdout, "Open phytozome GO while the symbol name library update downloads? [y/N]: ")
-	if launchNow {
-		writeStartupStatus(appDir, startupstate.StatusDownloading, true, "Symbol name library update is downloading.", dbPath)
-		_, _ = fmt.Fprintln(os.Stdout, "Opening phytozome GO in a new tab while update continues in tab 0...")
-		if err := launchMainProgramInNewTab(args); err != nil {
-			return false, err
-		}
-	}
-	if err := downloadSymbolNameDatabaseStartupWithRetry(appDir, "Downloading and preparing updated symbol name library", dbPath, plan, launchNow); err != nil {
+	launchNow, err := downloadSymbolNameDatabaseInteractiveFirstAttemptWithRetry(appDir, args, dbPath, plan, "Downloading and preparing updated symbol name library", "Open phytozome GO while the symbol name library update downloads? [y/N]: ")
+	if err != nil {
 		return launchNow, err
 	}
 	return launchNow, nil
@@ -432,6 +422,114 @@ func downloadSymbolNameDatabaseStartupWithRetry(appDir string, label string, dbP
 	}
 }
 
+func downloadSymbolNameDatabaseInteractiveFirstAttemptWithRetry(appDir string, args []string, dbPath string, plan labelname.GeneInfoInstallPlan, label string, prompt string) (bool, error) {
+	launchNow, err := chooseLaunchWhileDownloading(appDir, args, dbPath, plan, label, prompt)
+	if err == nil {
+		return launchNow, nil
+	}
+	_, _ = fmt.Fprintln(os.Stdout)
+	_, _ = fmt.Fprintf(os.Stdout, "Symbol name library download/build failed: %v\n", err)
+	if !canPromptForUpdateConsent() {
+		return launchNow, err
+	}
+	for {
+		switch promptRetrySkip(os.Stdin, os.Stdout, "Retry download/build, or skip startup install? [r/S]: ") {
+		case "retry":
+			retryErr := downloadSymbolNameDatabaseStartupWithRetry(appDir, label, dbPath, plan, launchNow)
+			return launchNow, retryErr
+		default:
+			_, _ = fmt.Fprintln(os.Stdout, "Skipping startup symbol name library install. It will be required when symbol names are used.")
+			return launchNow, nil
+		}
+	}
+}
+
+func chooseLaunchWhileDownloading(appDir string, args []string, dbPath string, plan labelname.GeneInfoInstallPlan, label string, prompt string) (bool, error) {
+	type progressState struct {
+		line string
+		done bool
+		err  error
+	}
+	progress := newConsoleProgress(os.Stdout)
+	reader := bufio.NewReader(os.Stdin)
+	downloadCtx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
+	defer cancel()
+	stateCh := make(chan progressState, 64)
+	doneCh := make(chan error, 1)
+	setState := func(state progressState) {
+		select {
+		case stateCh <- state:
+		default:
+		}
+	}
+	go func() {
+		err := plan.Install(downloadCtx, dbPath, labelname.DownloadOptions{
+			Workers: labelname.DefaultDownloadWorkers(),
+			Stdout:  os.Stdout,
+			Progress: func(event labelname.GeneInfoProgress) {
+				message := labelname.FormatGeneInfoProgress(event)
+				setState(progressState{line: message, done: event.Done})
+				writeStartupStatus(appDir, startupstate.StatusDownloading, false, message, dbPath)
+			},
+		})
+		doneCh <- err
+	}()
+
+	writeStartupStatus(appDir, startupstate.StatusDownloading, false, label, dbPath)
+	_, _ = fmt.Fprintf(os.Stdout, "%s...\n", label)
+	_, _ = fmt.Fprintf(os.Stdout, "Writing database to: %s\n", dbPath)
+	_, _ = fmt.Fprintf(os.Stdout, "%s ", prompt)
+
+	answerCh := make(chan string, 1)
+	go func() {
+		line, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			answerCh <- ""
+			return
+		}
+		answerCh <- strings.TrimSpace(strings.ToLower(line))
+	}()
+
+	launchNow := false
+	for {
+		select {
+		case state := <-stateCh:
+			progress.Update(state.line, state.done)
+		case answer := <-answerCh:
+			switch answer {
+			case "y", "yes":
+				launchNow = true
+				writeStartupStatus(appDir, startupstate.StatusDownloading, true, "Symbol name library is downloading.", dbPath)
+				_, _ = fmt.Fprintln(os.Stdout)
+				_, _ = fmt.Fprintln(os.Stdout, "Opening phytozome GO in a new tab while download continues in tab 0...")
+				if err := launchMainProgramInNewTab(args); err != nil {
+					return false, err
+				}
+			case "", "n", "no":
+				_, _ = fmt.Fprintln(os.Stdout)
+			default:
+				_, _ = fmt.Fprintln(os.Stdout)
+				_, _ = fmt.Fprintln(os.Stdout, "Please enter y or n.")
+				_, _ = fmt.Fprintf(os.Stdout, "%s ", prompt)
+				go func() {
+					line, err := reader.ReadString('\n')
+					if err != nil && !errors.Is(err, io.EOF) {
+						answerCh <- ""
+						return
+					}
+					answerCh <- strings.TrimSpace(strings.ToLower(line))
+				}()
+			}
+		case err := <-doneCh:
+			progress.Finish("Symbol name library download/build complete.", err == nil)
+			if err != nil {
+				return launchNow, err
+			}
+			return launchNow, nil
+		}
+	}
+}
+
 func downloadSymbolNameDatabaseWithProgress(appDir string, label string, dbPath string, plan labelname.GeneInfoInstallPlan, allowUse bool) error {
 	_, _ = fmt.Fprintf(os.Stdout, "%s...\n", label)
 	_, _ = fmt.Fprintf(os.Stdout, "Writing database to: %s\n", dbPath)
@@ -447,7 +545,7 @@ func downloadSymbolNameDatabaseWithProgress(appDir string, label string, dbPath 
 			writeStartupStatus(appDir, startupstate.StatusDownloading, allowUse, message, dbPath)
 		},
 	})
-	progress.Finish(err == nil)
+	progress.Finish("Symbol name library download/build complete.", err == nil)
 	return err
 }
 
@@ -484,6 +582,7 @@ func promptRetrySkip(input io.Reader, output io.Writer, label string) string {
 type consoleProgress struct {
 	output io.Writer
 	last   string
+	open   bool
 }
 
 func newConsoleProgress(output io.Writer) *consoleProgress {
@@ -499,16 +598,21 @@ func (p *consoleProgress) Update(line string, done bool) {
 	_, _ = fmt.Fprintf(p.output, "\r\033[2K%s", line)
 	if done {
 		_, _ = fmt.Fprintln(p.output)
+		p.open = false
+		return
 	}
+	p.open = true
 }
 
-func (p *consoleProgress) Finish(ok bool) {
-	if strings.TrimSpace(p.last) != "" {
-		_, _ = fmt.Fprint(p.output, "\r\033[2K")
+func (p *consoleProgress) Finish(successMessage string, ok bool) {
+	if p.open {
+		_, _ = fmt.Fprintln(p.output)
 	}
-	if ok {
-		_, _ = fmt.Fprintln(p.output, "Symbol name library download/build complete.")
+	p.open = false
+	if ok && strings.TrimSpace(successMessage) != "" {
+		_, _ = fmt.Fprintln(p.output, successMessage)
 	}
+	p.last = ""
 }
 
 func humanBytes(size int64) string {

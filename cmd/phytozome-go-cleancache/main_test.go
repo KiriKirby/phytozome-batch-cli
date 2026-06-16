@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -138,5 +140,39 @@ func TestShouldSpawnMainProgramInNewTabOnlyInsideWezTerm(t *testing.T) {
 	t.Setenv("WEZTERM_PANE", "")
 	if shouldSpawnMainProgramInNewTab() {
 		t.Fatal("expected direct launch outside WezTerm")
+	}
+}
+
+func TestConsoleProgressFinishKeepsLastDetailedLineOnFailure(t *testing.T) {
+	var out bytes.Buffer
+	progress := newConsoleProgress(&out)
+	progress.Update("Downloading prebuilt symbol name database... | 42.1% | 1.2 GiB/2.8 GiB | 25.8 MiB/s | 3 workers", false)
+	progress.Finish("done", false)
+	text := out.String()
+	if !strings.Contains(text, "42.1%") || !strings.Contains(text, "25.8 MiB/s") || !strings.Contains(text, "3 workers") {
+		t.Fatalf("console progress output lost detailed line:\n%s", text)
+	}
+	if strings.Contains(text, "done") {
+		t.Fatalf("console progress unexpectedly wrote success message on failure:\n%s", text)
+	}
+}
+
+func TestUpdatePendingMarkerRoundTrip(t *testing.T) {
+	appDir := t.TempDir()
+	if err := writeUpdatePendingMarker(appDir, "v1"); err != nil {
+		t.Fatalf("writeUpdatePendingMarker returned error: %v", err)
+	}
+	marker, ok := readUpdatePendingMarker(appDir)
+	if !ok {
+		t.Fatal("readUpdatePendingMarker returned false")
+	}
+	if marker.Version != "v1" {
+		t.Fatalf("marker version = %q, want v1", marker.Version)
+	}
+	if err := removeUpdatePendingMarker(appDir); err != nil {
+		t.Fatalf("removeUpdatePendingMarker returned error: %v", err)
+	}
+	if _, ok := readUpdatePendingMarker(appDir); ok {
+		t.Fatal("marker still exists after removal")
 	}
 }

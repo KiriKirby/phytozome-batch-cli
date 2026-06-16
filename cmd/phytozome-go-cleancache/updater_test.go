@@ -1,7 +1,12 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -166,6 +171,12 @@ func TestBuildPowerShellUpdaterScriptOmitsEmptyArgumentList(t *testing.T) {
 	if !strings.Contains(script, lastUpdateErrorEnv) || !strings.Contains(script, "launching after failed update") || !strings.Contains(script, "[Environment]::SetEnvironmentVariable($LastUpdateErrorEnvName, $LastUpdateError, 'Process')") {
 		t.Fatalf("buildPowerShellUpdaterScript missing failed-update relaunch handling:\n%s", script)
 	}
+	if !strings.Contains(script, "Test-LauncherAlreadyRunning") || !strings.Contains(script, "skip launch after successful update because launcher is already running") {
+		t.Fatalf("buildPowerShellUpdaterScript missing duplicate-launch guard:\n%s", script)
+	}
+	if !strings.Contains(script, updatePendingMarkerName) {
+		t.Fatalf("buildPowerShellUpdaterScript missing pending marker cleanup:\n%s", script)
+	}
 }
 
 func TestBuildPowerShellUpdaterScriptIncludesArgumentsWhenPresent(t *testing.T) {
@@ -205,6 +216,9 @@ func TestWriteShellUpdaterPreservesOutput(t *testing.T) {
 	if !strings.Contains(text, "preserve_output") || !strings.Contains(text, "cp -a \"$SOURCE\"/. \"$DEST\"/") {
 		t.Fatalf("shell updater missing output preservation:\n%s", text)
 	}
+	if !strings.Contains(text, "PENDING_MARKER='.phgo-update-pending.json'") || !strings.Contains(text, "rm -f \"$TARGET_DIR/$PENDING_MARKER\"") {
+		t.Fatalf("shell updater missing pending marker cleanup:\n%s", text)
+	}
 }
 
 func TestWriteWindowsVBScriptLauncher(t *testing.T) {
@@ -223,5 +237,70 @@ func TestWriteWindowsVBScriptLauncher(t *testing.T) {
 	}
 	if !strings.Contains(text, `powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""C:\tmp\update.ps1""`) {
 		t.Fatalf("launcher content missing powershell command:\n%s", text)
+	}
+}
+
+func TestDownloadFileShowsDetailedProgress(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		payload := bytes.Repeat([]byte("a"), 8192)
+		w.Header().Set("Content-Length", "8192")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	dest := filepath.Join(t.TempDir(), "update.bin")
+	var out bytes.Buffer
+	if err := downloadFile(context.Background(), server.URL, dest, &out); err != nil {
+		t.Fatalf("downloadFile returned error: %v", err)
+	}
+	text := out.String()
+	if !strings.Contains(text, "Downloading application update...") || !strings.Contains(text, "Application update download complete.") {
+		t.Fatalf("download progress output missing expected labels:\n%s", text)
+	}
+	if !strings.Contains(text, "/8.0 KiB") {
+		t.Fatalf("download progress output missing size details:\n%s", text)
+	}
+}
+
+func TestExtractZipArchiveShowsDetailedProgress(t *testing.T) {
+	tmp := t.TempDir()
+	archivePath := filepath.Join(tmp, "bundle.zip")
+	writeTestZipArchive(t, archivePath, map[string]string{
+		"bundle/a.txt": "hello",
+		"bundle/b.txt": "world",
+	})
+	dest := filepath.Join(tmp, "out")
+	var out bytes.Buffer
+	if err := extractZipArchive(archivePath, "bundle", dest, &out); err != nil {
+		t.Fatalf("extractZipArchive returned error: %v", err)
+	}
+	text := out.String()
+	if !strings.Contains(text, "Extracting application update...") || !strings.Contains(text, "Application update extraction complete.") {
+		t.Fatalf("extract progress output missing expected labels:\n%s", text)
+	}
+	if !strings.Contains(text, "2/2 files") {
+		t.Fatalf("extract progress output missing file counts:\n%s", text)
+	}
+}
+
+func writeTestZipArchive(t *testing.T, path string, files map[string]string) {
+	t.Helper()
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create zip: %v", err)
+	}
+	defer file.Close()
+	zw := zip.NewWriter(file)
+	for name, content := range files {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatalf("create zip entry %s: %v", name, err)
+		}
+		if _, err := io.WriteString(w, content); err != nil {
+			t.Fatalf("write zip entry %s: %v", name, err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("close zip: %v", err)
 	}
 }

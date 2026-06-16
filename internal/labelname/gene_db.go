@@ -528,6 +528,10 @@ func downloadPrebuiltGeneInfoParts(ctx context.Context, tempRoot string, manifes
 	jobs := make(chan int)
 	results := make(chan partResult)
 	var wg sync.WaitGroup
+	stopWorkers := func() {
+		close(jobs)
+		wg.Wait()
+	}
 	for range workers {
 		wg.Add(1)
 		go func() {
@@ -575,7 +579,7 @@ func downloadPrebuiltGeneInfoParts(ctx context.Context, tempRoot string, manifes
 		if result, ok := pending[nextWrite]; ok {
 			if err := copyPrebuiltGeneInfoPartToWriter(writer, result.index, result.path, result.size); err != nil {
 				cancel()
-				close(jobs)
+				stopWorkers()
 				return fmt.Errorf("write prebuilt symbol name database part %d: %w", nextWrite+1, err)
 			}
 			_ = os.Remove(result.path)
@@ -592,13 +596,13 @@ func downloadPrebuiltGeneInfoParts(ctx context.Context, tempRoot string, manifes
 		inFlight--
 		if result.err != nil {
 			cancel()
-			close(jobs)
+			stopWorkers()
 			return result.err
 		}
 		if result.index == nextWrite {
 			if err := copyPrebuiltGeneInfoPartToWriter(writer, result.index, result.path, result.size); err != nil {
 				cancel()
-				close(jobs)
+				stopWorkers()
 				return fmt.Errorf("write prebuilt symbol name database part %d: %w", result.index+1, err)
 			}
 			_ = os.Remove(result.path)
@@ -609,7 +613,7 @@ func downloadPrebuiltGeneInfoParts(ctx context.Context, tempRoot string, manifes
 		for inFlight < workers && len(pending) < workers*2 && sendJob() {
 		}
 	}
-	close(jobs)
+	stopWorkers()
 	if nextWrite != len(manifest.Parts) {
 		return fmt.Errorf("prebuilt symbol name database split download ended after %d/%d parts", nextWrite, len(manifest.Parts))
 	}
