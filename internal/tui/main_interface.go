@@ -182,6 +182,10 @@ type mainTabFrame struct {
 	onFocus  func(tview.Primitive)
 }
 
+type mainExploreList struct {
+	*tview.List
+}
+
 type mainControlField struct {
 	*tview.Box
 	label string
@@ -1099,6 +1103,11 @@ func RunMainInterfacePage(page MainInterfacePage) (MainInterfaceResult, error) {
 				return nil
 			}
 		}
+		if list, ok := focus.(*mainExploreList); ok {
+			if handleMainExploreListKey(list, event, app) {
+				return nil
+			}
+		}
 		switch event.Key() {
 		case tcell.KeyEscape:
 			return nil
@@ -1267,6 +1276,7 @@ func buildMainExploreTab(_ *tview.Application, state *MainInterfaceState) (tview
 	list := optionListWithStart("", options, 1)
 	list.SetBorder(false)
 	list.SetTitle("")
+	list.SetWrapAround(false)
 	for i, option := range options {
 		if option.Value == state.Explore.Tool {
 			list.SetCurrentItem(i)
@@ -1283,11 +1293,14 @@ func buildMainExploreTab(_ *tview.Application, state *MainInterfaceState) (tview
 			state.Explore.Tool = options[index].Value
 		}
 	})
+	exploreList := &mainExploreList{List: list}
 	module := newButtonFlex()
-	module.SetBorder(false)
+	module.SetBorder(true)
 	module.SetTitle("")
-	module.AddItem(list, 0, 1, true)
-	return module, []mainModuleFocus{{box: list.Box, controls: []tview.Primitive{list}}}
+	setFocusBorder(module.Box, false)
+	attachFocusBorder(module.Box)
+	module.AddItem(exploreList, 0, 1, true)
+	return module, []mainModuleFocus{{box: module.Box, controls: []tview.Primitive{exploreList}}}
 }
 
 func newKeywordGridEditor(rows *[]MainKeywordRow, state *GridEditorState, status *tview.TextView, capability mainSearchTypeCapability) *mainGridEditor {
@@ -2438,6 +2451,31 @@ func (f *mainTabFrame) InputHandler() func(*tcell.EventKey, func(tview.Primitive
 			handler(event, setFocus)
 		}
 	})
+}
+
+func handleMainExploreListKey(list *mainExploreList, event *tcell.EventKey, app *tview.Application) bool {
+	if list == nil || event == nil {
+		return false
+	}
+	switch event.Key() {
+	case tcell.KeyUp, tcell.KeyDown, tcell.KeyHome, tcell.KeyEnd, tcell.KeyPgUp, tcell.KeyPgDn, tcell.KeyEnter:
+	case tcell.KeyRune:
+		r := event.Rune()
+		if r != ' ' && (r < '1' || r > '9') {
+			return false
+		}
+	default:
+		return false
+	}
+	if handler := list.InputHandler(); handler != nil {
+		handler(event, func(p tview.Primitive) {
+			if p != nil && app != nil {
+				app.SetFocus(p)
+			}
+		})
+		return true
+	}
+	return false
 }
 
 type mainTabPosition struct {

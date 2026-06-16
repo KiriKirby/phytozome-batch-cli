@@ -258,6 +258,7 @@ function App() {
       document.body.classList.remove('phgo-resizing-alignment');
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
+      window.dispatchEvent(new Event('phgo-alignment-resize'));
     };
 
     const attachSplitter = () => {

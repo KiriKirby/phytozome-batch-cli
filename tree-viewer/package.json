@@ -9,6 +9,8 @@
     "build": "npm run patch:reactree && vite build"
   },
   "dependencies": {
+    "@fluentui/react-components": "^9.74.1",
+    "@fluentui/react-icons": "^2.0.330",
     "@vitejs/plugin-react": "^5.1.1",
     "jspdf": "^4.2.1",
     "react": "^19.2.3",
@@ -16,6 +18,5 @@
     "reactreejs": "^1.0.3",
     "svg2pdf.js": "^2.6.0",
     "vite": "^7.2.7"
-  },
-  "devDependencies": {}
+  }
 }

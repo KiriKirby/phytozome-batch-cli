@@ -458,7 +458,7 @@ func TestMainGridMouseWheelScrollsRowsAndColumns(t *testing.T) {
 	}
 }
 
-func TestMainExploreTabHasNoInnerExploreFrame(t *testing.T) {
+func TestMainExploreTabHasUntitledContentFrame(t *testing.T) {
 	state := MainInterfaceState{Explore: MainExploreState{Tool: "open_session"}}
 	module, _ := buildMainExploreTab(tview.NewApplication(), &state)
 	module.SetRect(0, 0, 80, 12)
@@ -467,19 +467,33 @@ func TestMainExploreTabHasNoInnerExploreFrame(t *testing.T) {
 		t.Fatalf("screen init failed: %v", err)
 	}
 	module.Draw(screen)
-	for x := 0; x < 80; x++ {
-		r, _, _, _ := screen.GetContent(x, 0)
-		if r == tview.Borders.Horizontal || r == tview.Borders.TopLeft || r == tview.Borders.TopRight {
-			t.Fatalf("explore module drew an inner top border at x=%d", x)
+	for _, point := range []struct {
+		x    int
+		y    int
+		want rune
+	}{
+		{0, 0, tview.Borders.TopLeft},
+		{79, 0, tview.Borders.TopRight},
+		{0, 11, tview.Borders.BottomLeft},
+		{79, 11, tview.Borders.BottomRight},
+		{0, 5, tview.Borders.Vertical},
+		{79, 5, tview.Borders.Vertical},
+		{40, 0, tview.Borders.Horizontal},
+		{40, 11, tview.Borders.Horizontal},
+	} {
+		got, _, _, _ := screen.GetContent(point.x, point.y)
+		if got != point.want {
+			t.Fatalf("explore content frame at %d,%d = %q, want %q", point.x, point.y, got, point.want)
 		}
 	}
-	for y := 0; y < 12; y++ {
-		for _, x := range []int{0, 79} {
-			r, _, _, _ := screen.GetContent(x, y)
-			if r == tview.Borders.Vertical || r == tview.Borders.TopLeft || r == tview.Borders.BottomLeft || r == tview.Borders.TopRight || r == tview.Borders.BottomRight {
-				t.Fatalf("explore module drew an inner side border at %d,%d", x, y)
-			}
-		}
+	var topBuilder strings.Builder
+	for x := 0; x < 80; x++ {
+		r, _, _, _ := screen.GetContent(x, 0)
+		topBuilder.WriteRune(r)
+	}
+	topLine := topBuilder.String()
+	if strings.Contains(topLine, "Explore") {
+		t.Fatalf("explore content frame should be untitled, top line: %q", topLine)
 	}
 }
 
@@ -519,6 +533,42 @@ func TestMainExploreTabKeepsSharedOuterFrame(t *testing.T) {
 	tabText := tabBuilder.String()
 	if !strings.Contains(tabText, "Keyword") || !strings.Contains(tabText, "BLAST") || !strings.Contains(tabText, "Explore") {
 		t.Fatalf("shared tab frame did not draw top tabs: %q", tabText)
+	}
+}
+
+func TestMainExploreListKeyboardNavigationAndNumberSelection(t *testing.T) {
+	state := MainInterfaceState{Explore: MainExploreState{Tool: "open_session"}}
+	_, groups := buildMainExploreTab(tview.NewApplication(), &state)
+	if len(groups) != 1 || len(groups[0].controls) != 1 {
+		t.Fatalf("unexpected explore focus groups: %#v", groups)
+	}
+	list, ok := groups[0].controls[0].(*mainExploreList)
+	if !ok {
+		t.Fatalf("explore control = %T, want *mainExploreList", groups[0].controls[0])
+	}
+	app := tview.NewApplication()
+	handleMainExploreListKey(list, tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone), app)
+	if got := list.GetCurrentItem(); got != 1 {
+		t.Fatalf("Down selected item %d, want 1", got)
+	}
+	if state.Explore.Tool != "new_canvas" {
+		t.Fatalf("Down updated tool to %q, want new_canvas", state.Explore.Tool)
+	}
+	handleMainExploreListKey(list, tcell.NewEventKey(tcell.KeyUp, 0, tcell.ModNone), app)
+	if got := list.GetCurrentItem(); got != 0 {
+		t.Fatalf("Up selected item %d, want 0", got)
+	}
+	handleMainExploreListKey(list, tcell.NewEventKey(tcell.KeyRune, '4', tcell.ModNone), app)
+	if got := list.GetCurrentItem(); got != 3 {
+		t.Fatalf("shortcut 4 selected item %d, want 3", got)
+	}
+	if state.Explore.Tool != "tair_family" {
+		t.Fatalf("shortcut 4 updated tool to %q, want tair_family", state.Explore.Tool)
+	}
+	handleMainExploreListKey(list, tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone), app)
+	handleMainExploreListKey(list, tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone), app)
+	if got := list.GetCurrentItem(); got != 4 {
+		t.Fatalf("Down should clamp at last item without wrapping, got %d", got)
 	}
 }
 
