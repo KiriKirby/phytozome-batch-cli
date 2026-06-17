@@ -74,6 +74,11 @@ const alignmentPerfBlock = `  const alignmentPreparedRef = useRef({ source: null
   }, []);
 `;
 
+const exportSizeStateBlock = `  const [exportLongEdge, setExportLongEdge] = useState(numberOr(initialSnapshot.exportLongEdge, 4096));
+  const exportLongEdgeRef = useRef(4096);
+  exportLongEdgeRef.current = exportLongEdge;
+`;
+
 const parseOriginal = `function parseNewick(newick) {
   let index = 0;
   function parseSubtree() {
@@ -268,6 +273,42 @@ const triggerDownloadBridgePatched = `async function triggerDownload(url, filena
   setTimeout(() => URL.revokeObjectURL(url), 200);
 }`;
 
+const exportSvgHelper = `function buildExportSVG(svgEl, fallbackWidth = 800, fallbackHeight = 600, exportLongEdge = 4096) {
+  const EXPORT_LONG_EDGE = Math.max(256, Math.min(16384, Number(exportLongEdge) || 4096));
+  const width = svgEl.width?.baseVal?.value || svgEl.clientWidth || fallbackWidth;
+  const height = svgEl.height?.baseVal?.value || svgEl.clientHeight || fallbackHeight;
+  const clone = svgEl.cloneNode(true);
+  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  const content = clone.querySelector("g");
+  const sourceContent = svgEl.querySelector("g");
+  let exportWidth = width;
+  let exportHeight = height;
+  if (content && sourceContent) {
+    const originalTransform = content.getAttribute("transform") || "";
+    content.removeAttribute("transform");
+    content.setAttribute("data-preview-transform", originalTransform);
+    let box = null;
+    try {
+      box = sourceContent.getBBox();
+    } catch {
+      box = null;
+    }
+    if (box && Number.isFinite(box.x) && Number.isFinite(box.y) && box.width > 0 && box.height > 0) {
+      const safeScale = EXPORT_LONG_EDGE / Math.max(box.width, box.height);
+      exportWidth = Math.max(1, Math.ceil(box.width * safeScale));
+      exportHeight = Math.max(1, Math.ceil(box.height * safeScale));
+      const tx = -box.x * safeScale;
+      const ty = -box.y * safeScale;
+      content.setAttribute("transform", \`translate(\${tx},\${ty}) scale(\${safeScale})\`);
+    }
+  }
+  clone.setAttribute("width", String(exportWidth));
+  clone.setAttribute("height", String(exportHeight));
+  clone.setAttribute("viewBox", \`0 0 \${exportWidth} \${exportHeight}\`);
+  return { svgString: new XMLSerializer().serializeToString(clone), width: exportWidth, height: exportHeight };
+}
+`;
+
 const handleDownloadOriginal = `  const handleDownload = useCallback(async (format) => {
     if (!svgRef.current) return;
     const svgEl = svgRef.current;
@@ -411,13 +452,7 @@ const handleDownloadPatchedLegacy = `  const handleDownload = useCallback(async 
 const handleDownloadPatched = `  const handleDownload = useCallback(async (format) => {
     if (!svgRef.current) return;
     const svgEl = svgRef.current;
-    const width = svgEl.width?.baseVal?.value || svgEl.clientWidth || 800;
-    const height = svgEl.height?.baseVal?.value || svgEl.clientHeight || 600;
-    const clone = svgEl.cloneNode(true);
-    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-    clone.setAttribute("width", String(width));
-    clone.setAttribute("height", String(height));
-    const svgString = new XMLSerializer().serializeToString(clone);
+    const { svgString, width, height } = buildExportSVG(svgEl, 800, 600, exportLongEdgeRef.current);
     const exportTree = typeof window !== "undefined" ? window.__PHGO_EXPORT_TREE__ : null;
     if (typeof exportTree === "function") {
       try {
@@ -721,8 +756,8 @@ const zoomPctAnchor = `  const hPct = (hScale - 0.3) / 3.7 * 100;
   const vPct = (vScale - 0.3) / 3.7 * 100;
   const fPct = (fontScale - 0.5) / 2 * 100;
   const swPct = (strokeWidth - 0.5) / 3.5 * 100;`;
-const zoomPctPatched = `  const hPct = (hScale - 0.3) / 3.7 * 100;
-  const vPct = (vScale - 0.3) / 3.7 * 100;
+const zoomPctPatched = `  const hPct = Math.max(0, Math.min(100, hScale / 4 * 100));
+  const vPct = Math.max(0, Math.min(100, vScale / 4 * 100));
   const fPct = (fontScale - 0.5) / 2 * 100;
   const swPct = (strokeWidth - 0.5) / 3.5 * 100;
   const zoomPct = (Math.max(0.25, Math.min(4, viewportScale)) - 0.25) / 3.75 * 100;`;
@@ -1072,6 +1107,10 @@ function replaceAllRequired(text, original, replacement, description, file) {
     }
     console.log(`Patched ${description}: ${file}`);
     return text.replace(collapsedAnchor, `\n${zoomSliderInsertBlock}\n$1`);
+  }
+  if (description === 'Reactree viewport-scale state' && text.includes('const [viewportScale, setViewportScale]')) {
+    console.log(`${description} already present: ${file}`);
+    return text;
   }
   if (!text.includes(original)) {
     if (text.includes(replacement)) {
@@ -1440,14 +1479,45 @@ for (const file of files) {
   text = replaceAllRequired(text, '(d.data.name || "").replace(/_/g, " ")', 'displayTreeName(d.data.name)', 'Reactree display label preservation', file);
   text = replaceAllRequired(text, '(d.target.data.name || "").replace(/_/g, " ")', 'displayTreeName(d.target.data.name)', 'Reactree target label preservation', file);
   text = replaceAllRequired(text, '(node.name || "").replace(/_/g, " ")', 'displayTreeName(node.name)', 'Reactree search label preservation', file);
+  if (text.includes('function buildExportSVG(') && !text.includes('Number(exportLongEdge) || 4096')) {
+    const upgraded = text.replace(
+      /function buildExportSVG\(svgEl, fallbackWidth = 800, fallbackHeight = 600\) \{[\s\S]*?\n\}\nasync function triggerDownload/,
+      `${exportSvgHelper}async function triggerDownload`,
+    );
+    if (upgraded === text) {
+      throw new Error(`Reactree fixed-edge export SVG helper upgrade failed in ${file}`);
+    }
+    text = upgraded;
+    console.log(`Upgraded Reactree fixed-edge export SVG helper: ${file}`);
+  } else if (!text.includes('function buildExportSVG(')) {
+    text = replaceRequired(
+      text,
+      'async function triggerDownload(url, filename, options) {\n',
+      `${exportSvgHelper}async function triggerDownload(url, filename, options) {\n`,
+      'Reactree fit-to-canvas export SVG helper',
+      file,
+    );
+  } else {
+    console.log(`Reactree fit-to-canvas export SVG helper already present: ${file}`);
+  }
   const exportBridgeOriginal = isCJS ? handleDownloadOriginalCJS : handleDownloadOriginal;
   const exportBridgeLegacy = isCJS ? handleDownloadPatchedLegacyCJS : handleDownloadPatchedLegacy;
   const exportBridgePatched = isCJS ? handleDownloadPatchedCJS : handleDownloadPatched;
-  if (text.includes(exportBridgePatched)) {
+  if (text.includes(exportBridgePatched) && text.includes('exportLongEdgeRef.current')) {
     console.log(`Reactree export bridge already present: ${file}`);
   } else if (text.includes(exportBridgeLegacy)) {
     console.log(`Patched Reactree export bridge: ${file}`);
     text = text.split(exportBridgeLegacy).join(exportBridgePatched);
+  } else if (text.includes('const handleDownload = useCallback(async (format) => {')) {
+    const upgraded = text.replace(
+      /  const handleDownload = useCallback\(async \(format\) => \{\n    if \(!svgRef\.current\) return;[\s\S]*?\n  \}, \[\]\);/,
+      exportBridgePatched,
+    );
+    if (upgraded === text) {
+      throw new Error(`Reactree fit-to-canvas export bridge upgrade failed in ${file}`);
+    }
+    text = upgraded;
+    console.log(`Upgraded Reactree fit-to-canvas export bridge: ${file}`);
   } else {
     text = replaceAllRequired(
       text,
@@ -1546,6 +1616,9 @@ for (const file of files) {
     'Reactree viewport zoom percent',
     file,
   );
+  text = text
+    .replaceAll('const hPct = (hScale - 0.3) / 3.7 * 100;', 'const hPct = Math.max(0, Math.min(100, hScale / 4 * 100));')
+    .replaceAll('const vPct = (vScale - 0.3) / 3.7 * 100;', 'const vPct = Math.max(0, Math.min(100, vScale / 4 * 100));');
   if (!text.includes('function prepareAlignmentRows(seqMap, isAA)')) {
     text = replaceRequired(
       text,
@@ -1813,7 +1886,7 @@ ${viewerStateHelpers}`, 'Reactree viewer-state helpers', file);
   const snapshotState = useCallback(() => {
     const cladeEditorDraft = cladeEditor?.sid ? document.getElementById(\`clade-input-\${cladeEditor.sid}\`)?.value ?? "" : "";
     return {
-      schema_version: 1,
+      schema_version: 3,
       treeData: cloneTreeData(treeData),
       history: history.map(cloneTreeData),
       currentNewick: toNewick(treeData) + ";",
@@ -1971,6 +2044,11 @@ function patchReactreeViewerPolishMJS(file) {
   }
 
   text = text.split(wcagAAAPalette).join(okabeItoPalette);
+  replaceAll(
+    'schema_version: 1,\n      treeData',
+    'schema_version: 3,\n      treeData',
+    'Reactree viewer state schema v3',
+  );
   replaceOnce(
     'var PALETTE = [\n  { hex: "#ef4444", name: "Red" },\n  { hex: "#f97316", name: "Orange" },\n  { hex: "#f59e0b", name: "Amber" },\n  { hex: "#84cc16", name: "Lime" },\n  { hex: "#10b981", name: "Emerald" },\n  { hex: "#14b8a6", name: "Teal" },\n  { hex: "#0ea5e9", name: "Sky" },\n  { hex: "#6366f1", name: "Indigo" },\n  { hex: "#8b5cf6", name: "Violet" },\n  { hex: "#ec4899", name: "Pink" },\n  { hex: "#64748b", name: "Slate" },\n  { hex: "#92400e", name: "Brown" }\n];',
     okabeItoPalette,
@@ -1997,6 +2075,11 @@ function patchReactreeViewerPolishMJS(file) {
     'Reactree font family ref',
   );
   replaceOnce(
+    '  const [strokeWidth, setStrokeWidth] = useState(numberOr(initialSnapshot.strokeWidth, 1.5));',
+    '  const [strokeWidth, setStrokeWidth] = useState(numberOr(initialSnapshot.strokeWidth, 1.5));\n' + exportSizeStateBlock.trimEnd(),
+    'Reactree export size state',
+  );
+  replaceOnce(
     '  const containerHRef = useRef(defaultHeight);\n  containerHRef.current = containerH;\n  const snapshotState = useCallback(() => {',
     '  const containerHRef = useRef(defaultHeight);\n  containerHRef.current = containerH;\n  useEffect(() => {\n    let cancelled = false;\n    loadLocalFontFamilies(fontFamily).then((families) => {\n      if (cancelled) return;\n      setFontOptions((current) => {\n        const next = buildFontOptions([...current, ...families, fontFamily]);\n        if (next.length === current.length && next.every((family, idx) => family === current[idx])) {\n          return current;\n        }\n        return next;\n      });\n    }).catch(() => {\n    });\n    return () => {\n      cancelled = true;\n    };\n  }, [fontFamily]);\n  const snapshotState = useCallback(() => {',
     'Reactree font family loader',
@@ -2011,33 +2094,52 @@ function patchReactreeViewerPolishMJS(file) {
     '      fontScale,\n      fontFamily,\n      strokeWidth,',
     'Reactree font snapshot field',
   );
+  replaceOnce(
+    '      strokeWidth,\n      colorOverrides: mapToEntries(colorOverrides),',
+    '      strokeWidth,\n      exportLongEdge,\n      colorOverrides: mapToEntries(colorOverrides),',
+    'Reactree export size snapshot field',
+  );
   const snapshotDepsOriginal = '  }, [treeData, history, layout, treeType, labelMode, alignLabels, truncateNames, showAlignment, containerH, hScale, vScale, fontScale, strokeWidth, colorOverrides, collapsedNodes, collapseLabels, activeColor, colorMode, rerootMode, flipMode, swapMode, searchOpen, searchQuery, searchMatchIdx, downloadOpen, downloadMenuPos, palettePos, cladeEditor, nodeInfo, theme]);';
   const snapshotDepsRenderStyle = '  }, [treeData, history, layout, renderStyle, treeType, labelMode, alignLabels, truncateNames, showAlignment, containerH, hScale, vScale, fontScale, strokeWidth, colorOverrides, collapsedNodes, collapseLabels, activeColor, colorMode, rerootMode, flipMode, swapMode, searchOpen, searchQuery, searchMatchIdx, downloadOpen, downloadMenuPos, palettePos, cladeEditor, nodeInfo, theme]);';
   const snapshotDepsRuntimeFont = '  }, [treeData, history, layout, renderStyle, treeType, labelMode, alignLabels, truncateNames, showAlignment, containerH, hScale, vScale, fontScale, fontFamily, strokeWidth, colorOverrides, collapsedNodes, collapseLabels, activeColor, colorMode, rerootMode, flipMode, swapMode, searchOpen, searchQuery, searchMatchIdx, downloadOpen, downloadMenuPos, palettePos, cladeEditor, nodeInfo, theme]);';
-  if (!text.includes(snapshotDepsRuntimeFont)) {
+  const snapshotDepsExportSize = '  }, [treeData, history, layout, renderStyle, treeType, labelMode, alignLabels, truncateNames, showAlignment, containerH, hScale, vScale, fontScale, fontFamily, strokeWidth, exportLongEdge, colorOverrides, collapsedNodes, collapseLabels, activeColor, colorMode, rerootMode, flipMode, swapMode, searchOpen, searchQuery, searchMatchIdx, downloadOpen, downloadMenuPos, palettePos, cladeEditor, nodeInfo, theme]);';
+  if (!text.includes(snapshotDepsRuntimeFont) && !text.includes(snapshotDepsExportSize)) {
     if (text.includes(snapshotDepsOriginal)) {
       replaceOnce(snapshotDepsOriginal, snapshotDepsRenderStyle, 'Reactree style snapshot dependencies');
     }
     if (text.includes(snapshotDepsRenderStyle)) {
       replaceOnce(snapshotDepsRenderStyle, snapshotDepsRuntimeFont, 'Reactree font snapshot dependencies');
     }
-    if (!text.includes(snapshotDepsRuntimeFont)) {
+    if (!text.includes(snapshotDepsRuntimeFont) && !text.includes(snapshotDepsExportSize)) {
       throw new Error(`Reactree snapshot dependencies anchor not found in ${file}`);
     }
+  }
+  if (text.includes(snapshotDepsRuntimeFont) && !text.includes(snapshotDepsExportSize)) {
+    replaceOnce(snapshotDepsRuntimeFont, snapshotDepsExportSize, 'Reactree export size snapshot dependencies');
+  }
+  if (!text.includes(snapshotDepsExportSize)) {
+    throw new Error(`Reactree export size snapshot dependencies anchor not found in ${file}`);
   }
   const snapshotRestoreOriginal = '    setLayout(stringOr(snapshot.layout, "rectangular"));\n    setTreeType(stringOr(snapshot.treeType, "phylogram"));';
   const snapshotRestoreRenderStyle = '    setLayout(stringOr(snapshot.layout, "rectangular"));\n    setRenderStyle(stringOr(snapshot.renderStyle, "phgo"));\n    setTreeType(stringOr(snapshot.treeType, "phylogram"));';
   const snapshotRestoreRuntimeFont = '    setLayout(stringOr(snapshot.layout, "rectangular"));\n    setRenderStyle(stringOr(snapshot.renderStyle, "phgo"));\n    setTreeType(stringOr(snapshot.treeType, "phylogram"));\n    setFontFamily(stringOr(snapshot.fontFamily, DEFAULT_TREE_FONT_FAMILY));';
-  if (!text.includes(snapshotRestoreRuntimeFont)) {
+  const snapshotRestoreExportSize = '    setLayout(stringOr(snapshot.layout, "rectangular"));\n    setRenderStyle(stringOr(snapshot.renderStyle, "phgo"));\n    setTreeType(stringOr(snapshot.treeType, "phylogram"));\n    setFontFamily(stringOr(snapshot.fontFamily, DEFAULT_TREE_FONT_FAMILY));\n    setExportLongEdge(numberOr(snapshot.exportLongEdge, 4096));';
+  if (!text.includes(snapshotRestoreRuntimeFont) && !text.includes(snapshotRestoreExportSize)) {
     if (text.includes(snapshotRestoreOriginal)) {
       replaceOnce(snapshotRestoreOriginal, snapshotRestoreRenderStyle, 'Reactree style restore');
     }
     if (text.includes(snapshotRestoreRenderStyle)) {
       replaceOnce(snapshotRestoreRenderStyle, snapshotRestoreRuntimeFont, 'Reactree font restore');
     }
-    if (!text.includes(snapshotRestoreRuntimeFont)) {
+    if (!text.includes(snapshotRestoreRuntimeFont) && !text.includes(snapshotRestoreExportSize)) {
       throw new Error(`Reactree snapshot restore anchor not found in ${file}`);
     }
+  }
+  if (text.includes(snapshotRestoreRuntimeFont) && !text.includes(snapshotRestoreExportSize)) {
+    replaceOnce(snapshotRestoreRuntimeFont, snapshotRestoreExportSize, 'Reactree export size restore');
+  }
+  if (!text.includes(snapshotRestoreExportSize)) {
+    throw new Error(`Reactree export size restore anchor not found in ${file}`);
   }
   replaceOnce(
     '    const isCircular = layout === "circular";',
@@ -2156,6 +2258,36 @@ function patchReactreeViewerPolishMJS(file) {
     'Reactree MEGA rectangular label gap',
   );
   replaceOnce(
+    '      d32.cluster().size([innerHeight, innerWidth])(root);\n      if (isPhylogram && maxCumLen > 0)',
+    '      d32.cluster().size([innerHeight, innerWidth])(root);\n      if (isMegaStyle) {\n        const visibleLeaves = root.leaves().filter((d) => !d._children);\n        const step = visibleLeaves.length > 1 ? innerHeight / (visibleLeaves.length - 1) : 0;\n        visibleLeaves.forEach((leaf, idx) => {\n          leaf.x = visibleLeaves.length > 1 ? idx * step : innerHeight / 2;\n        });\n        root.eachAfter((d) => {\n          if (!d.children || !d.children.length) return;\n          const visibleChildren = d.children.filter((child) => Number.isFinite(child.x));\n          if (visibleChildren.length) d.x = visibleChildren.reduce((sum, child) => sum + child.x, 0) / visibleChildren.length;\n        });\n      }\n      if (isPhylogram && maxCumLen > 0)',
+    'Reactree MEGA equal leaf spacing',
+  );
+  replaceAll(
+    '11.5 / Math.sqrt(vScale) * fontScale',
+    '11.5 / Math.sqrt(Math.max(vScale, 0.01)) * fontScale',
+    'Reactree zero height font guard',
+  );
+  replaceAll(
+    'const innerHeight = Math.max(root.leaves().length * leafSpacing, 60);',
+    'const innerHeight = root.leaves().length * leafSpacing;',
+    'Reactree height scale zero minimum',
+  );
+  replaceAll(
+    'const radius = Math.max(maxR, 40);',
+    'const radius = Math.max(maxR, 0);',
+    'Reactree circular size zero minimum',
+  );
+  replaceOnce(
+    '      const gap = 0.04 * Math.PI * (2 - vScale);\n      d32.cluster().size([2 * Math.PI - gap, radius])(root);\n      root.each((d) => {\n        d.x += gap / 2;\n      });',
+    '      const gap = isMegaStyle ? 0 : 0.04 * Math.PI * (2 - vScale);\n      d32.cluster().size([2 * Math.PI - gap, radius])(root);\n      if (isMegaStyle) {\n        const visibleLeaves = root.leaves().filter((d) => !d._children);\n        const angularSpan = 2 * Math.PI - gap;\n        const step = visibleLeaves.length > 0 ? angularSpan / visibleLeaves.length : 0;\n        visibleLeaves.forEach((leaf, idx) => {\n          leaf.x = visibleLeaves.length > 1 ? idx * step : angularSpan / 2;\n        });\n        root.eachAfter((d) => {\n          if (!d.children || !d.children.length) return;\n          const visibleChildren = d.children.filter((child) => Number.isFinite(child.x));\n          if (!visibleChildren.length) return;\n          const sin = visibleChildren.reduce((sum, child) => sum + Math.sin(child.x), 0);\n          const cos = visibleChildren.reduce((sum, child) => sum + Math.cos(child.x), 0);\n          const angle = Math.atan2(sin, cos);\n          d.x = angle < 0 ? angle + 2 * Math.PI : angle;\n        });\n      }\n      root.each((d) => {\n        d.x += gap / 2;\n      });',
+    'Reactree MEGA circular equal leaf spacing',
+  );
+  replaceAll(
+    'const barLen = maxCumLen * barPx / innerWidth;',
+    'const barLen = innerWidth > 0 ? maxCumLen * barPx / innerWidth : 0;',
+    'Reactree zero width scale bar guard',
+  );
+  replaceOnce(
     '      if (alignLabels) {\n        const leaderColor = isMegaStyle ? "#000000" : isDark ? "rgba(148,163,184,0.35)" : "rgba(100,116,139,0.3)";\n        node.filter((d) => !d.children).append("line").attr("class", "leader-line").attr("x1", 8).attr("x2", (d) => innerWidth - d.y).attr("y1", 0).attr("y2", 0).attr("stroke", leaderColor).attr("stroke-width", 1).attr("stroke-dasharray", "2 3").style("pointer-events", "none");\n      }\n      addLeafLabels(',
     '      if (alignLabels) {\n        const leaderColor = isMegaStyle ? "#000000" : isDark ? "rgba(148,163,184,0.35)" : "rgba(100,116,139,0.3)";\n        node.filter((d) => !d.children).append("line").attr("class", "leader-line").attr("x1", isMegaStyle ? 0 : 8).attr("x2", (d) => innerWidth - d.y + (isMegaStyle ? 4 : 0)).attr("y1", 0).attr("y2", 0).attr("stroke", leaderColor).attr("stroke-width", 1).attr("stroke-dasharray", isMegaStyle ? null : "2 3").style("pointer-events", "none");\n      }\n      if (isMegaStyle && !alignLabels) {\n        node.filter((d) => !d.children).append("line").attr("class", "terminal-label-line").attr("x1", 0).attr("x2", 4).attr("y1", 0).attr("y2", 0).attr("stroke", baseColor).attr("stroke-width", strokeWidth).attr("stroke-linecap", "square").style("pointer-events", "none");\n      }\n      addLeafLabels(',
     'Reactree MEGA rectangular terminal label connector',
@@ -2192,7 +2324,7 @@ function patchReactreeViewerPolishMJS(file) {
   );
   replaceOnce(
     '      if (isPhylogram && maxCumLen > 0) {\n        const scaleX = d32.scaleLinear().domain([0, maxCumLen]).range([0, innerWidth]);\n        const ticks = scaleX.ticks(8);\n        const sb = content.append("g").attr("transform", `translate(0,${innerHeight + 28})`);\n        sb.append("line").attr("x1", 0).attr("x2", innerWidth).attr("stroke", scaleColor).attr("stroke-width", 1).attr("stroke-linecap", "round");\n        ticks.forEach((t, i) => {\n          const x = scaleX(t), e = i === 0 || i === ticks.length - 1;\n          sb.append("line").attr("x1", x).attr("x2", x).attr("y2", e ? 8 : 5).attr("stroke", scaleColor).attr("stroke-width", e ? 1.4 : 1);\n          sb.append("text").attr("x", x).attr("y", 20).attr("text-anchor", i === 0 ? "start" : i === ticks.length - 1 ? "end" : "middle").attr("font-size", "9.5px").attr("font-family", "system-ui").style("fill", "var(--clr-text-muted,#64748b)").text(formatTick(t));\n        });\n        sb.append("text").attr("x", innerWidth / 2).attr("y", 36).attr("text-anchor", "middle").attr("font-size", "9px").attr("font-family", "system-ui").attr("letter-spacing", "0.04em").style("fill", "var(--clr-text-muted,#64748b)").text("substitutions / site");\n      }',
-    '      if (isPhylogram && maxCumLen > 0) {\n        if (isMegaStyle) {\n          const barPx = Math.max(52, Math.min(120, innerWidth * 0.16));\n          const barLen = maxCumLen * barPx / innerWidth;\n          const sb = content.append("g").attr("transform", `translate(0,${innerHeight + 30})`);\n          sb.append("line").attr("x1", 0).attr("x2", barPx).attr("stroke", scaleColor).attr("stroke-width", 1.5).attr("stroke-linecap", "square");\n          [0, barPx].forEach((x) => sb.append("line").attr("x1", x).attr("x2", x).attr("y1", -5).attr("y2", 5).attr("stroke", scaleColor).attr("stroke-width", 1.5));\n          sb.append("text").attr("x", barPx / 2).attr("y", -8).attr("text-anchor", "middle").attr("font-size", "10px").attr("font-family", treeFontFamily).style("fill", scaleColor).text(formatTick(barLen));\n        } else {\n          const scaleX = d32.scaleLinear().domain([0, maxCumLen]).range([0, innerWidth]);\n          const ticks = scaleX.ticks(8);\n          const sb = content.append("g").attr("transform", `translate(0,${innerHeight + 28})`);\n          sb.append("line").attr("x1", 0).attr("x2", innerWidth).attr("stroke", scaleColor).attr("stroke-width", 1).attr("stroke-linecap", "round");\n          ticks.forEach((t, i) => {\n            const x = scaleX(t), e = i === 0 || i === ticks.length - 1;\n            sb.append("line").attr("x1", x).attr("x2", x).attr("y2", e ? 8 : 5).attr("stroke", scaleColor).attr("stroke-width", e ? 1.4 : 1);\n            sb.append("text").attr("x", x).attr("y", 20).attr("text-anchor", i === 0 ? "start" : i === ticks.length - 1 ? "end" : "middle").attr("font-size", "9.5px").attr("font-family", "system-ui").style("fill", "var(--clr-text-muted,#64748b)").text(formatTick(t));\n          });\n          sb.append("text").attr("x", innerWidth / 2).attr("y", 36).attr("text-anchor", "middle").attr("font-size", "9px").attr("font-family", "system-ui").attr("letter-spacing", "0.04em").style("fill", "var(--clr-text-muted,#64748b)").text("substitutions / site");\n        }\n      }',
+    '      if (isPhylogram && maxCumLen > 0) {\n        if (isMegaStyle) {\n          const barPx = Math.max(52, Math.min(120, innerWidth * 0.16));\n          const barLen = innerWidth > 0 ? maxCumLen * barPx / innerWidth : 0;\n          const sb = content.append("g").attr("transform", `translate(0,${innerHeight + 30})`);\n          sb.append("line").attr("x1", 0).attr("x2", barPx).attr("stroke", scaleColor).attr("stroke-width", 1.5).attr("stroke-linecap", "square");\n          [0, barPx].forEach((x) => sb.append("line").attr("x1", x).attr("x2", x).attr("y1", -5).attr("y2", 5).attr("stroke", scaleColor).attr("stroke-width", 1.5));\n          sb.append("text").attr("x", barPx / 2).attr("y", -8).attr("text-anchor", "middle").attr("font-size", "10px").attr("font-family", treeFontFamily).style("fill", scaleColor).text(formatTick(barLen));\n        } else {\n          const scaleX = d32.scaleLinear().domain([0, maxCumLen]).range([0, innerWidth]);\n          const ticks = scaleX.ticks(8);\n          const sb = content.append("g").attr("transform", `translate(0,${innerHeight + 28})`);\n          sb.append("line").attr("x1", 0).attr("x2", innerWidth).attr("stroke", scaleColor).attr("stroke-width", 1).attr("stroke-linecap", "round");\n          ticks.forEach((t, i) => {\n            const x = scaleX(t), e = i === 0 || i === ticks.length - 1;\n            sb.append("line").attr("x1", x).attr("x2", x).attr("y2", e ? 8 : 5).attr("stroke", scaleColor).attr("stroke-width", e ? 1.4 : 1);\n            sb.append("text").attr("x", x).attr("y", 20).attr("text-anchor", i === 0 ? "start" : i === ticks.length - 1 ? "end" : "middle").attr("font-size", "9.5px").attr("font-family", "system-ui").style("fill", "var(--clr-text-muted,#64748b)").text(formatTick(t));\n          });\n          sb.append("text").attr("x", innerWidth / 2).attr("y", 36).attr("text-anchor", "middle").attr("font-size", "9px").attr("font-family", "system-ui").attr("letter-spacing", "0.04em").style("fill", "var(--clr-text-muted,#64748b)").text("substitutions / site");\n        }\n      }',
     'Reactree MEGA rectangular scale bar',
   );
   replaceAll(
@@ -2279,7 +2411,8 @@ const OFFICE_FONT_LABELS = {
 function clampRibbonNumber(value, min, max) {
   const next = Number(value);
   if (!Number.isFinite(next)) return min;
-  return Math.min(max, Math.max(min, next));
+  const lower = Number.isFinite(min) ? Math.max(min, next) : next;
+  return Number.isFinite(max) ? Math.min(max, lower) : lower;
 }
 function measuredVisibleKeys(items, widths, available, moreWidth = OFFICE_MORE_BUTTON_WIDTH) {
   if (!items.length) return [];
@@ -2362,16 +2495,10 @@ function OfficeToggleGroup({ children, compact = false }) {
   return /* @__PURE__ */ jsx2("div", { className: \`phgo-office-toggle-group \${compact ? "phgo-office-toggle-group-compact" : ""}\`, children });
 }
 function OfficeNumber({ label, icon, value, min, max, step, decimals, onChange }) {
+  const inputProps = { type: "number", size: "small", min, step, value: Number(value).toFixed(decimals), onChange: (_, data) => onChange(clampRibbonNumber(data.value, min, max)) };
+  if (Number.isFinite(max)) inputProps.max = max;
   return /* @__PURE__ */ jsx2(OfficeControl, { label, icon, children:
-    /* @__PURE__ */ jsx2(Input, {
-      type: "number",
-      size: "small",
-      min,
-      max,
-      step,
-      value: Number(value).toFixed(decimals),
-      onChange: (_, data) => onChange(clampRibbonNumber(data.value, min, max))
-    })
+    /* @__PURE__ */ jsx2(Input, inputProps)
   });
 }
 function OfficeZoom({ value, onChange }) {
@@ -2398,6 +2525,13 @@ function OfficeFontGrow({ value, onChange }) {
     /* @__PURE__ */ jsx2(Tooltip, { content: "Increase font size", relationship: "label", children: /* @__PURE__ */ jsx2(Button, { appearance: "subtle", size: "small", icon: /* @__PURE__ */ jsxs2("span", { className: "phgo-office-font-grow-icon", children: ["A", /* @__PURE__ */ jsx2(ArrowUpRegular, {})] }), onClick: () => onChange(Math.min(2.5, Math.round((value + 0.1) * 10) / 10)) }) }),
     /* @__PURE__ */ jsx2(Tooltip, { content: "Decrease font size", relationship: "label", children: /* @__PURE__ */ jsx2(Button, { appearance: "subtle", size: "small", icon: /* @__PURE__ */ jsxs2("span", { className: "phgo-office-font-shrink-icon", children: ["A", /* @__PURE__ */ jsx2(ChevronDownRegular, {})] }), onClick: () => onChange(Math.max(0.5, Math.round((value - 0.1) * 10) / 10)) }) })
   ] });
+}
+function OfficeExportSize({ value, onChange }) {
+  const sizes = [1024, 2048, 4096, 8192];
+  const selected = String(value || 4096);
+  return /* @__PURE__ */ jsx2(OfficeControl, { label: "Size", icon: /* @__PURE__ */ jsx2(SlideSizeRegular, {}), className: "phgo-office-export-size-control", children:
+    /* @__PURE__ */ jsx2(Dropdown, { className: "phgo-office-export-size", size: "small", style: { width: 64, minWidth: 64, maxWidth: 64 }, value: selected, selectedOptions: [selected], onOptionSelect: (_, data) => onChange(clampRibbonNumber(data.optionValue, 256, 16384)), children: sizes.map((size) => /* @__PURE__ */ jsx2(Option, { value: String(size), children: String(size) }, size)) })
+  });
 }
 function OfficeExportMenu({ treeData, handleDownload, onViewerSnapshot, snapshotStateRef }) {
   const save = (format) => handleDownload(format);
@@ -2509,6 +2643,8 @@ function OfficeRibbon({
   setSearchMatchIdx,
   searchMatchCount,
   handleDownload,
+  exportLongEdge,
+  setExportLongEdge,
   onViewerSnapshot,
   snapshotStateRef,
   rebuildWithLadderize,
@@ -2530,9 +2666,10 @@ function OfficeRibbon({
   const openItem = { key: "open", label: "Open", node: /* @__PURE__ */ jsx2(OfficeCommand, { command: { key: "open", label: "Open", icon: /* @__PURE__ */ jsx2(FolderOpenRegular, {}), disabled: true, title: "Tree file is provided by the current PHgo session" } }) };
   const snapshotItem = { key: "snapshot", label: "Snapshot", node: /* @__PURE__ */ jsx2(OfficeCommand, { command: { key: "snapshot", label: "Snapshot", icon: /* @__PURE__ */ jsx2(DocumentSaveRegular, {}), disabled: !onViewerSnapshot, onClick: () => onViewerSnapshot?.(snapshotStateRef.current?.()), title: "PHgo Viewer Snapshot" } }) };
   const exportItem = { key: "export", label: "Export", node: /* @__PURE__ */ jsx2(OfficeExportMenu, { treeData, handleDownload, onViewerSnapshot, snapshotStateRef }) };
+  const exportSizeItem = { key: "exportSize", label: "Size", node: /* @__PURE__ */ jsx2(OfficeExportSize, { value: exportLongEdge, onChange: setExportLongEdge }) };
   const reloadItem = { key: "reload", label: "Reload", node: /* @__PURE__ */ jsx2(OfficeCommand, { command: { key: "reload", label: "Reload", icon: /* @__PURE__ */ jsx2(ArrowClockwiseRegular, {}), onClick: () => window.location.reload() } }) };
   const fileGroups = [
-    { key: "file", label: "File", wrapClass: "phgo-office-button-group", node: /* @__PURE__ */ jsx2(OfficeGroup, { label: "File", children: /* @__PURE__ */ jsxs2(OfficeButtonGroup, { children: [openItem.node, snapshotItem.node, exportItem.node, reloadItem.node] }) }), items: [openItem, snapshotItem, exportItem, reloadItem] }
+    { key: "file", label: "File", wrapClass: "phgo-office-button-group", node: /* @__PURE__ */ jsx2(OfficeGroup, { label: "File", children: /* @__PURE__ */ jsxs2(OfficeButtonGroup, { children: [openItem.node, snapshotItem.node, exportItem.node, exportSizeItem.node, reloadItem.node] }) }), items: [openItem, snapshotItem, exportItem, exportSizeItem, reloadItem] }
   ];
   const undoItem = { key: "undo", label: "Undo", node: /* @__PURE__ */ jsx2(OfficeCommand, { command: { key: "undo", label: "Undo", icon: /* @__PURE__ */ jsx2(ArrowUndoRegular, {}), disabled: history.length === 0, onClick: () => dispatch({ type: "UNDO" }) } }) };
   const ladderAscItem = { key: "ladderAsc", label: "Ladderize ascending", node: /* @__PURE__ */ jsx2(OfficeIconButton, { title: "Ladderize ascending", onClick: () => dispatch({ type: "LADDERIZE", newData: rebuildWithLadderize(treeData, true) }), children: /* @__PURE__ */ jsx2(IconLadderize, { asc: true }) }) };
@@ -2580,8 +2717,8 @@ function OfficeRibbon({
   ];
   const zoomItem = { key: "zoom", label: "Zoom", node: /* @__PURE__ */ jsx2(OfficeZoom, { value: viewportScale, onChange: handleViewportScaleChange }) };
   const fitItem = { key: "fit", label: "Fit", node: /* @__PURE__ */ jsx2(OfficeCommand, { command: { key: "fit", label: "Fit", icon: /* @__PURE__ */ jsx2(ZoomFitRegular, {}), onClick: () => resetFnRef.current() } }) };
-  const widthItem = { key: "width", label: layout === "circular" ? "Size" : "Width", node: /* @__PURE__ */ jsx2(OfficeNumber, { label: layout === "circular" ? "Size" : "Width", icon: layout === "circular" ? /* @__PURE__ */ jsx2(SlideSizeRegular, {}) : /* @__PURE__ */ jsx2(AutoFitWidthRegular, {}), value: hScale, min: 0.3, max: 4, step: 0.1, decimals: 1, onChange: setHScale }) };
-  const heightItem = { key: "height", label: "Height", node: layout === "rectangular" ? /* @__PURE__ */ jsx2(OfficeNumber, { label: "Height", icon: /* @__PURE__ */ jsx2(AutoFitHeightRegular, {}), value: vScale, min: 0.3, max: 4, step: 0.1, decimals: 1, onChange: setVScale }) : null };
+  const widthItem = { key: "width", label: layout === "circular" ? "Size" : "Width", node: /* @__PURE__ */ jsx2(OfficeNumber, { label: layout === "circular" ? "Size" : "Width", icon: layout === "circular" ? /* @__PURE__ */ jsx2(SlideSizeRegular, {}) : /* @__PURE__ */ jsx2(AutoFitWidthRegular, {}), value: hScale, min: 0, step: 0.1, decimals: 1, onChange: setHScale }) };
+  const heightItem = { key: "height", label: "Height", node: layout === "rectangular" ? /* @__PURE__ */ jsx2(OfficeNumber, { label: "Height", icon: /* @__PURE__ */ jsx2(AutoFitHeightRegular, {}), value: vScale, min: 0, step: 0.1, decimals: 1, onChange: setVScale }) : null };
   const alignmentItem = { key: "alignment", label: "Alignment", node: /* @__PURE__ */ jsx2(OfficeCommand, { command: { key: "alignment", label: "Alignment", icon: /* @__PURE__ */ jsx2(IconAlnTrack, {}), disabled: !fasta || layout !== "rectangular", active: showAlignment, onClick: () => setShowAlignment((mode) => !mode) } }) };
   const alignItem = { key: "alignLabels", label: "Align", node: /* @__PURE__ */ jsx2(OfficeCommand, { command: { key: "alignLabels", label: "Align", icon: /* @__PURE__ */ jsx2(IconAlignLabels, {}), disabled: treeType !== "phylogram", active: alignLabels, onClick: () => setAlignLabels((mode) => !mode) } }) };
   const labelItem = { key: "labels", label: labelCaption, node: /* @__PURE__ */ jsx2(OfficeCommand, { command: { key: "labels", label: labelCaption, icon: labelMode === "bootstrap" ? /* @__PURE__ */ jsx2(IconBootstrap, {}) : labelMode === "branchlength" ? /* @__PURE__ */ jsx2(IconBranchLen, {}) : /* @__PURE__ */ jsx2(IconLabelsOff, {}), disabled: !hasBootstraps && !hasBranchLengths, onClick: () => setLabelMode(nextLabelMode) } }) };
@@ -2824,6 +2961,8 @@ function OfficeRibbon({
       setSearchMatchIdx,
       searchMatchCount,
       handleDownload,
+      exportLongEdge,
+      setExportLongEdge,
       onViewerSnapshot,
       snapshotStateRef,
       rebuildWithLadderize,
@@ -2831,6 +2970,15 @@ function OfficeRibbon({
     }),
 `;
     text = `${text.slice(0, startIndex)}${replacementPrefix}${text.slice(bodyIndex)}`;
+  }
+  if (!text.includes('      exportLongEdge,\n      setExportLongEdge,\n      onViewerSnapshot,')) {
+    text = replaceRequired(
+      text,
+      '      handleDownload,\n      onViewerSnapshot,\n',
+      '      handleDownload,\n      exportLongEdge,\n      setExportLongEdge,\n      onViewerSnapshot,\n',
+      'Reactree Office ribbon export size props',
+      file,
+    );
   }
 
   if (text !== originalText) {

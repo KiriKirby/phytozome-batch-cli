@@ -126,7 +126,7 @@ func TestLoadTreeBrowserSessionFromPGV(t *testing.T) {
 			SchemaVersion: 1,
 			GeneratedAt:   now,
 		},
-	}, []byte(`{"schema_version":1,"reactree":{"layout":"circular"}}`), now)
+	}, []byte(`{"schema_version":3,"reactree":{"schema_version":3,"layout":"circular","renderStyle":"mega","exportLongEdge":8192,"hScale":0},"phgo":{"split_percent":42}}`), now)
 	data, err := viewersnapshot.Encode(snapshot)
 	if err != nil {
 		t.Fatalf("Encode returned error: %v", err)
@@ -151,6 +151,9 @@ func TestLoadTreeBrowserSessionFromPGV(t *testing.T) {
 	}
 	if !strings.Contains(string(state), `"layout": "circular"`) {
 		t.Fatalf("viewer state was not preserved: %s", state)
+	}
+	if !strings.Contains(string(state), `"exportLongEdge": 8192`) || !strings.Contains(string(state), `"hScale": 0`) {
+		t.Fatalf("viewer v3 state was not preserved: %s", state)
 	}
 }
 

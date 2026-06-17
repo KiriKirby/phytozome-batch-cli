@@ -2,11 +2,21 @@ import { jsPDF } from 'jspdf';
 import 'svg2pdf.js';
 
 export const PGV_FORMAT = 'phgo-viewer-snapshot';
-export const PGV_SCHEMA_VERSION = 2;
+export const PGV_SCHEMA_VERSION = 3;
 export const PGV_MIN_SUPPORTED_SCHEMA_VERSION = 1;
+export const PGV_VIEWER_STATE_SCHEMA_VERSION = 3;
+export const PGV_REACTREE_STATE_SCHEMA_VERSION = 3;
 const DEFAULT_BITMAP_EXPORT_SCALE = 10;
 const MAX_BITMAP_EXPORT_PIXELS = 160_000_000;
 export const TRANSPARENT_EXPORT_BACKGROUND = 'transparent';
+
+function viewerStateForSnapshot(viewerState) {
+  const state = viewerState && typeof viewerState === 'object' && !Array.isArray(viewerState)
+    ? { ...viewerState }
+    : {};
+  state.schema_version = PGV_VIEWER_STATE_SCHEMA_VERSION;
+  return state;
+}
 
 export function buildViewerSnapshot(payload, viewerState) {
   return {
@@ -15,7 +25,7 @@ export function buildViewerSnapshot(payload, viewerState) {
     created_at: new Date().toISOString(),
     producer: 'phytozome-go tree viewer',
     payload: payload || {},
-    viewer_state: viewerState || {},
+    viewer_state: viewerStateForSnapshot(viewerState),
   };
 }
 

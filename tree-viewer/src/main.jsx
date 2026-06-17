@@ -5,9 +5,15 @@ import 'reactreejs/style.css';
 import './style.css';
 import { relabelFasta, relabelNewick } from './labels.js';
 import { megaDefaultDisplayNewick } from './mega-display.js';
-import { buildViewerSnapshot, installPHGOSaveBridge, saveTextFile, snapshotFilename } from './pgv.js';
+import {
+  buildViewerSnapshot,
+  installPHGOSaveBridge,
+  PGV_VIEWER_STATE_SCHEMA_VERSION,
+  saveTextFile,
+  snapshotFilename,
+} from './pgv.js';
 
-const VIEWER_STATE_SCHEMA_VERSION = 2;
+const VIEWER_STATE_SCHEMA_VERSION = PGV_VIEWER_STATE_SCHEMA_VERSION;
 
 function sessionIDFromPath() {
   const parts = window.location.pathname.split('/').filter(Boolean);

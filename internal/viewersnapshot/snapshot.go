@@ -11,7 +11,7 @@ import (
 
 const (
 	Format           = "phgo-viewer-snapshot"
-	SchemaVersion    = 2
+	SchemaVersion    = 3
 	MinSchemaVersion = 1
 )
 

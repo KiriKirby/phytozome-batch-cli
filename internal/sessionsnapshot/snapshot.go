@@ -49,7 +49,7 @@ const (
 	runtimeCacheName        = "runtime-cache"
 	contextModulePath       = "modules/context-v2.xml"
 	keywordModulePath       = "modules/keyword-result-v2.xml"
-	keywordSourceModulePath = "modules/keyword-source-state-v3.xml"
+	keywordSourceModulePath = "modules/keyword-source-state-v4.xml"
 	blastModulePath         = "modules/blast-result-v2.xml"
 	canvasModulePath        = "modules/canvas-result-v2.xml"
 	keywordReviewModulePath = "modules/keyword-review-state-v2.xml"
@@ -66,7 +66,7 @@ const (
 type Snapshot struct {
 	Context            ContextV2
 	Keyword            *KeywordResultV2
-	KeywordSource      *KeywordSourceStateV3
+	KeywordSource      *KeywordSourceStateV4
 	Blast              *BlastResultV2
 	Canvas             *CanvasResultV2
 	KeywordReview      *KeywordReviewStateV2
@@ -101,7 +101,7 @@ type KeywordResultV2 struct {
 	ReportContext   ReportContextV2            `json:"report_context"`
 }
 
-type KeywordSourceStateV3 struct {
+type KeywordSourceStateV4 struct {
 	Database     string               `json:"database"`
 	SourceKind   string               `json:"source_kind"`
 	Engine       string               `json:"engine"`
@@ -109,16 +109,19 @@ type KeywordSourceStateV3 struct {
 	SearchTypes  []string             `json:"search_types,omitempty"`
 	Terms        []string             `json:"terms,omitempty"`
 	Extra        map[string]string    `json:"extra,omitempty"`
-	NCBI         *NCBIKeywordSourceV3 `json:"ncbi,omitempty"`
+	NCBI         *NCBIKeywordSourceV4 `json:"ncbi,omitempty"`
 }
 
-type NCBIKeywordSourceV3 struct {
+type NCBIKeywordSourceV4 struct {
 	EntrezDatabase    string   `json:"entrez_database"`
 	RecordType        string   `json:"record_type"`
 	EUtilitiesBaseURL string   `json:"eutilities_base_url"`
 	EngineSchema      string   `json:"engine_schema"`
 	Accessions        []string `json:"accessions,omitempty"`
 	UIDs              []string `json:"uids,omitempty"`
+	RequestedIDs      []string `json:"requested_ids,omitempty"`
+	ReplacementTargets []string `json:"replacement_targets,omitempty"`
+	ReplacementDecisions []string `json:"replacement_decisions,omitempty"`
 	LinkResolution    string   `json:"link_resolution,omitempty"`
 	LinkedFromDB      string   `json:"linked_from_db,omitempty"`
 	LinkedToDB        string   `json:"linked_to_db,omitempty"`
@@ -127,7 +130,13 @@ type NCBIKeywordSourceV3 struct {
 	LinkNames         []string `json:"link_names,omitempty"`
 	LinkSourceIDs     []string `json:"link_source_ids,omitempty"`
 	LinkTargetIDs     []string `json:"link_target_ids,omitempty"`
+	SearchTypeIDs     []string `json:"search_type_ids,omitempty"`
+	ResultDomains     []string `json:"result_domains,omitempty"`
+	GroupSearchTypes  []string `json:"group_search_types,omitempty"`
 }
+
+type KeywordSourceStateV3 = KeywordSourceStateV4
+type NCBIKeywordSourceV3 = NCBIKeywordSourceV4
 
 type ReportContextV2 struct {
 	QueryStarted  time.Time `json:"query_started"`
@@ -526,8 +535,8 @@ func WriteFile(path string, snapshot Snapshot) error {
 	if snapshot.Keyword != nil {
 		addModule(keywordModuleName, "2", keywordModulePath, snapshot.Keyword)
 	}
-	if snapshot.KeywordSource != nil {
-		addModule(keywordSourceName, "3", keywordSourceModulePath, snapshot.KeywordSource)
+		if snapshot.KeywordSource != nil {
+			addModule(keywordSourceName, "4", keywordSourceModulePath, snapshot.KeywordSource)
 	}
 	if snapshot.Blast != nil {
 		addModule(blastModuleName, "2", blastModulePath, snapshot.Blast)
@@ -663,7 +672,7 @@ func ReadFile(path string) (Snapshot, error) {
 			}
 			snapshot.Keyword = &keyword
 		case keywordSourceName:
-			var source KeywordSourceStateV3
+			var source KeywordSourceStateV4
 			if err := readModule(file, &source); err != nil {
 				return Snapshot{}, err
 			}

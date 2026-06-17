@@ -35,7 +35,7 @@ The `.pgo` file is a compressed archive with versioned XML modules:
 - `manifest.xml` declares the format, format version, and module list.
 - `modules/context-v2.xml` stores application version, database, mode, result kind, and creation metadata.
 - `modules/keyword-result-v2.xml` stores keyword-like result pages, including TAIR family index results.
-- `modules/keyword-source-state-v3.xml` stores keyword source-engine metadata, including NCBI Entrez database, record type, engine schema, accessions, and UIDs.
+- `modules/keyword-source-state-v4.xml` stores keyword source-engine metadata, including NCBI Entrez database, record type, engine schema, search-type/result-domain context, linked-fallback provenance, and replacement/update source state.
 - `modules/blast-result-v2.xml` stores BLAST result pages, including original query-count metadata.
 - `modules/keyword-review-state-v2.xml` stores keyword result-table UI state such as cursor, sort, and scroll position.
 - `modules/blast-review-state-v2.xml` stores BLAST result-table UI state for both single-table and multi-table review.
@@ -46,7 +46,7 @@ The `.pgo` file is a compressed archive with versioned XML modules:
 - `modules/artifact-manifest-v2.xml` lists explicitly selected generated artifacts packed under `artifacts/` in their original text or binary forms.
 - `modules/runtime-cache-v2.xml` stores in-memory workflow caches that have already been computed and would otherwise be silently rebuilt, such as label lookup caches, query-source resolution caches, keyword-term row caches, UniProt and InterPro lookup caches, species-candidate caches, and protein-sequence hit/miss caches.
 
-For the current `v2.3` implementation, artifact packing is intentionally narrow:
+For the current `v2.7` implementation, artifact packing is intentionally narrow:
 
 - only pack artifacts and cache payloads that are explicitly selected by the workflow as needed for later continuity
 - store each packed file with an explicit restore target so snapshot open can rehydrate only the recorded state before workflow continuation begins
@@ -97,7 +97,7 @@ Canvas tree snapshots also preserve the system-tree tool panel state: the curren
 
 ## Current Version Rule
 
-- The current unreleased snapshot format is `v2.3`.
+- The current unreleased snapshot format is `v2.7`.
 - Because the software is not yet released, the code may refactor snapshot structure directly instead of carrying long-term compatibility burden for older draft formats.
-- New modules should still keep their meanings explicit and versioned so future changes can evolve cleanly. The `keyword-source-state-v3` module is the current extension point for NCBI keyword-search source metadata beyond the protein-only first implementation.
+- New modules should still keep their meanings explicit and versioned so future changes can evolve cleanly. The `keyword-source-state-v4` module is the current extension point for NCBI keyword-search source metadata beyond the earlier protein-only first implementation.
 - Store mode/database/result identifiers as plain strings so new workflows can be routed without creating a hardcoded tree.

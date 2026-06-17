@@ -198,7 +198,7 @@ Required shape:
 ```json
 {
   "format": "phgo-viewer-snapshot",
-  "schema_version": 1,
+  "schema_version": 3,
   "created_at": "2026-05-30T12:00:00Z",
   "producer": "phytozome-go tree viewer",
   "payload": {
@@ -211,16 +211,38 @@ Required shape:
     }
   },
   "viewer_state": {
-    "schema_version": 1,
-    "reactree": {},
-    "phgo": {}
+    "schema_version": 3,
+    "reactree": {
+      "schema_version": 3,
+      "layout": "rectangular",
+      "renderStyle": "phgo",
+      "treeType": "phylogram",
+      "labelMode": "bootstrap",
+      "showAlignment": false,
+      "hScale": 1,
+      "vScale": 1,
+      "fontScale": 1,
+      "fontFamily": "system-ui, -apple-system, sans-serif",
+      "strokeWidth": 1.5,
+      "exportLongEdge": 4096,
+      "transform": { "x": 0, "y": 0, "k": 1 }
+    },
+    "phgo": {
+      "split_percent": 42,
+      "payload_updated_at": "2026-05-30T12:00:00Z",
+      "viewport": {
+        "inner_width": 1200,
+        "inner_height": 800,
+        "device_pixel_ratio": 1
+      }
+    }
   }
 }
 ```
 
-`payload` is the same model as `viewer.payload.json`. `viewer_state.reactree` records browser-owned visual state such as current tree topology after reroot/flip/swap/ladderize, layout, tree type, label mode, scale sliders, height, font/stroke settings, colors, collapsed clades and labels, search state, toolbar mode state, and zoom transform. `viewer_state.phgo` records PHgo viewer-only state such as the alignment split width and payload timestamp pairing.
+`payload` is the same model as `viewer.payload.json`. `viewer_state.reactree` records browser-owned visual state such as current tree topology after reroot/flip/swap/ladderize, Office-style ribbon tab/search/menu state, layout, PHgo/MEGA render style, tree type, label mode, scale controls, alignment visibility, height, font/stroke settings, node/clade colors, collapsed clades and labels, search state, toolbar mode state, export long-edge size, and zoom transform. `hScale`, `vScale`, and circular `Size` are non-negative values with `0` allowed and no schema-level maximum. `exportLongEdge` is the selected fixed export long edge in pixels, currently defaulting to `4096`. `viewer_state.phgo` records PHgo viewer-only state such as alignment split width, payload timestamp pairing, and browser viewport metadata.
 
-The format is versioned independently from `.pgo`. Until the release contract is frozen, only the current schema version must be supported.
+The format is versioned independently from `.pgo`. Current writers emit PGV schema v3 and viewer-state schema v3. Readers accept v1, v2, and v3 snapshots so existing `.pgv` files can still be opened, while newer fields are treated as optional when absent.
 
 ## Run Manifest
 

@@ -19,7 +19,7 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 			SchemaVersion: 1,
 			GeneratedAt:   now,
 		},
-	}, []byte(`{"schema_version":1,"reactree":{"layout":"rectangular"}}`), now)
+	}, []byte(`{"schema_version":3,"reactree":{"schema_version":3,"layout":"rectangular","renderStyle":"mega","hScale":0,"vScale":0,"fontFamily":"Georgia","exportLongEdge":8192},"phgo":{"split_percent":42}}`), now)
 
 	data, err := Encode(in)
 	if err != nil {
@@ -37,6 +37,9 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 	}
 	if !strings.Contains(string(got.ViewerState), `"layout": "rectangular"`) {
 		t.Fatalf("viewer state not preserved: %s", got.ViewerState)
+	}
+	if !strings.Contains(string(got.ViewerState), `"exportLongEdge": 8192`) || !strings.Contains(string(got.ViewerState), `"hScale": 0`) {
+		t.Fatalf("viewer v3 fields not preserved: %s", got.ViewerState)
 	}
 }
 

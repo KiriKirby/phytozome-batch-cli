@@ -1719,7 +1719,7 @@ func inlineKeywordSnapshotSequenceEntry(targetID int, row model.KeywordResultRow
 	}
 }
 
-func snapshotKeywordSourceState(src source.DataSource, groups []model.KeywordSearchGroup) *sessionsnapshot.KeywordSourceStateV3 {
+func snapshotKeywordSourceState(src source.DataSource, groups []model.KeywordSearchGroup) *sessionsnapshot.KeywordSourceStateV4 {
 	database := sourceDatabaseName(src)
 	if database == "" {
 		for _, row := range flattenKeywordSearchGroups(groups) {
@@ -1728,7 +1728,7 @@ func snapshotKeywordSourceState(src source.DataSource, groups []model.KeywordSea
 			}
 		}
 	}
-	state := &sessionsnapshot.KeywordSourceStateV3{
+	state := &sessionsnapshot.KeywordSourceStateV4{
 		Database:     database,
 		SourceKind:   "keyword",
 		Engine:       database + "-keyword",
@@ -1745,13 +1745,16 @@ func snapshotKeywordSourceState(src source.DataSource, groups []model.KeywordSea
 			state.Extra = map[string]string{}
 		}
 		state.Extra["ncbi_search_type_id"] = searchTypeID
-		state.NCBI = &sessionsnapshot.NCBIKeywordSourceV3{
+		state.NCBI = &sessionsnapshot.NCBIKeywordSourceV4{
 			EntrezDatabase:    firstNonEmpty(keywordSnapshotFirstExtraValue(groups, "ncbi_entrez_database"), "protein"),
 			RecordType:        firstNonEmpty(keywordSnapshotFirstExtraValue(groups, "ncbi_record_type"), "protein"),
 			EUtilitiesBaseURL: firstNonEmpty(keywordSnapshotFirstExtraValue(groups, "ncbi_eutilities_base_url"), "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"),
-			EngineSchema:      firstNonEmpty(keywordSnapshotFirstExtraValue(groups, "ncbi_engine_schema"), "ncbiprotein-v3"),
+			EngineSchema:      firstNonEmpty(keywordSnapshotFirstExtraValue(groups, "ncbi_engine_schema"), "ncbi-eutilities-keyword-v4"),
 			Accessions:        keywordSnapshotExtraValues(groups, "ncbi_accession"),
 			UIDs:              keywordSnapshotExtraValues(groups, "ncbi_uid"),
+			RequestedIDs:      keywordSnapshotExtraValues(groups, "ncbi_requested_accession"),
+			ReplacementTargets: keywordSnapshotExtraValues(groups, "ncbi_replacement_accession"),
+			ReplacementDecisions: keywordSnapshotExtraValues(groups, "ncbi_replacement_decision"),
 			LinkResolution:    keywordSnapshotFirstExtraValue(groups, "ncbi_link_resolution"),
 			LinkedFromDB:      keywordSnapshotFirstExtraValue(groups, "ncbi_linked_from_db"),
 			LinkedToDB:        keywordSnapshotFirstExtraValue(groups, "ncbi_linked_to_db"),
@@ -1760,12 +1763,15 @@ func snapshotKeywordSourceState(src source.DataSource, groups []model.KeywordSea
 			LinkNames:         keywordSnapshotExtraValues(groups, "ncbi_linkname"),
 			LinkSourceIDs:     keywordSnapshotCSVExtraValues(groups, "ncbi_link_source_ids"),
 			LinkTargetIDs:     keywordSnapshotCSVExtraValues(groups, "ncbi_link_target_ids"),
+			SearchTypeIDs:     keywordSnapshotExtraValues(groups, "ncbi_search_type_id"),
+			ResultDomains:     keywordSnapshotExtraValues(groups, "ncbi_result_domain"),
+			GroupSearchTypes:  keywordSnapshotSearchTypes(groups),
 		}
 	}
 	return state
 }
 
-func hydrateKeywordSnapshotSourceState(groups []model.KeywordSearchGroup, state *sessionsnapshot.KeywordSourceStateV3) {
+func hydrateKeywordSnapshotSourceState(groups []model.KeywordSearchGroup, state *sessionsnapshot.KeywordSourceStateV4) {
 	if state == nil {
 		return
 	}
@@ -1775,8 +1781,43 @@ func hydrateKeywordSnapshotSourceState(groups []model.KeywordSearchGroup, state 
 	}
 	for groupIndex := range groups {
 		for rowIndex := range groups[groupIndex].Rows {
-			if strings.TrimSpace(groups[groupIndex].Rows[rowIndex].SourceDatabase) == "" {
-				groups[groupIndex].Rows[rowIndex].SourceDatabase = database
+			row := &groups[groupIndex].Rows[rowIndex]
+			if strings.TrimSpace(row.SourceDatabase) == "" {
+				row.SourceDatabase = database
+			}
+			if row.ExtraColumns == nil {
+				row.ExtraColumns = map[string]string{}
+			}
+			if strings.EqualFold(database, "ncbi") {
+				if state.NCBI != nil {
+					if strings.TrimSpace(row.ExtraColumns["ncbi_entrez_database"]) == "" {
+						row.ExtraColumns["ncbi_entrez_database"] = strings.TrimSpace(state.NCBI.EntrezDatabase)
+					}
+					if strings.TrimSpace(row.ExtraColumns["ncbi_record_type"]) == "" {
+						row.ExtraColumns["ncbi_record_type"] = strings.TrimSpace(state.NCBI.RecordType)
+					}
+					if strings.TrimSpace(row.ExtraColumns["ncbi_eutilities_base_url"]) == "" {
+						row.ExtraColumns["ncbi_eutilities_base_url"] = strings.TrimSpace(state.NCBI.EUtilitiesBaseURL)
+					}
+					if strings.TrimSpace(row.ExtraColumns["ncbi_engine_schema"]) == "" {
+						row.ExtraColumns["ncbi_engine_schema"] = strings.TrimSpace(state.NCBI.EngineSchema)
+					}
+					if strings.TrimSpace(row.ExtraColumns["ncbi_link_resolution"]) == "" {
+						row.ExtraColumns["ncbi_link_resolution"] = strings.TrimSpace(state.NCBI.LinkResolution)
+					}
+					if strings.TrimSpace(row.ExtraColumns["ncbi_linked_from_db"]) == "" {
+						row.ExtraColumns["ncbi_linked_from_db"] = strings.TrimSpace(state.NCBI.LinkedFromDB)
+					}
+					if strings.TrimSpace(row.ExtraColumns["ncbi_linked_to_db"]) == "" {
+						row.ExtraColumns["ncbi_linked_to_db"] = strings.TrimSpace(state.NCBI.LinkedToDB)
+					}
+				}
+				if strings.TrimSpace(row.ExtraColumns["ncbi_result_domain"]) == "" {
+					row.ExtraColumns["ncbi_result_domain"] = strings.TrimSpace(state.ResultDomain)
+				}
+				if searchTypeID := firstNonEmpty(strings.TrimSpace(state.Extra["ncbi_search_type_id"]), firstString(state.NCBI.SearchTypeIDs)); strings.TrimSpace(row.ExtraColumns["ncbi_search_type_id"]) == "" && searchTypeID != "" {
+					row.ExtraColumns["ncbi_search_type_id"] = searchTypeID
+				}
 			}
 		}
 	}
@@ -1844,6 +1885,15 @@ func keywordSnapshotFirstExtraValue(groups []model.KeywordSearchGroup, key strin
 			if value := strings.TrimSpace(row.ExtraColumns[key]); value != "" {
 				return value
 			}
+		}
+	}
+	return ""
+}
+
+func firstString(values []string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
 		}
 	}
 	return ""

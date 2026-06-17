@@ -192,9 +192,14 @@ Current export plumbing:
 ## PGV Snapshot Flow
 
 - `buildViewerSnapshot` writes the current viewer payload plus Reactree/browser
-  state.
+  state. New snapshots use PGV schema v3 and viewer-state schema v3.
 - `parseViewerSnapshot` validates `format=phgo-viewer-snapshot` and schema
-  version before accepting the file.
+  version before accepting the file. The reader accepts v1, v2, and v3 so
+  older `.pgv` files continue to open.
+- PGV v3 state includes the Office-style ribbon tab/search/menu state,
+  PHgo/MEGA render style, font family, graphical export long-edge size,
+  alignment split width, viewport metadata, and scale values where rectangular
+  width/height and circular size may be `0` with no format-level maximum.
 - Opening a `.pgv` is handled by the standalone tree-browser workflow, which
   creates an isolated viewer session from the snapshot payload/state.
 - The Canvas viewer page intentionally has no top-right `.pgv` open button, so

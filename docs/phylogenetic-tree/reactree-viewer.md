@@ -160,12 +160,14 @@ The snapshot includes:
 
 - the current viewer payload
 - current topology after reroot, flip, swap, and ladderize edits
-- layout, tree type, label mode, scale, height, font, and stroke settings
+- Office-style ribbon tab/search/menu state
+- layout, PHgo/MEGA render style, tree type, label mode, scale, height, font, and stroke settings
+- selected graphical export long-edge size
 - node/clade colors, collapsed clades, and clade labels
 - search, toolbar mode, and zoom state
-- PHgo viewer-only state such as alignment split width
+- PHgo viewer-only state such as alignment split width and browser viewport metadata
 
-The `.pgv` format carries its own `schema_version`. Until the viewer snapshot contract is frozen, only the current schema version must be supported.
+The `.pgv` format carries its own `schema_version`. Current writers emit PGV schema v3 and viewer-state schema v3. Readers keep v1/v2 compatibility for existing saved viewer snapshots.
 
 ## Packaging
 

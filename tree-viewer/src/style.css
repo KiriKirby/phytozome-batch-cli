@@ -661,6 +661,13 @@ textarea {
   max-width: 54px;
 }
 
+.phgo-office-overflow-item-control .phgo-office-export-size {
+  flex: 0 0 64px;
+  width: 64px;
+  min-width: 64px;
+  max-width: 64px;
+}
+
 .phgo-office-overflow-item-control .phgo-office-control input[type='range'],
 .phgo-office-overflow-item-control .phgo-office-zoom-slider {
   flex: 1 1 auto;

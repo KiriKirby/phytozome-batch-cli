@@ -3662,6 +3662,11 @@ func TestNCBIKeywordSnapshotSourceStateAndSequenceCache(t *testing.T) {
 			SearchType:     "NCBI protein accession",
 			SequenceID:     "XP_015650724.1",
 			ExtraColumns: map[string]string{
+				"ncbi_search_type_id":   "protein",
+				"ncbi_result_domain":    "sequence-record",
+				"ncbi_entrez_database":  "protein",
+				"ncbi_record_type":      "protein",
+				"ncbi_engine_schema":    "ncbi-eutilities-keyword-v4",
 				"ncbi_uid":              "1022887543",
 				"ncbi_accession":        "XP_015650724.1",
 				"ncbi_fasta_header":     ">XP_015650724.1 probable 4-coumarate--CoA ligase 1",
@@ -3677,6 +3682,12 @@ func TestNCBIKeywordSnapshotSourceStateAndSequenceCache(t *testing.T) {
 	if state.NCBI.RecordType != "protein" || state.NCBI.EntrezDatabase != "protein" {
 		t.Fatalf("unexpected NCBI snapshot source metadata: %#v", state.NCBI)
 	}
+	if state.NCBI.EngineSchema != "ncbi-eutilities-keyword-v4" {
+		t.Fatalf("engine schema = %q", state.NCBI.EngineSchema)
+	}
+	if len(state.NCBI.SearchTypeIDs) != 1 || state.NCBI.SearchTypeIDs[0] != "protein" {
+		t.Fatalf("search type ids not preserved: %#v", state.NCBI)
+	}
 	if !slices.Contains(state.NCBI.Accessions, "XP_015650724.1") || !slices.Contains(state.NCBI.UIDs, "1022887543") {
 		t.Fatalf("NCBI accessions/uids not preserved: %#v", state.NCBI)
 	}
@@ -3689,6 +3700,51 @@ func TestNCBIKeywordSnapshotSourceStateAndSequenceCache(t *testing.T) {
 	}
 	if cache.Entries[0].Sequence != "MNCBISEQ" || strings.Contains(cache.Entries[0].Sequence, ">") {
 		t.Fatalf("NCBI sequence cache should store clean sequence only: %#v", cache.Entries[0])
+	}
+}
+
+func TestHydrateKeywordSnapshotSourceStateBackfillsNCBIMetadata(t *testing.T) {
+	groups := []model.KeywordSearchGroup{{
+		Rows: []model.KeywordResultRow{{
+			SourceDatabase: "",
+			ExtraColumns:   map[string]string{},
+		}},
+	}}
+	hydrateKeywordSnapshotSourceState(groups, &sessionsnapshot.KeywordSourceStateV4{
+		Database:     "ncbi",
+		SourceKind:   "keyword",
+		Engine:       "ncbi-eutilities-keyword",
+		ResultDomain: "variant-clinical",
+		Extra:        map[string]string{"ncbi_search_type_id": "clinvar"},
+		NCBI: &sessionsnapshot.NCBIKeywordSourceV4{
+			EntrezDatabase:    "clinvar",
+			RecordType:        "clinvar",
+			EUtilitiesBaseURL: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils",
+			EngineSchema:      "ncbi-eutilities-keyword-v4",
+			LinkResolution:    "elink",
+			LinkedFromDB:      "gene",
+			LinkedToDB:        "clinvar",
+			SearchTypeIDs:     []string{"clinvar"},
+		},
+	})
+	row := groups[0].Rows[0]
+	if row.SourceDatabase != "ncbi" {
+		t.Fatalf("SourceDatabase = %q", row.SourceDatabase)
+	}
+	for key, want := range map[string]string{
+		"ncbi_entrez_database":  "clinvar",
+		"ncbi_record_type":      "clinvar",
+		"ncbi_eutilities_base_url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils",
+		"ncbi_engine_schema":    "ncbi-eutilities-keyword-v4",
+		"ncbi_link_resolution":  "elink",
+		"ncbi_linked_from_db":   "gene",
+		"ncbi_linked_to_db":     "clinvar",
+		"ncbi_result_domain":    "variant-clinical",
+		"ncbi_search_type_id":   "clinvar",
+	} {
+		if got := row.ExtraColumns[key]; got != want {
+			t.Fatalf("%s = %q, want %q", key, got, want)
+		}
 	}
 }
 

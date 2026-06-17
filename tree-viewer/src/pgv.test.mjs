@@ -4,7 +4,9 @@ import {
   normalizeExportBackground,
   parseViewerSnapshot,
   PGV_FORMAT,
+  PGV_REACTREE_STATE_SCHEMA_VERSION,
   PGV_SCHEMA_VERSION,
+  PGV_VIEWER_STATE_SCHEMA_VERSION,
   snapshotFilename,
   TRANSPARENT_EXPORT_BACKGROUND,
 } from './pgv.js';
@@ -17,16 +19,36 @@ const payload = {
 };
 const viewerState = {
   schema_version: 1,
-  reactree: { layout: 'circular', zoom: 1.25, fontFamily: 'Georgia' },
-  phgo: { payload_updated_at: payload.updated_at, split_percent: 42 },
+  reactree: {
+    schema_version: PGV_REACTREE_STATE_SCHEMA_VERSION,
+    layout: 'circular',
+    renderStyle: 'mega',
+    hScale: 0,
+    vScale: 0,
+    fontFamily: 'Georgia',
+    exportLongEdge: 8192,
+    activeRibbonTab: 'format',
+    searchOpen: true,
+    searchQuery: 'PAL',
+    transform: { x: 10, y: 20, k: 1.25 },
+  },
+  phgo: {
+    payload_updated_at: payload.updated_at,
+    split_percent: 42,
+    viewport: { inner_width: 1200, inner_height: 800, device_pixel_ratio: 1 },
+  },
 };
 
 const snapshot = buildViewerSnapshot(payload, viewerState);
 assert.equal(snapshot.format, PGV_FORMAT);
 assert.equal(snapshot.schema_version, PGV_SCHEMA_VERSION);
+assert.equal(snapshot.viewer_state.schema_version, PGV_VIEWER_STATE_SCHEMA_VERSION);
 assert.equal(snapshot.producer, 'phytozome-go tree viewer');
 assert.deepEqual(snapshot.payload, payload);
-assert.deepEqual(snapshot.viewer_state, viewerState);
+assert.deepEqual(snapshot.viewer_state, {
+  ...viewerState,
+  schema_version: PGV_VIEWER_STATE_SCHEMA_VERSION,
+});
 assert.match(snapshot.created_at, /^\d{4}-\d{2}-\d{2}T/);
 
 assert.equal(snapshotFilename(payload), 'canvas_2.3_test.pgv');
@@ -39,7 +61,11 @@ assert.equal(normalizeExportBackground('#ffffff'), '#ffffff');
 
 const parsed = parseViewerSnapshot(JSON.stringify(snapshot));
 assert.deepEqual(parsed.payload, payload);
-assert.deepEqual(parsed.viewer_state, viewerState);
+assert.equal(parsed.viewer_state.reactree.hScale, 0);
+assert.equal(parsed.viewer_state.reactree.vScale, 0);
+assert.equal(parsed.viewer_state.reactree.exportLongEdge, 8192);
+assert.equal(parsed.viewer_state.reactree.renderStyle, 'mega');
+assert.equal(parsed.viewer_state.phgo.split_percent, 42);
 
 const parsedV1 = parseViewerSnapshot(JSON.stringify({ ...snapshot, schema_version: 1 }));
 assert.equal(parsedV1.schema_version, 1);

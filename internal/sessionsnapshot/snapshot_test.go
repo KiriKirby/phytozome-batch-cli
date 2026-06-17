@@ -44,28 +44,34 @@ func TestWriteReadKeywordSnapshotRoundTrip(t *testing.T) {
 			}},
 			Selected: []bool{true},
 		},
-		KeywordSource: &KeywordSourceStateV3{
+		KeywordSource: &KeywordSourceStateV4{
 			Database:     "ncbi",
 			SourceKind:   "keyword",
 			Engine:       "ncbi-eutilities-keyword",
-			ResultDomain: "sequence-record",
+			ResultDomain: "variant-clinical",
 			SearchTypes:  []string{"NCBI protein accession"},
 			Terms:        []string{"XP_015650724.1"},
-			NCBI: &NCBIKeywordSourceV3{
-				EntrezDatabase:    "protein",
-				RecordType:        "protein",
+			NCBI: &NCBIKeywordSourceV4{
+				EntrezDatabase:    "clinvar",
+				RecordType:        "clinvar",
 				EUtilitiesBaseURL: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils",
-				EngineSchema:      "ncbiprotein-v3",
+				EngineSchema:      "ncbi-eutilities-keyword-v4",
 				Accessions:        []string{"XP_015650724.1"},
 				UIDs:              []string{"123"},
+				RequestedIDs:      []string{"RCV000000001"},
+				ReplacementTargets: []string{"RCV000000999"},
+				ReplacementDecisions: []string{"new"},
 				LinkResolution:    "elink",
 				LinkedFromDB:      "gene",
-				LinkedToDB:        "protein",
+				LinkedToDB:        "clinvar",
 				LinkedFromTypes:   []string{"gene"},
-				LinkedToTypes:     []string{"protein"},
-				LinkNames:         []string{"gene_protein_refseq"},
+				LinkedToTypes:     []string{"clinvar"},
+				LinkNames:         []string{"gene_clinvar"},
 				LinkSourceIDs:     []string{"4345054"},
-				LinkTargetIDs:     []string{"XP_015650724.1"},
+				LinkTargetIDs:     []string{"123"},
+				SearchTypeIDs:     []string{"clinvar"},
+				ResultDomains:     []string{"variant-clinical"},
+				GroupSearchTypes:  []string{"NCBI clinvar accession"},
 			},
 		},
 		KeywordReview: &KeywordReviewStateV1{
@@ -104,11 +110,14 @@ func TestWriteReadKeywordSnapshotRoundTrip(t *testing.T) {
 	if out.Keyword == nil || len(out.Keyword.Groups) != 1 || out.Keyword.Groups[0].Rows[0].LabelName != "PAL1" {
 		t.Fatalf("keyword module did not round-trip: %#v", out.Keyword)
 	}
-	if out.KeywordSource == nil || out.KeywordSource.NCBI == nil || out.KeywordSource.NCBI.RecordType != "protein" {
+	if out.KeywordSource == nil || out.KeywordSource.NCBI == nil || out.KeywordSource.NCBI.RecordType != "clinvar" {
 		t.Fatalf("keyword source module did not round-trip: %#v", out.KeywordSource)
 	}
-	if out.KeywordSource.NCBI.LinkResolution != "elink" || len(out.KeywordSource.NCBI.LinkNames) != 1 || out.KeywordSource.NCBI.LinkNames[0] != "gene_protein_refseq" {
+	if out.KeywordSource.NCBI.LinkResolution != "elink" || len(out.KeywordSource.NCBI.LinkNames) != 1 || out.KeywordSource.NCBI.LinkNames[0] != "gene_clinvar" {
 		t.Fatalf("keyword source link provenance did not round-trip: %#v", out.KeywordSource.NCBI)
+	}
+	if len(out.KeywordSource.NCBI.ReplacementTargets) != 1 || out.KeywordSource.NCBI.ReplacementTargets[0] != "RCV000000999" {
+		t.Fatalf("keyword source replacement state did not round-trip: %#v", out.KeywordSource.NCBI)
 	}
 	if out.KeywordReview == nil || !out.KeywordReview.SelectionState.Valid || out.KeywordReview.SelectionState.SelectedRow != 3 {
 		t.Fatalf("keyword review state did not round-trip: %#v", out.KeywordReview)
@@ -135,7 +144,7 @@ func TestWriteReadKeywordSnapshotRoundTrip(t *testing.T) {
 		if file.Name == "modules/keyword-result-v2.xml" {
 			seenModule = true
 		}
-		if file.Name == "modules/keyword-source-state-v3.xml" {
+		if file.Name == "modules/keyword-source-state-v4.xml" {
 			seenSourceModule = true
 		}
 	}
