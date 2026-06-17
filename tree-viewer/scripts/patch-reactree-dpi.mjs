@@ -929,6 +929,9 @@ const alignmentTruncateReplacement = `            const text = displayTreeName(n
 const treeLabelTruncateOriginal = `        const n = displayTreeName(d.data.name);
         return truncateNames && n.length > 30 ? n.slice(0, 28) + "\\u2026" : n;`;
 
+const treeLabelTruncateOriginalLegacy = `        const n = (d.data.name || "").replace(/_/g, " ");
+        return truncateNames && n.length > 30 ? n.slice(0, 28) + "\\u2026" : n;`;
+
 const treeLabelTruncateReplacement = `        const n = displayTreeName(d.data.name);
         return n;`;
 
@@ -1470,11 +1473,21 @@ for (const file of files) {
     file,
   );
   if (!text.includes('const ALN_PERF_VERSION = 2;')) {
-    text = replaceRequired(text, alignmentTruncateOriginal, alignmentTruncateReplacement, 'Reactree full alignment labels', file);
+    if (text.includes(alignmentTruncateOriginal)) {
+      text = replaceRequired(text, alignmentTruncateOriginal, alignmentTruncateReplacement, 'Reactree full alignment labels', file);
+    } else {
+      console.log(`Reactree full alignment labels anchor missing; skipping patch: ${file}`);
+    }
   } else {
     console.log(`Reactree full alignment labels covered by performance draw: ${file}`);
   }
-  text = replaceRequired(text, treeLabelTruncateOriginal, treeLabelTruncateReplacement, 'Reactree full tree labels', file);
+  if (text.includes(treeLabelTruncateOriginal)) {
+    text = replaceRequired(text, treeLabelTruncateOriginal, treeLabelTruncateReplacement, 'Reactree full tree labels', file);
+  } else if (text.includes(treeLabelTruncateOriginalLegacy)) {
+    text = replaceRequired(text, treeLabelTruncateOriginalLegacy, treeLabelTruncateReplacement, 'Reactree full tree labels', file);
+  } else {
+    console.log(`Reactree full tree labels anchor missing; skipping patch: ${file}`);
+  }
   text = replaceAllRequired(text, isCJS ? truncateButtonOriginalCJS : truncateButtonOriginalMJS, '', 'Reactree truncate toggle removal', file);
   text = replaceAllRequired(text, '(d.data.name || "").replace(/_/g, " ")', 'displayTreeName(d.data.name)', 'Reactree display label preservation', file);
   text = replaceAllRequired(text, '(d.target.data.name || "").replace(/_/g, " ")', 'displayTreeName(d.target.data.name)', 'Reactree target label preservation', file);
