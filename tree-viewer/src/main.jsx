@@ -1,5 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import {
+  Button,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
+  FluentProvider,
+  webLightTheme,
+} from '@fluentui/react-components';
 import { Reactree } from 'reactreejs';
 import 'reactreejs/style.css';
 import './style.css';
@@ -302,29 +313,40 @@ function App() {
   }, [hasTree]);
 
   return (
-    <main className="shell" onSelectStart={preventTextSelection} onDragStart={preventTextSelection}>
-      {error && (
-        <div className="modal-backdrop" role="alertdialog" aria-modal="true" aria-label="Tree viewer warning">
-          <div className="modal">
-            <h1>Tree viewer warning</h1>
-            <p>{error}</p>
-            <button type="button" onClick={() => setError('')}>Close</button>
+    <FluentProvider theme={webLightTheme} className="phgo-viewer-provider">
+      <main className="shell" onSelectStart={preventTextSelection} onDragStart={preventTextSelection}>
+        <Dialog
+          open={Boolean(error)}
+          onOpenChange={(_, data) => {
+            if (!data.open) setError('');
+          }}
+        >
+          <DialogSurface className="phgo-warning-dialog">
+            <DialogBody>
+              <DialogTitle>Tree viewer warning</DialogTitle>
+              <DialogContent>
+                <p className="phgo-warning-dialog-message">{error}</p>
+              </DialogContent>
+              <DialogActions>
+                <Button appearance="primary" onClick={() => setError('')}>Close</Button>
+              </DialogActions>
+            </DialogBody>
+          </DialogSurface>
+        </Dialog>
+        {hasTree && (
+          <div className="viewer-stage" ref={viewerStageRef}>
+            <Reactree
+              newick={newick}
+              fasta={fasta}
+              defaultHeight={viewerHeight}
+              initialState={initialViewerState?.reactree}
+              onStateChange={handleViewerStateChange}
+              onViewerSnapshot={handleViewerSnapshot}
+            />
           </div>
-        </div>
-      )}
-      {hasTree && (
-        <div className="viewer-stage" ref={viewerStageRef}>
-          <Reactree
-            newick={newick}
-            fasta={fasta}
-            defaultHeight={viewerHeight}
-            initialState={initialViewerState?.reactree}
-            onStateChange={handleViewerStateChange}
-            onViewerSnapshot={handleViewerSnapshot}
-          />
-        </div>
-      )}
-    </main>
+        )}
+      </main>
+    </FluentProvider>
   );
 }
 
