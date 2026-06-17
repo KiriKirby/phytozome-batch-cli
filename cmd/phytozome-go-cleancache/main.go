@@ -478,7 +478,10 @@ func chooseLaunchWhileDownloading(appDir string, args []string, dbPath string, p
 	writeStartupStatus(appDir, startupstate.StatusDownloading, false, label, dbPath)
 	_, _ = fmt.Fprintf(os.Stdout, "%s...\n", label)
 	_, _ = fmt.Fprintf(os.Stdout, "Writing database to: %s\n", dbPath)
-	_, _ = fmt.Fprintf(os.Stdout, "%s ", prompt)
+	showPrompt := func() {
+		_, _ = fmt.Fprintf(os.Stdout, "%s ", prompt)
+	}
+	showPrompt()
 
 	answerCh := make(chan string, 1)
 	go func() {
@@ -495,6 +498,10 @@ func chooseLaunchWhileDownloading(appDir string, args []string, dbPath string, p
 		select {
 		case state := <-stateCh:
 			progress.Update(state.line, state.done)
+			if !launchNow && !state.done {
+				_, _ = fmt.Fprintln(os.Stdout)
+				showPrompt()
+			}
 		case answer := <-answerCh:
 			switch answer {
 			case "y", "yes":
@@ -510,7 +517,7 @@ func chooseLaunchWhileDownloading(appDir string, args []string, dbPath string, p
 			default:
 				_, _ = fmt.Fprintln(os.Stdout)
 				_, _ = fmt.Fprintln(os.Stdout, "Please enter y or n.")
-				_, _ = fmt.Fprintf(os.Stdout, "%s ", prompt)
+				showPrompt()
 				go func() {
 					line, err := reader.ReadString('\n')
 					if err != nil && !errors.Is(err, io.EOF) {

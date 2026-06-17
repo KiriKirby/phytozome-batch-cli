@@ -153,7 +153,7 @@ func TestBuildPowerShellUpdaterScriptOmitsEmptyArgumentList(t *testing.T) {
 		InstallRoot:  `C:\bundle`,
 		StageDir:     `C:\bundle.update-1`,
 		RelaunchPath: `C:\bundle\phytozome-go.exe`,
-		Spec:         updateAssetSpec{OutputRelative: "output", VerifyRelative: []string{"phytozome-go.exe", "phgohelper.bin"}},
+		Spec:         updateAssetSpec{OutputRelative: "output", PreserveRelative: []string{"output", "symbolname.pgd"}, VerifyRelative: []string{"phytozome-go.exe", "phgohelper.bin"}},
 	}
 	script := buildPowerShellUpdaterScript(plan, nil)
 	if strings.Contains(script, "-ArgumentList @()") {
@@ -162,8 +162,14 @@ func TestBuildPowerShellUpdaterScriptOmitsEmptyArgumentList(t *testing.T) {
 	if !strings.Contains(script, "Start-Process -FilePath $Launcher -WorkingDirectory $WorkingDir") {
 		t.Fatalf("buildPowerShellUpdaterScript missing Start-Process line:\n%s", script)
 	}
-	if !strings.Contains(script, "Copy-PreservedOutputToStage") || !strings.Contains(script, "$OutputRelative = 'output'") {
+	if !strings.Contains(script, "Preserve-RelativePath") || !strings.Contains(script, "Restore-PreservedPath") || !strings.Contains(script, "$OutputRelative = 'output'") {
 		t.Fatalf("buildPowerShellUpdaterScript missing output preservation:\n%s", script)
+	}
+	if !strings.Contains(script, "preserve file by move") || !strings.Contains(script, "preserve directory by copy") {
+		t.Fatalf("buildPowerShellUpdaterScript missing smart preserve strategy:\n%s", script)
+	}
+	if !strings.Contains(script, "$PreserveDir = $StageDir + '.preserve'") {
+		t.Fatalf("buildPowerShellUpdaterScript missing preserve directory:\n%s", script)
 	}
 	if !strings.Contains(script, "Assert-KeyFilesUpdated") || !strings.Contains(script, "$VerifyRelative = @('phytozome-go.exe', 'phgohelper.bin')") {
 		t.Fatalf("buildPowerShellUpdaterScript missing key-file verification:\n%s", script)
@@ -184,7 +190,7 @@ func TestBuildPowerShellUpdaterScriptIncludesArgumentsWhenPresent(t *testing.T) 
 		InstallRoot:  `C:\bundle`,
 		StageDir:     `C:\bundle.update-1`,
 		RelaunchPath: `C:\bundle\phytozome-go.exe`,
-		Spec:         updateAssetSpec{OutputRelative: "output", VerifyRelative: []string{"phytozome-go.exe", "phgohelper.bin"}},
+		Spec:         updateAssetSpec{OutputRelative: "output", PreserveRelative: []string{"output", "symbolname.pgd"}, VerifyRelative: []string{"phytozome-go.exe", "phgohelper.bin"}},
 	}
 	script := buildPowerShellUpdaterScript(plan, []string{"--instance-id", "1"})
 	if !strings.Contains(script, "-ArgumentList @('--instance-id', '1')") {
@@ -198,7 +204,7 @@ func TestWriteShellUpdaterPreservesOutput(t *testing.T) {
 		StageDir:     "/tmp/bundle.update-1",
 		BackupDir:    "/tmp/bundle.backup-old",
 		RelaunchPath: "/tmp/bundle/phytozome-go",
-		Spec:         updateAssetSpec{OutputRelative: "output"},
+		Spec:         updateAssetSpec{OutputRelative: "output", PreserveRelative: []string{"output", "symbolname.pgd"}},
 	}
 	path, err := writeShellUpdater(plan, nil)
 	if err != nil {
@@ -213,8 +219,11 @@ func TestWriteShellUpdaterPreservesOutput(t *testing.T) {
 	if !strings.Contains(text, "OUTPUT_REL='output'") {
 		t.Fatalf("shell updater missing output relative path:\n%s", text)
 	}
-	if !strings.Contains(text, "preserve_output") || !strings.Contains(text, "cp -a \"$SOURCE\"/. \"$DEST\"/") {
+	if !strings.Contains(text, "preserve_relative_path") || !strings.Contains(text, "restore_preserved_path") || !strings.Contains(text, "cp -a \"$SOURCE\"/. \"$DEST\"/") {
 		t.Fatalf("shell updater missing output preservation:\n%s", text)
+	}
+	if !strings.Contains(text, "PRESERVE_DIR=\"$STAGE_DIR.preserve\"") || !strings.Contains(text, "mv \"$SOURCE\" \"$DEST\" 2>/dev/null") {
+		t.Fatalf("shell updater missing move-first preserve strategy:\n%s", text)
 	}
 	if !strings.Contains(text, "PENDING_MARKER='.phgo-update-pending.json'") || !strings.Contains(text, "rm -f \"$TARGET_DIR/$PENDING_MARKER\"") {
 		t.Fatalf("shell updater missing pending marker cleanup:\n%s", text)

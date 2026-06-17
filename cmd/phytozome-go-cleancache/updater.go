@@ -123,6 +123,7 @@ func maybeHandleReleaseUpdate(appDir string, args []string) bool {
 		return false
 	}
 	_, _ = fmt.Fprintln(os.Stdout, "Downloading and staging application update...")
+	_ = updatePendingMarkerMessage(appDir, "Downloading the latest application bundle...")
 	if err := prepareAndLaunchStagedUpdate(context.Background(), plan, args); err != nil {
 		_ = removeUpdatePendingMarker(appDir)
 		appendUpdateDebugLog("update staging failed: " + err.Error())
@@ -360,11 +361,13 @@ func prepareAndLaunchStagedUpdate(ctx context.Context, plan stagedUpdatePlan, ar
 	downloadCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 
+	_ = updatePendingMarkerMessage(plan.InstallRoot, "Downloading the latest application bundle...")
 	if err := downloadFile(downloadCtx, plan.Asset.BrowserDownloadURL, archivePath, os.Stdout); err != nil {
 		_ = os.RemoveAll(plan.StageDir)
 		return err
 	}
 	appendUpdateDebugLog("archive downloaded: " + archivePath)
+	_ = updatePendingMarkerMessage(plan.InstallRoot, "Extracting the new application bundle...")
 	if err := extractArchiveToStage(archivePath, plan.Spec, plan.StageDir, os.Stdout); err != nil {
 		_ = os.RemoveAll(plan.StageDir)
 		return err
@@ -384,6 +387,7 @@ func prepareAndLaunchStagedUpdate(ctx context.Context, plan stagedUpdatePlan, ar
 		return err
 	}
 	appendUpdateDebugLog("updater script written: " + scriptPath)
+	_ = updatePendingMarkerMessage(plan.InstallRoot, "Waiting for the old window to close before applying the update...")
 	if err := startUpdaterScript(scriptPath); err != nil {
 		_ = os.RemoveAll(plan.StageDir)
 		return err
@@ -624,15 +628,15 @@ func scanTarGzArchiveTotals(archivePath string, stripPrefix string) (int64, int,
 }
 
 type detailedProgress struct {
-	mu          sync.Mutex
-	message     string
-	totalBytes  int64
-	current     int64
-	filesTotal  int
-	filesDone   int
-	started     time.Time
-	lastEmit    time.Time
-	console     *consoleProgress
+	mu         sync.Mutex
+	message    string
+	totalBytes int64
+	current    int64
+	filesTotal int
+	filesDone  int
+	started    time.Time
+	lastEmit   time.Time
+	console    *consoleProgress
 }
 
 func newDetailedProgress(output io.Writer, message string, totalBytes int64, filesTotal int) *detailedProgress {
@@ -829,6 +833,8 @@ func buildPowerShellUpdaterScript(plan stagedUpdatePlan, args []string) string {
 $ParentPid = %d
 $TargetDir = %s
 $StageDir = %s
+$PreserveDir = $StageDir + '.preserve'
+$PendingMarkerPath = Join-Path $TargetDir %s
 $Launcher = %s
 $WorkingDir = %s
 $OutputRelative = %s
@@ -849,6 +855,20 @@ function Write-UpdateLog {
     Add-Content -LiteralPath $LogPath -Value ((Get-Date).ToString('yyyy-MM-dd HH:mm:ss.fff') + ' ' + $Message)
 }
 
+function Update-PendingMarkerMessage {
+    param([string]$Message)
+    if ([string]::IsNullOrWhiteSpace($PendingMarkerPath) -or -not (Test-Path -LiteralPath $PendingMarkerPath)) {
+        return
+    }
+    try {
+        $marker = Get-Content -LiteralPath $PendingMarkerPath -Raw | ConvertFrom-Json
+        $marker.message = $Message
+        $marker | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $PendingMarkerPath
+    } catch {
+        Write-UpdateLog ("pending marker update skipped: " + $_.Exception.Message)
+    }
+}
+
 function Invoke-RobocopyMirror {
     param(
         [string]$Source,
@@ -865,11 +885,50 @@ function Invoke-RobocopyMirror {
     }
 }
 
-function Copy-PreservedOutputToStage {
+function Get-NormalizedRelativePath {
+    param([string]$RelativePath)
+    if ([string]::IsNullOrWhiteSpace($RelativePath)) {
+        return ''
+    }
+    return ($RelativePath.Replace('\', '/').Trim('/')).ToLowerInvariant()
+}
+
+function Should-PreserveByCopy {
+    param(
+        [string]$RelativePath,
+        [string]$OutputRelativePath
+    )
+    $normalizedRelative = Get-NormalizedRelativePath $RelativePath
+    $normalizedOutput = Get-NormalizedRelativePath $OutputRelativePath
+    if ([string]::IsNullOrWhiteSpace($normalizedRelative) -or [string]::IsNullOrWhiteSpace($normalizedOutput)) {
+        return $false
+    }
+    return [string]::Equals($normalizedRelative, $normalizedOutput, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Copy-DirectoryWithRobocopy {
+    param(
+        [string]$Source,
+        [string]$Destination,
+        [string]$ContextLabel
+    )
+
+    Write-UpdateLog ($ContextLabel + " robocopy start: " + $Source + " -> " + $Destination)
+    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+    & robocopy $Source $Destination /E /COPY:DAT /DCOPY:DAT /R:20 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+    $code = $LASTEXITCODE
+    Write-UpdateLog ($ContextLabel + " robocopy exit code: " + $code)
+    if ($code -gt 7) {
+        throw ($ContextLabel + " failed with exit code " + $code)
+    }
+}
+
+function Preserve-RelativePath {
     param(
         [string]$CurrentRoot,
-        [string]$StageRoot,
-        [string]$RelativePath
+        [string]$PreserveRoot,
+        [string]$RelativePath,
+        [string]$OutputRelativePath
     )
 
     if ([string]::IsNullOrWhiteSpace($RelativePath)) {
@@ -877,26 +936,106 @@ function Copy-PreservedOutputToStage {
     }
 
     $Source = Join-Path $CurrentRoot $RelativePath
+    $Destination = Join-Path $PreserveRoot $RelativePath
+    $copyMode = Should-PreserveByCopy -RelativePath $RelativePath -OutputRelativePath $OutputRelativePath
     if (-not (Test-Path -LiteralPath $Source)) {
-        Write-UpdateLog ("preserved output missing: " + $Source)
+        if (Test-Path -LiteralPath $Destination) {
+            Write-UpdateLog ("preserved path already staged: " + $Destination)
+            return
+        }
+        Write-UpdateLog ("preserved path missing: " + $Source)
         return
     }
 
-    $Destination = Join-Path $StageRoot $RelativePath
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Destination) | Out-Null
     if (Test-Path -LiteralPath $Source -PathType Leaf) {
-        Write-UpdateLog ("preserve file start: " + $Source + " -> " + $Destination)
-        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Destination) | Out-Null
-        Copy-Item -LiteralPath $Source -Destination $Destination -Force
-        return
+        if ($copyMode) {
+            Write-UpdateLog ("preserve file by copy: " + $Source + " -> " + $Destination)
+            Copy-Item -LiteralPath $Source -Destination $Destination -Force
+            return
+        }
+        try {
+            Write-UpdateLog ("preserve file by move: " + $Source + " -> " + $Destination)
+            Move-Item -LiteralPath $Source -Destination $Destination -Force
+            return
+        } catch {
+            Write-UpdateLog ("preserve file move fallback to copy: " + $_.Exception.Message)
+            Copy-Item -LiteralPath $Source -Destination $Destination -Force
+            Remove-Item -LiteralPath $Source -Force -ErrorAction SilentlyContinue
+            return
+        }
     }
     if (Test-Path -LiteralPath $Source -PathType Container) {
-        Write-UpdateLog ("preserve directory start: " + $Source + " -> " + $Destination)
-        New-Item -ItemType Directory -Force -Path $Destination | Out-Null
-        & robocopy $Source $Destination /E /COPY:DAT /DCOPY:DAT /R:20 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
-        $code = $LASTEXITCODE
-        Write-UpdateLog ("preserve directory robocopy exit code: " + $code)
-        if ($code -gt 7) {
-            throw "preserve output failed with exit code $code"
+        if ($copyMode) {
+            Write-UpdateLog ("preserve directory by copy: " + $Source + " -> " + $Destination)
+            Copy-DirectoryWithRobocopy -Source $Source -Destination $Destination -ContextLabel "preserve directory"
+            return
+        }
+        try {
+            Write-UpdateLog ("preserve directory by move: " + $Source + " -> " + $Destination)
+            Move-Item -LiteralPath $Source -Destination $Destination -Force
+            return
+        } catch {
+            Write-UpdateLog ("preserve directory move fallback to copy: " + $_.Exception.Message)
+            Copy-DirectoryWithRobocopy -Source $Source -Destination $Destination -ContextLabel "preserve directory"
+            Remove-Item -LiteralPath $Source -Recurse -Force -ErrorAction SilentlyContinue
+            return
+        }
+    }
+}
+
+function Restore-PreservedPath {
+    param(
+        [string]$PreserveRoot,
+        [string]$TargetRoot,
+        [string]$RelativePath,
+        [string]$OutputRelativePath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RelativePath)) {
+        return
+    }
+
+    $Source = Join-Path $PreserveRoot $RelativePath
+    if (-not (Test-Path -LiteralPath $Source)) {
+        return
+    }
+    $Destination = Join-Path $TargetRoot $RelativePath
+    $copyMode = Should-PreserveByCopy -RelativePath $RelativePath -OutputRelativePath $OutputRelativePath
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Destination) | Out-Null
+
+    if (Test-Path -LiteralPath $Source -PathType Leaf) {
+        if ($copyMode) {
+            Write-UpdateLog ("restore file by copy: " + $Source + " -> " + $Destination)
+            Copy-Item -LiteralPath $Source -Destination $Destination -Force
+            return
+        }
+        try {
+            Write-UpdateLog ("restore file by move: " + $Source + " -> " + $Destination)
+            Move-Item -LiteralPath $Source -Destination $Destination -Force
+            return
+        } catch {
+            Write-UpdateLog ("restore file move fallback to copy: " + $_.Exception.Message)
+            Copy-Item -LiteralPath $Source -Destination $Destination -Force
+            Remove-Item -LiteralPath $Source -Force -ErrorAction SilentlyContinue
+            return
+        }
+    }
+    if (Test-Path -LiteralPath $Source -PathType Container) {
+        if ($copyMode) {
+            Write-UpdateLog ("restore directory by copy: " + $Source + " -> " + $Destination)
+            Copy-DirectoryWithRobocopy -Source $Source -Destination $Destination -ContextLabel "restore directory"
+            return
+        }
+        try {
+            Write-UpdateLog ("restore directory by move: " + $Source + " -> " + $Destination)
+            Move-Item -LiteralPath $Source -Destination $Destination -Force
+            return
+        } catch {
+            Write-UpdateLog ("restore directory move fallback to copy: " + $_.Exception.Message)
+            Copy-DirectoryWithRobocopy -Source $Source -Destination $Destination -ContextLabel "restore directory"
+            Remove-Item -LiteralPath $Source -Recurse -Force -ErrorAction SilentlyContinue
+            return
         }
     }
 }
@@ -971,18 +1110,27 @@ while (Get-Process -Id $ParentPid -ErrorAction SilentlyContinue) {
     Start-Sleep -Milliseconds 200
 }
 Write-UpdateLog "parent exited"
+Update-PendingMarkerMessage "Preserving files from the current installation..."
+Remove-Item -LiteralPath $PreserveDir -Recurse -Force -ErrorAction SilentlyContinue
+foreach ($relative in $PreserveRelative) {
+    Preserve-RelativePath -CurrentRoot $TargetDir -PreserveRoot $PreserveDir -RelativePath $relative -OutputRelativePath $OutputRelative
+}
 
 $UpdateSucceeded = $false
 $LastUpdateError = ''
 for ($i = 0; $i -lt 120; $i++) {
     try {
         Write-UpdateLog ("update attempt " + ($i + 1))
-        foreach ($relative in $PreserveRelative) {
-            Copy-PreservedOutputToStage -CurrentRoot $TargetDir -StageRoot $StageDir -RelativePath $relative
-        }
+        Update-PendingMarkerMessage "Applying the new application files..."
         Invoke-RobocopyMirror -Source $StageDir -Destination $TargetDir
+        Update-PendingMarkerMessage "Restoring preserved files into the new installation..."
+        foreach ($relative in $PreserveRelative) {
+            Restore-PreservedPath -PreserveRoot $PreserveDir -TargetRoot $TargetDir -RelativePath $relative -OutputRelativePath $OutputRelative
+        }
+        Update-PendingMarkerMessage "Verifying the updated installation..."
         Assert-KeyFilesUpdated -StageRoot $StageDir -TargetRoot $TargetDir -RelativePaths $VerifyRelative
         Remove-Item -LiteralPath $StageDir -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $PreserveDir -Recurse -Force -ErrorAction SilentlyContinue
         Write-UpdateLog "stage directory removed"
         $UpdateSucceeded = $true
         break
@@ -1011,7 +1159,8 @@ if (-not $UpdateSucceeded) {
 }
 
 [Environment]::SetEnvironmentVariable($LastUpdateErrorEnvName, $null, 'Process')
-Remove-Item -LiteralPath (Join-Path $TargetDir %s) -Force -ErrorAction SilentlyContinue
+Update-PendingMarkerMessage "Launching the updated application..."
+Remove-Item -LiteralPath $PendingMarkerPath -Force -ErrorAction SilentlyContinue
 $env:%s = '1'
 if (-not (Test-LauncherAlreadyRunning -LauncherPath $Launcher)) {
     Write-UpdateLog ("launching after successful update: " + $Launcher)
@@ -1020,7 +1169,7 @@ if (-not (Test-LauncherAlreadyRunning -LauncherPath $Launcher)) {
 } else {
     Write-UpdateLog "skip launch after successful update because launcher is already running"
 }
-`, os.Getpid(), psQuote(plan.InstallRoot), psQuote(plan.StageDir), psQuote(plan.RelaunchPath), psQuote(filepath.Dir(plan.RelaunchPath)), psQuote(plan.Spec.OutputRelative), strings.Join(psQuoteSlice(preserveRelative), ", "), strings.Join(psQuoteSlice(plan.Spec.VerifyRelative), ", "), psQuote(updateDebugLogEnv), psQuote(lastUpdateErrorEnv), psQuote(updatePendingMarkerName), startProcessLine, psQuote(updatePendingMarkerName), skipBundlePreflightEnv, startProcessLine)
+`, os.Getpid(), psQuote(plan.InstallRoot), psQuote(plan.StageDir), psQuote(updatePendingMarkerName), psQuote(plan.RelaunchPath), psQuote(filepath.Dir(plan.RelaunchPath)), psQuote(plan.Spec.OutputRelative), strings.Join(psQuoteSlice(preserveRelative), ", "), strings.Join(psQuoteSlice(plan.Spec.VerifyRelative), ", "), psQuote(updateDebugLogEnv), psQuote(lastUpdateErrorEnv), psQuote(updatePendingMarkerName), startProcessLine, skipBundlePreflightEnv, startProcessLine)
 }
 
 func writeShellUpdater(plan stagedUpdatePlan, args []string) (string, error) {
@@ -1046,29 +1195,111 @@ set -eu
 PARENT_PID=%d
 TARGET_DIR=%s
 STAGE_DIR=%s
+PRESERVE_DIR="$STAGE_DIR.preserve"
 BACKUP_DIR=%s
+PENDING_MARKER_PATH="$TARGET_DIR/"%s
 LAUNCHER=%s
 WORKING_DIR=%s
 OUTPUT_REL=%s
 PRESERVE_RELATIVES=%s
 PENDING_MARKER=%s
 
-preserve_output() {
+normalize_relative_path() {
+  printf '%%s' "$1" | tr '\\' '/' | sed 's#^/*##; s#/*$##'
+}
+
+should_preserve_by_copy() {
+  REL_NORM="$(normalize_relative_path "$1")"
+  OUT_NORM="$(normalize_relative_path "$2")"
+  [ -n "$REL_NORM" ] && [ -n "$OUT_NORM" ] && [ "$REL_NORM" = "$OUT_NORM" ]
+}
+
+copy_directory_preserve() {
+  SOURCE="$1"
+  DEST="$2"
+  mkdir -p "$DEST"
+  cp -a "$SOURCE"/. "$DEST"/
+}
+
+update_pending_marker_message() {
+  MESSAGE="$1"
+  if [ ! -f "$PENDING_MARKER_PATH" ]; then
+    return
+  fi
+  @'
+import json
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+message = sys.argv[2]
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    sys.exit(0)
+data["message"] = message
+path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+'@ | python - "$PENDING_MARKER_PATH" "$MESSAGE" >/dev/null 2>&1 || true
+}
+
+preserve_relative_path() {
   REL="$1"
   if [ -z "$REL" ]; then
     return
   fi
   SOURCE="$TARGET_DIR/$REL"
+  DEST="$PRESERVE_DIR/$REL"
+  mkdir -p "$(dirname "$DEST")"
   if [ ! -e "$SOURCE" ]; then
     return
   fi
-  DEST="$STAGE_DIR/$REL"
+  if should_preserve_by_copy "$REL" "$OUTPUT_REL"; then
+    if [ -d "$SOURCE" ]; then
+      copy_directory_preserve "$SOURCE" "$DEST"
+    else
+      cp -p "$SOURCE" "$DEST"
+    fi
+    return
+  fi
+  if mv "$SOURCE" "$DEST" 2>/dev/null; then
+    return
+  fi
   if [ -d "$SOURCE" ]; then
-    mkdir -p "$DEST"
-    cp -a "$SOURCE"/. "$DEST"/
+    copy_directory_preserve "$SOURCE" "$DEST"
+    rm -rf "$SOURCE"
   else
-    mkdir -p "$(dirname "$DEST")"
     cp -p "$SOURCE" "$DEST"
+    rm -f "$SOURCE"
+  fi
+}
+
+restore_preserved_path() {
+  REL="$1"
+  if [ -z "$REL" ]; then
+    return
+  fi
+  SOURCE="$PRESERVE_DIR/$REL"
+  DEST="$TARGET_DIR/$REL"
+  if [ ! -e "$SOURCE" ]; then
+    return
+  fi
+  mkdir -p "$(dirname "$DEST")"
+  if should_preserve_by_copy "$REL" "$OUTPUT_REL"; then
+    if [ -d "$SOURCE" ]; then
+      copy_directory_preserve "$SOURCE" "$DEST"
+    else
+      cp -p "$SOURCE" "$DEST"
+    fi
+    return
+  fi
+  if mv "$SOURCE" "$DEST" 2>/dev/null; then
+    return
+  fi
+  if [ -d "$SOURCE" ]; then
+    copy_directory_preserve "$SOURCE" "$DEST"
+    rm -rf "$SOURCE"
+  else
+    cp -p "$SOURCE" "$DEST"
+    rm -f "$SOURCE"
   fi
 }
 
@@ -1076,14 +1307,23 @@ while kill -0 "$PARENT_PID" 2>/dev/null; do
   sleep 1
 done
 
+update_pending_marker_message "Preserving files from the current installation..."
+rm -rf "$PRESERVE_DIR"
 for REL in $PRESERVE_RELATIVES; do
-  preserve_output "$REL"
+  preserve_relative_path "$REL"
 done
 rm -rf "$BACKUP_DIR"
 if [ -e "$TARGET_DIR" ]; then
   mv "$TARGET_DIR" "$BACKUP_DIR"
 fi
+update_pending_marker_message "Applying the new application files..."
 mv "$STAGE_DIR" "$TARGET_DIR"
+update_pending_marker_message "Restoring preserved files into the new installation..."
+for REL in $PRESERVE_RELATIVES; do
+  restore_preserved_path "$REL"
+done
+update_pending_marker_message "Launching the updated application..."
+rm -rf "$PRESERVE_DIR"
 rm -rf "$BACKUP_DIR"
 rm -f "$TARGET_DIR/$PENDING_MARKER"
 
@@ -1091,7 +1331,7 @@ cd "$WORKING_DIR"
 if ! pgrep -f "$LAUNCHER" >/dev/null 2>&1; then
   env %s=1 "$LAUNCHER"%s >/dev/null 2>&1 &
 fi
-`, os.Getpid(), shQuote(plan.InstallRoot), shQuote(plan.StageDir), shQuote(plan.BackupDir), shQuote(plan.RelaunchPath), shQuote(filepath.Dir(plan.RelaunchPath)), shQuote(plan.Spec.OutputRelative), preserveList, shQuote(updatePendingMarkerName), skipBundlePreflightEnv, argsSuffix)
+`, os.Getpid(), shQuote(plan.InstallRoot), shQuote(plan.StageDir), shQuote(plan.BackupDir), shQuote(updatePendingMarkerName), shQuote(plan.RelaunchPath), shQuote(filepath.Dir(plan.RelaunchPath)), shQuote(plan.Spec.OutputRelative), preserveList, shQuote(updatePendingMarkerName), skipBundlePreflightEnv, argsSuffix)
 
 	if _, err := scriptFile.WriteString(script); err != nil {
 		return "", fmt.Errorf("write updater script %s: %w", scriptFile.Name(), err)

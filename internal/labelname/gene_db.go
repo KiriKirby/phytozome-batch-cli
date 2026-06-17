@@ -335,6 +335,12 @@ func DownloadPrebuiltGeneInfoDatabase(ctx context.Context, dest string, manifest
 	reporter := newGeneInfoProgressReporter(options.Progress, "download", manifest.downloadSize(), reporterWorkers)
 	hasher := sha256.New()
 	writer := io.MultiWriter(out, hasher)
+	options.emitProgress(GeneInfoProgress{
+		Stage:      "extract",
+		Message:    "Decompressing and writing symbol name database...",
+		TotalBytes: manifest.downloadSize(),
+		Workers:    reporterWorkers,
+	})
 	if len(manifest.Parts) > 0 {
 		pipeReader, pipeWriter := io.Pipe()
 		downloadErrCh := make(chan error, 1)
@@ -1114,6 +1120,8 @@ func FormatGeneInfoProgress(event GeneInfoProgress) string {
 		switch event.Stage {
 		case "download":
 			message = "Downloading NCBI Gene symbol name library"
+		case "extract":
+			message = "Decompressing and writing symbol name database"
 		case "build":
 			message = "Building symbol name database"
 		default:
@@ -1240,6 +1248,8 @@ func messageForProgressStage(stage string, message string) string {
 	switch stage {
 	case "download":
 		return "Downloading prebuilt symbol name database..."
+	case "extract":
+		return "Decompressing and writing symbol name database..."
 	case "build":
 		return "Building symbol name database..."
 	default:

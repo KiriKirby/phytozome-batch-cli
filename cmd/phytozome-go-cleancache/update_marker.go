@@ -14,6 +14,7 @@ const updatePendingMarkerStaleAfter = 90 * time.Minute
 
 type updatePendingMarker struct {
 	Version   string    `json:"version,omitempty"`
+	Message   string    `json:"message,omitempty"`
 	StartedAt time.Time `json:"started_at"`
 }
 
@@ -30,6 +31,15 @@ func writeUpdatePendingMarker(appDir string, version string) error {
 		Version:   strings.TrimSpace(version),
 		StartedAt: time.Now().UTC(),
 	}
+	return writeUpdatePendingMarkerState(appDir, marker)
+}
+
+func writeUpdatePendingMarkerState(appDir string, marker updatePendingMarker) error {
+	marker.Version = strings.TrimSpace(marker.Version)
+	marker.Message = strings.TrimSpace(marker.Message)
+	if marker.StartedAt.IsZero() {
+		marker.StartedAt = time.Now().UTC()
+	}
 	data, err := json.MarshalIndent(marker, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal update pending marker: %w", err)
@@ -42,6 +52,15 @@ func writeUpdatePendingMarker(appDir string, version string) error {
 		return fmt.Errorf("write update pending marker %s: %w", path, err)
 	}
 	return nil
+}
+
+func updatePendingMarkerMessage(appDir string, message string) error {
+	marker, ok := readUpdatePendingMarker(appDir)
+	if !ok {
+		return nil
+	}
+	marker.Message = strings.TrimSpace(message)
+	return writeUpdatePendingMarkerState(appDir, marker)
 }
 
 func removeUpdatePendingMarker(appDir string) error {
@@ -86,8 +105,13 @@ func waitForPendingBundleUpdate(appDir string) error {
 		}
 		waited = true
 		waitText := "Waiting for the background updater to finish applying files..."
+		if message := strings.TrimSpace(marker.Message); message != "" {
+			waitText = message
+		}
 		if version := strings.TrimSpace(marker.Version); version != "" {
-			waitText = fmt.Sprintf("Waiting for the background updater to finish applying %s...", version)
+			if strings.TrimSpace(marker.Message) == "" {
+				waitText = fmt.Sprintf("Waiting for the background updater to finish applying %s...", version)
+			}
 		}
 		progress.Update(waitText, false)
 		select {

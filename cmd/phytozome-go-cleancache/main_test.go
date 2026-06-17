@@ -176,3 +176,20 @@ func TestUpdatePendingMarkerRoundTrip(t *testing.T) {
 		t.Fatal("marker still exists after removal")
 	}
 }
+
+func TestUpdatePendingMarkerMessageRoundTrip(t *testing.T) {
+	appDir := t.TempDir()
+	if err := writeUpdatePendingMarker(appDir, "v1"); err != nil {
+		t.Fatalf("writeUpdatePendingMarker returned error: %v", err)
+	}
+	if err := updatePendingMarkerMessage(appDir, "Applying the new application files..."); err != nil {
+		t.Fatalf("updatePendingMarkerMessage returned error: %v", err)
+	}
+	marker, ok := readUpdatePendingMarker(appDir)
+	if !ok {
+		t.Fatal("readUpdatePendingMarker returned false")
+	}
+	if marker.Message != "Applying the new application files..." {
+		t.Fatalf("marker message = %q", marker.Message)
+	}
+}
