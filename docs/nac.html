@@ -7,8 +7,8 @@
 
 <body bgcolor="#FFFFFF">
 
-<p>phytozome GO v20260617T114738Z</p>
-<p>Release v20260617T114738Z</p>
+<p>phytozome GO v20260617T130247Z</p>
+<p>Release v20260617T130247Z</p>
 <p>Validation:</p>
 <p>- go test ./...</p>
 <p>- go vet ./...</p>
@@ -22,6 +22,652 @@
 <p>- SHA256SUMS.txt</p>
 <p>Website:</p>
 <p>- docs/nac.html updated with the latest release log at the top</p>
+<p>&nbsp;</p>
+<p>phytozome GO v20260617T103802Z</p>
+<p>Release v20260617T103802Z</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- scripts\build-release.ps1</p>
+<p>Assets:</p>
+<p>- phytozome-go_windows_amd64_wezterm.zip</p>
+<p>- phytozome-go_linux_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_arm64_wezterm.tar.gz</p>
+<p>- SHA256SUMS.txt</p>
+<p>Website:</p>
+<p>- docs/nac.html updated with the latest release log at the top</p>
+<p>&nbsp;</p>
+<p>phytozome GO v20260617T102635Z</p>
+<p>Release v20260617T102635Z</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- scripts\build-release.ps1</p>
+<p>Assets:</p>
+<p>- phytozome-go_windows_amd64_wezterm.zip</p>
+<p>- phytozome-go_linux_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_arm64_wezterm.tar.gz</p>
+<p>- SHA256SUMS.txt</p>
+<p>Website:</p>
+<p>- docs/nac.html updated with the latest release log at the top</p>
+<p>&nbsp;</p>
+<p>phytozome GO v20260617T023142Z</p>
+<p>Release v20260617T023142Z</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- scripts\build-release.ps1</p>
+<p>Assets:</p>
+<p>- phytozome-go_windows_amd64_wezterm.zip</p>
+<p>- phytozome-go_linux_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_arm64_wezterm.tar.gz</p>
+<p>- SHA256SUMS.txt</p>
+<p>Website:</p>
+<p>- docs/nac.html updated with the latest release log at the top</p>
+<p>&nbsp;</p>
+<p>phytozome GO v20260616T130212Z</p>
+<p>Release v20260616T130212Z</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- scripts\build-release.ps1</p>
+<p>Assets:</p>
+<p>- phytozome-go_windows_amd64_wezterm.zip</p>
+<p>- phytozome-go_linux_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_arm64_wezterm.tar.gz</p>
+<p>- SHA256SUMS.txt</p>
+<p>Website:</p>
+<p>- docs/nac.html updated with the latest release log at the top</p>
+<p>&nbsp;</p>
+<p>phytozome GO v20260616T120600Z</p>
+<p>Release v20260616T120600Z</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- scripts\build-release.ps1</p>
+<p>Assets:</p>
+<p>- phytozome-go_windows_amd64_wezterm.zip</p>
+<p>- phytozome-go_linux_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_arm64_wezterm.tar.gz</p>
+<p>- SHA256SUMS.txt</p>
+<p>Website:</p>
+<p>- docs/nac.html updated with the latest release log at the top</p>
+<p>&nbsp;</p>
+<p>phytozome GO symbol name database refresh</p>
+<p>Symbol name database update:</p>
+<p>- Runtime now prefers the GitHub prebuilt symbolname.pgd manifest/archive before falling back to NCBI.</p>
+<p>- GitHub Actions now rebuilds symbolname.pgd from NCBI Gene GENE_INFO split sources monthly on day 18 at 02:18 UTC.</p>
+<p>- Startup relaunch after app update now skips only cache cleanup/release-update checks and still checks the symbol name database.</p>
+<p>- Local fallback builds can consume NCBI GENE_INFO split sources while retaining visible progress.</p>
+<p>&nbsp;</p>
+<p>phytozome GO v20260610T103044Z</p>
+<p>Release v20260610T103044Z</p>
+<p>Highlights:</p>
+<p>- rewrite the symbol name system around a required local NCBI Gene symbolname.pgd database</p>
+<p>- add startup and in-app symbol name database download, update, retry, progress, and initialization gating flows</p>
+<p>- rename bundled startup helper/core binaries and preserve symbolname.pgd across self-update</p>
+<p>- optimize local symbol name database build and ranking performance with schema v2 compact storage, sorted bbolt writes, and batched parallel ranking</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- scripts\build-release.ps1 -Publish</p>
+<p>&nbsp;</p>
+<p>phytozome GO update reliability and website changelog sync</p>
+<p>Update reliability + website changelog sync.</p>
+<p>Changes:</p>
+<p>- Hardened packaged self-update verification so launcher, cleaner, main binary, and Windows WezTerm runtime must all match staged hash/size/mtime before restart is treated as success.</p>
+<p>- Update failures now report the concrete reason instead of silently falling through after the prompt.</p>
+<p>- Release publishing now syncs pages/nac.html from GitHub release history and commits the website changelog update automatically before creating the release.</p>
+<p>- Release publishes now treat the whole repository, including pages/, as normal first-class content with the same clean-worktree rules.</p>
+<p>- The website favicon now uses the small product logo variant.</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- scripts\build-codex.ps1 -Publish</p>
+<p>Assets:</p>
+<p>- phytozome-go_windows_amd64_wezterm.zip</p>
+<p>- phytozome-go_linux_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_arm64_wezterm.tar.gz</p>
+<p>- SHA256SUMS.txt</p>
+<p>Website:</p>
+<p>- pages/nac.html updated with this release at the top and full historical release notes kept newest-first</p>
+<p>- pages/favicon.png now uses the small logo asset</p>
+<p>&nbsp;</p>
+<p>phytozome GO v20260608T121500Z</p>
+<p>Release v20260608T121500Z</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- scripts\build-release.ps1</p>
+<p>Assets:</p>
+<p>- phytozome-go_windows_amd64_wezterm.zip</p>
+<p>- phytozome-go_linux_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_arm64_wezterm.tar.gz</p>
+<p>- SHA256SUMS.txt</p>
+<p>&nbsp;</p>
+<p>phytozome GO v20260608T071903Z</p>
+<p>Release v20260608T071903Z</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- scripts\build-release.ps1</p>
+<p>Assets:</p>
+<p>- phytozome-go_windows_amd64_wezterm.zip</p>
+<p>- phytozome-go_linux_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_arm64_wezterm.tar.gz</p>
+<p>- SHA256SUMS.txt</p>
+<p>&nbsp;</p>
+<p>phytozome GO v20260603T091257Z</p>
+<p>Release v20260603T091257Z</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- scripts\build-release.ps1</p>
+<p>Assets:</p>
+<p>- phytozome-go_windows_amd64_wezterm.zip</p>
+<p>- phytozome-go_linux_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_arm64_wezterm.tar.gz</p>
+<p>- SHA256SUMS.txt</p>
+<p>&nbsp;</p>
+<p>phytozome GO v20260602T051012Z</p>
+<p>Release v20260602T051012Z</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- scripts\build-release.ps1</p>
+<p>Assets:</p>
+<p>- phytozome-go_windows_amd64_wezterm.zip</p>
+<p>- phytozome-go_linux_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_arm64_wezterm.tar.gz</p>
+<p>- SHA256SUMS.txt</p>
+<p>&nbsp;</p>
+<p>phytozome GO tree preview hotfix</p>
+<p>Tree preview hotfix.</p>
+<p>Changes:</p>
+<p>- Fixed Canvas system-tree preview not opening the browser after the progress dialog closed.</p>
+<p>- Browser launcher processes are now detached from short-lived task-modal contexts while still honoring cancellation before launch starts.</p>
+<p>- Added regression tests for context cancellation around browser launch, empty URLs, and an opt-in real system browser probe.</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- PHYTOZOME_OPEN_BROWSER_PROBE=1 go test ./internal/workflow -run TestOpenBrowserURLRealLauncherProbe -count=1 -v</p>
+<p>&nbsp;</p>
+<p>phytozome GO system tree polish</p>
+<p>System tree polish release.</p>
+<p>Changes:</p>
+<p>- Added task/progress dialogs for Canvas tree panel open, preview open, refresh runtime preflight, and missing-tool retry preflight.</p>
+<p>- Removed the old Canvas converted FASTA export option because PHgo must not insert a non-MEGA conversion step outside the MEGA runtime.</p>
+<p>- Fixed kind-specific alignment parameter normalization so protein ClustalW/MUSCLE parameter edits force full MEGA recomputation instead of render-only reuse.</p>
+<p>- Added desktop FASTA runtime matrix coverage across protein/DNA modes, six alignment surfaces, and five tree methods.</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- real mega-phgo-runtime desktop FASTA matrix probe</p>
+<p>&nbsp;</p>
+<p>phytozome GO v20260601T191135Z</p>
+<p>MEGA-backed system tree workflow finalization.</p>
+<p>Highlights:</p>
+<p>- Freezes the MEGA 12.1-backed tree computation boundary: PHgo orchestrates only; alignment, inference, bootstrap, Newick, and aligned FASTA are runtime-owned.</p>
+<p>- Adds source-backed tree/alignment parameter registry coverage, dynamic TUI parameter rendering, and audit documentation under docs/phylogenetic-tree/reference.</p>
+<p>- Tightens Canvas tree input handling, runtime error propagation, artifact reuse, snapshot restore, viewer session isolation, and PGV snapshot import/export.</p>
+<p>- Bundles Windows PHgo runtime files in the Windows WezTerm package and keeps Linux/macOS tree runtime unsupported until native runtimes are built.</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- tree-viewer npm tests and production build</p>
+<p>- release package content checks and SHA256SUMS</p>
+<p>&nbsp;</p>
+<p>phytozome GO v20260531T194116Z</p>
+<p>Highlights:</p>
+<p>- Added NCBI Protein keyword search support with E-utilities integration, caching, rate limiting, replacement handling, and snapshot preservation.</p>
+<p>- Added system Open file / Open folder pickers for export and large multiline input pages.</p>
+<p>- Fixed Canvas display_name behavior so newly added canvases and appended rows inherit the current display-name source while preserving PHGO-locked display names.</p>
+<p>- Fixed multiline input action rows so Open... remains distinct from Apply instead of occasionally duplicating the Apply label.</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-codex.ps1</p>
+<p>Assets:</p>
+<p>- phytozome-go_windows_amd64_wezterm.zip</p>
+<p>- phytozome-go_linux_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_arm64_wezterm.tar.gz</p>
+<p>- SHA256SUMS.txt</p>
+<p>&nbsp;</p>
+<p>phytozome GO update-check fix</p>
+<p>Release includes:</p>
+<p>- fix bundle update checks so dev-tagged bundles also check the latest GitHub release instead of silently skipping</p>
+<p>- show an explicit startup message while checking GitHub for updates</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- scripts\build-codex.ps1</p>
+<p>&nbsp;</p>
+<p>phytozome GO v20260531T075742Z</p>
+<p>Release v20260531T075742Z</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- scripts\build-release.ps1</p>
+<p>Assets:</p>
+<p>- phytozome-go_windows_amd64_wezterm.zip</p>
+<p>- phytozome-go_linux_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_arm64_wezterm.tar.gz</p>
+<p>- SHA256SUMS.txt</p>
+<p>&nbsp;</p>
+<p>BIG UP！！大更新。</p>
+<p>BIG UP！！大更新。</p>
+<p>Highlights:</p>
+<p>- Windows release root is now fully flattened.</p>
+<p>- The app root now keeps exactly one .exe: phytozome-go.exe.</p>
+<p>- Bundled PHgo runtime files now ship as mega-phgo-runtime.bin and muscleWin64.bin in the root.</p>
+<p>- WezTerm runtime packaging now flattens the old mesa folder into root-level opengl32.dll.</p>
+<p>- PHgo runtime execution now stages a temporary Windows compatibility bridge so tree analysis still works with bin-only packaging.</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-codex.ps1 -SkipTests -SkipVet -SkipBuildCheck</p>
+<p>- Windows runtime smoke test through temporary staged execution</p>
+<p>&nbsp;</p>
+<p>BIG UP！！大更新。</p>
+<p>BIG UP update: Windows releases now bundle mega-phgo-runtime directly, tree runtime no longer downloads at runtime, Linux/macOS report system-tree unsupported, and the tree viewer/runtime packaging flow was cleaned up.</p>
+<p>&nbsp;</p>
+<p>BIG UP！！大更新。</p>
+<p>BIG UP update: tree viewer export, performance, snapshots, Canvas tree workflow, managed PHgo runtime, and bundled desktop packages.</p>
+<p>&nbsp;</p>
+<p>phytozome GO v20260525T165919Z</p>
+<p>User-visible changes:</p>
+<p>- Merged multi-table BLAST export actions behind one Export button with a Current table / All tables scope dialog.</p>
+<p>- Reworked export settings focus handling so modal keyboard input stays trapped in the dialog, with module-level Tab navigation and improved dropdown keyboard behavior.</p>
+<p>- Replaced the FASTA header checkbox with an English dropdown for phgo, original, and minimal ID-only FASTA headers.</p>
+<p>- Moved the Family BLAST query-record option into the export settings dialog and kept it visible only for Family BLAST exports.</p>
+<p>- Removed the special blastp default/marker behavior; BLAST program lists now preserve source order and start on the first available option.</p>
+<p>- Cleaned export/report wording from legacy TXT/text labels to FASTA terminology.</p>
+<p>Validation:</p>
+<p>- go test ./internal/tui ./internal/prompt ./internal/workflow ./internal/report</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- scripts/build-codex.ps1</p>
+<p>- scripts/build-codex.ps1 -Publish build phase</p>
+<p>Supported desktop assets:</p>
+<p>- Windows amd64 WezTerm bundle</p>
+<p>- Linux amd64 WezTerm bundle</p>
+<p>- macOS amd64 WezTerm app bundle</p>
+<p>- macOS arm64 WezTerm app bundle</p>
+<p>&nbsp;</p>
+<p>phytozome GO v20260525T100545Z</p>
+<p>Release v20260525T100545Z</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-codex.ps1</p>
+<p>Included fixes:</p>
+<p>- remove duplicate Close/Cancel task buttons so task overlays keep a single Close (Esc) control</p>
+<p>- stabilize TAIR family search by keeping background labelname loading attached to the visible candidate list without post-close refresh crashes</p>
+<p>- make Codex/release packaging scripts self-sufficient for icon/resource helpers and tar.gz creation on this Windows environment</p>
+<p>&nbsp;</p>
+<p>phytozome GO v20260525T044721Z</p>
+<p>Release v20260525T044721Z</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- scripts\build-release.ps1</p>
+<p>Assets:</p>
+<p>- phytozome-go_windows_amd64_wezterm.zip</p>
+<p>- phytozome-go_linux_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_arm64_wezterm.tar.gz</p>
+<p>- SHA256SUMS.txt</p>
+<p>&nbsp;</p>
+<p>phytozome GO v20260515T152051Z</p>
+<p>Release v20260515T152051Z</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- scripts\build-release.ps1</p>
+<p>Assets:</p>
+<p>- phytozome-go_windows_amd64_wezterm.zip</p>
+<p>- phytozome-go_linux_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_arm64_wezterm.tar.gz</p>
+<p>- SHA256SUMS.txt</p>
+<p>&nbsp;</p>
+<p>phytozome GO v20260514T091010Z</p>
+<p>Release v20260514T091010Z</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- scripts\build-release.ps1</p>
+<p>Assets:</p>
+<p>- phytozome-go_windows_amd64_wezterm.zip</p>
+<p>- phytozome-go_linux_amd64</p>
+<p>- phytozome-go_darwin_amd64</p>
+<p>- phytozome-go_darwin_arm64</p>
+<p>- SHA256SUMS.txt</p>
+<p>&nbsp;</p>
+<p>phytozome GO v20260514T075010Z</p>
+<p>Release v20260514T075010Z</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\build-release.ps1</p>
+<p>Assets:</p>
+<p>- phytozome-go_windows_amd64_wezterm.zip</p>
+<p>- phytozome-go_linux_amd64</p>
+<p>- phytozome-go_darwin_amd64</p>
+<p>- phytozome-go_darwin_arm64</p>
+<p>- SHA256SUMS.txt</p>
+<p>&nbsp;</p>
+<p>phytozome GO v20260514T022315Z</p>
+<p>Release v20260514T022315Z</p>
+<p>Highlights:</p>
+<p>- Adds the fixed release build script and validated Windows WezTerm packaging path.</p>
+<p>- Improves app-local cache/path handling and Windows-safe replacement helpers.</p>
+<p>- Strengthens Lemna local BLAST/download handling and related tests.</p>
+<p>- Includes updated network read handling and release package validation.</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- scripts\build-release.ps1 -Publish</p>
+<p>Assets:</p>
+<p>- phytozome-go_windows_amd64_wezterm.zip</p>
+<p>- phytozome-go_linux_amd64</p>
+<p>- phytozome-go_darwin_amd64</p>
+<p>- phytozome-go_darwin_arm64</p>
+<p>- SHA256SUMS.txt</p>
+<p>&nbsp;</p>
+<p>phytozome GO v20260513T201639Z</p>
+<p>Release v20260513T201639Z</p>
+<p>Changes:</p>
+<p>- Updated the Windows app icon source to docs/logo2.png for the launcher executable.</p>
+<p>- Updated the embedded WezTerm window executable icon so the actual Windows window/taskbar icon also uses docs/logo2.png.</p>
+<p>- Updated the README lead image to docs/logo.png.</p>
+<p>- Fixed detail-window FASTA BLAST shortcuts so Ctrl+B is handled inside the detail modal.</p>
+<p>- Fixed detail-window BLAST actions so they run BLAST only for the item currently open in the detail modal, not the whole selected table.</p>
+<p>Validation:</p>
+<p>- gofmt</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- Windows WezTerm package rebuilt from a clean bin/ directory.</p>
+<p>- Verified the Windows zip contains phytozome-go.exe, phytozome-go.bin, wezterm.bin, wezterm.lua, and phytozome-go-window-icon.png.</p>
+<p>- Verified extracted launcher and WezTerm window executable icons show the new PH go logo.</p>
+<p>- Verified phytozome-go.bin --version reports v20260513T201639Z.</p>
+<p>&nbsp;</p>
+<p>phytozome GO v20260513T182807Z</p>
+<p>phytozome GO v20260513T182807Z</p>
+<p>User-visible changes:</p>
+<p>- Updated the Windows launcher icon to docs/logo2.png.</p>
+<p>- Published a refreshed Windows amd64 WezTerm bundle.</p>
+<p>- Includes the latest workflow, export/report, labelname, Lemna local BLAST, and performance scheduling updates currently on master.</p>
+<p>Verification completed before release:</p>
+<p>- go test ./...</p>
+<p>- go build ./...</p>
+<p>- Windows WezTerm bundle packaging</p>
+<p>- Bundle version check: phytozome GO v20260513T182807Z</p>
+<p>- Launcher associated icon extracted successfully from phytozome-go.exe</p>
+<p>Asset checksum:</p>
+<p>- SHA256: ede3c83aa16769d74213abe25452b4060983bdc8e93a162610414e22f1d64f98</p>
+<p>&nbsp;</p>
+<p>v20260512T120105Z</p>
+<p>Release v20260512T120105Z</p>
+<p>Highlights:</p>
+<p>- finalizes the lemna workflow and release packaging path</p>
+<p>- adds Windows WezTerm bundle packaging for release distribution</p>
+<p>- refreshes README, licensing surfacing, caching/runtime defaults, and workflow coverage</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>Assets:</p>
+<p>- phytozome-go_windows_amd64.exe</p>
+<p>- phytozome-go_linux_amd64</p>
+<p>- phytozome-go_darwin_amd64</p>
+<p>- phytozome-go_darwin_arm64</p>
+<p>- phytozome-go_windows_amd64_wezterm.zip</p>
+<p>&nbsp;</p>
+<p>v20260508T042023Z</p>
+<p># phytozome GO Release Notes</p>
+<p>## Version</p>
+<p>`v20260508T042023Z`</p>
+<p>## Highlights</p>
+<p>- Stabilized the Family BLAST custom grouping modal focus model.</p>
+<p>- Custom grouping now opens as a fresh modal flow after closing the Family BLAST settings modal, preventing nested TUI focus leaks.</p>
+<p>- Mouse selection in the two-pane grouping editor now switches panes only on the final click event, avoiding the left-pane/right-pane focus flash.</p>
+<p>- Preserves stacked child modal behavior inside the custom grouping editor and restores parent selection state after child dialogs close.</p>
+<p>## Validation</p>
+<p>- `go test ./...`</p>
+<p>- `go vet ./...`</p>
+<p>## Supported Release Assets</p>
+<p>- Windows `amd64`</p>
+<p>- Linux `amd64`</p>
+<p>- macOS `amd64`</p>
+<p>- macOS `arm64`</p>
+<p>## Packaged Files</p>
+<p>- `phytozome-go_windows_amd64.zip`</p>
+<p>- `phytozome-go_linux_amd64.zip`</p>
+<p>- `phytozome-go_darwin_amd64.zip`</p>
+<p>- `phytozome-go_darwin_arm64.zip`</p>
+<p>- `SHA256SUMS.txt`</p>
+<p>&nbsp;</p>
+<p>v20260507T194049Z</p>
+<p># phytozome GO Release Notes</p>
+<p>## Version</p>
+<p>`v20260507T194049Z`</p>
+<p>## Highlights</p>
+<p>- Rebuilt release assets from the current working tree for Windows, Linux, and macOS.</p>
+<p>- Includes performance helper package updates, faster workflow paths, richer BLAST/filter/report behavior, and TUI refinements from the current source changes.</p>
+<p>- Preserves the repository&#39;s existing zip asset names for GitHub Releases.</p>
+<p>## Validation</p>
+<p>- `go test ./...`</p>
+<p>- `go vet ./...`</p>
+<p>## Supported Release Assets</p>
+<p>- Windows `amd64`</p>
+<p>- Linux `amd64`</p>
+<p>- macOS `amd64`</p>
+<p>- macOS `arm64`</p>
+<p>## Packaged Files</p>
+<p>- `phytozome-go_windows_amd64.zip`</p>
+<p>- `phytozome-go_linux_amd64.zip`</p>
+<p>- `phytozome-go_darwin_amd64.zip`</p>
+<p>- `phytozome-go_darwin_arm64.zip`</p>
+<p>- `SHA256SUMS.txt`</p>
+<p>&nbsp;</p>
+<p>v20260507T104037Z</p>
+<p># Release v20260507T104037Z</p>
+<p>## Highlights</p>
+<p>- Maximized batch loading and export parallelism across BLAST and lemna workflows.</p>
+<p>- Parallelized generated-file inspection for report rendering.</p>
+<p>- Removed conservative worker caps in the hot paths so batch work scales with task count.</p>
+<p>## Validation</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- Version smoke test: phytozome GO v20260507T104037Z</p>
+<p>## Supported Release Assets</p>
+<p>- Windows amd64</p>
+<p>- Linux amd64</p>
+<p>- macOS amd64</p>
+<p>- macOS arm64</p>
+<p>## Packaged Files</p>
+<p>- phytozome-go_windows_amd64.zip</p>
+<p>- phytozome-go_linux_amd64.zip</p>
+<p>- phytozome-go_darwin_amd64.zip</p>
+<p>- phytozome-go_darwin_arm64.zip</p>
+<p>- SHA256SUMS.txt</p>
+<p>&nbsp;</p>
+<p>v20260507T100713Z</p>
+<p># Release v20260507T100713Z</p>
+<p>## Highlights</p>
+<p>- Refined BLAST external-reference, Family BLAST, and filter settings modals with clearer option wording, sectioned layouts, and better modal sizing.</p>
+<p>- Reworked BLAST filter pagination and second-page layout, including clickable page numbers and safer three-column controls.</p>
+<p>- Moved Family BLAST custom grouping from a checkbox into a dedicated Customize groups (Ctrl+G) action button.</p>
+<p>- Expanded raw export behavior so raw mode writes _raw.xlsx and, when text export is enabled, _raw.txt as well.</p>
+<p>- Synchronized report labels with the updated UI wording and removed the report limitations/data-availability chapter.</p>
+<p>## Validation</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- Windows binary version smoke test: phytozome GO v20260507T100713Z</p>
+<p>## Supported Release Assets</p>
+<p>- Windows amd64</p>
+<p>- Linux amd64</p>
+<p>- macOS amd64</p>
+<p>- macOS arm64</p>
+<p>## Packaged Files</p>
+<p>- phytozome-go_windows_amd64.zip</p>
+<p>- phytozome-go_linux_amd64.zip</p>
+<p>- phytozome-go_darwin_amd64.zip</p>
+<p>- phytozome-go_darwin_arm64.zip</p>
+<p>- SHA256SUMS.txt</p>
+<p>&nbsp;</p>
+<p>v20260507T021935Z</p>
+<p>Release v20260507T021935Z</p>
+<p>- Rebuilt cross-platform binaries in bin/ for Windows amd64, Linux amd64, macOS amd64, and macOS arm64.</p>
+<p>- Included latest workflow/report/filter/family/autolabel/performance updates.</p>
+<p>- Verified with go test ./....</p>
+<p>&nbsp;</p>
+<p>v20260505T202930Z</p>
+<p># phytozome GO v20260505T202930Z</p>
+<p>## Summary</p>
+<p>This release refreshes the desktop binary set with a unified BLAST+ recovery flow.</p>
+<p>## User-visible changes</p>
+<p>- Single-file and multi-file BLAST now share the same missing-BLAST+ recovery sequence.</p>
+<p>- Missing BLAST+ is shown as a Fetch error dialog with Install as the primary action.</p>
+<p>- Installing BLAST+ continues the current BLAST operation instead of forcing users back through program selection.</p>
+<p>- BLAST table and recovery returns now consistently go back to the BLAST input screen.</p>
+<p>- Home buttons were removed from modal dialogs while full-screen Home navigation remains available.</p>
+<p>## Verification</p>
+<p>- Passed go test ./...</p>
+<p>- Passed go vet ./...</p>
+<p>## Assets</p>
+<p>- phytozome-go_v20260505T202930Z_windows_amd64.zip</p>
+<p>- phytozome-go_v20260505T202930Z_linux_amd64.tar.gz</p>
+<p>- phytozome-go_v20260505T202930Z_darwin_amd64.tar.gz</p>
+<p>- phytozome-go_v20260505T202930Z_darwin_arm64.tar.gz</p>
+<p>- phytozome-go_v20260505T202930Z_all.tar.gz</p>
+<p>- SHA256SUMS.txt</p>
+<p>&nbsp;</p>
+<p>v20260505T194610Z</p>
+<p># phytozome GO `v20260505T194610Z`</p>
+<p>## Summary</p>
+<p>This local release refreshes the desktop binary set and bundled release archives for the current development state of `phytozome GO`.</p>
+<p>## User-visible focus areas</p>
+<p>- Keyword and BLAST workflows continue to share a more unified export and report path.</p>
+<p>- PDF reporting is substantially richer, especially for BLAST-oriented context such as filter, family, and external reference sections.</p>
+<p>- Report layout handling is tuned for dense biological tables and long textual annotations.</p>
+<p>- Supporting modules in workflow, export, prompt, and report packages are packaged together in the main desktop release.</p>
+<p>## Verification</p>
+<p>- Passed `go test ./...`</p>
+<p>- Passed `go vet ./...`</p>
+<p>## Assets</p>
+<p>- `phytozome-go_v20260505T194610Z_windows_amd64.zip`</p>
+<p>- `phytozome-go_v20260505T194610Z_linux_amd64.tar.gz`</p>
+<p>- `phytozome-go_v20260505T194610Z_darwin_amd64.tar.gz`</p>
+<p>- `phytozome-go_v20260505T194610Z_darwin_arm64.tar.gz`</p>
+<p>- `phytozome-go_v20260505T194610Z_all.tar.gz`</p>
+<p>- `SHA256SUMS.txt`</p>
+<p>&nbsp;</p>
+<p>v20260425T130726Z</p>
+<p># Release v20260425T130726Z</p>
+<p>Changelog (since v20260425T123730Z):</p>
+<p>- b02bebf chore: run gofmt (wangsychn)</p>
+<p>&nbsp;</p>
+<p>v20260425T123730Z</p>
+<p>phytozome GO release</p>
+<p>This release packages the current interactive wizard for both `phytozome` and `lemna` workflows.</p>
+<p>Included in this release:</p>
+<p>- Windows `amd64`</p>
+<p>- Linux `amd64`</p>
+<p>- macOS `amd64`</p>
+<p>- macOS `arm64`</p>
+<p>Highlights:</p>
+<p>- added first-class `lemna` mode with download-backed species discovery, keyword search, and BLAST fallback behavior</p>
+<p>- added runtime language switching with `lang=en`, `lang=cn`, and `lang=jp`</p>
+<p>- added executable-name locale selection with `-en`, `-cn`, and `-jp` suffixes</p>
+<p>- unified output and cache locations next to the executable</p>
+<p>- expanded batch BLAST and keyword workflows, including copied `list` input support</p>
+<p>- improved error recovery, progress reporting, local BLAST fallback, and persistent caching</p>
+<p>- rewrote the README into a full operator guide with examples and flowcharts</p>
+<p>- replaced README examples with fresh public sample cases so release documentation does not reuse workflow-specific research examples</p>
+<p>Release assets:</p>
+<p>- raw binaries in `bin/`</p>
+<p>- packaged archives for direct download on GitHub Releases</p>
+<p>Notes:</p>
+<p>- local BLAST workflows may install or use `BLAST+` beside the executable</p>
+<p>- exported files are written inside `output/`</p>
+<p>- persistent caches are written inside `.cache/`</p>
+<p>&nbsp;</p>
+<p>v20260425T122718Z</p>
+<p>phytozome GO release</p>
+<p>This release packages the current interactive wizard for both `phytozome` and `lemna` workflows.</p>
+<p>Included in this release:</p>
+<p>- Windows `amd64`</p>
+<p>- Linux `amd64`</p>
+<p>- macOS `amd64`</p>
+<p>- macOS `arm64`</p>
+<p>Highlights:</p>
+<p>- added first-class `lemna` mode with download-backed species discovery, keyword search, and BLAST fallback behavior</p>
+<p>- added runtime language switching with `lang=en`, `lang=cn`, and `lang=jp`</p>
+<p>- added executable-name locale selection with `-en`, `-cn`, and `-jp` suffixes</p>
+<p>- unified output and cache locations next to the executable</p>
+<p>- expanded batch BLAST and keyword workflows, including copied `list` input support</p>
+<p>- improved error recovery, progress reporting, local BLAST fallback, and persistent caching</p>
+<p>- rewrote the README into a full operator guide with examples and flowcharts</p>
+<p>Release assets:</p>
+<p>- raw binaries in `bin/`</p>
+<p>- packaged archives for direct download on GitHub Releases</p>
+<p>Notes:</p>
+<p>- local BLAST workflows may install or use `BLAST+` beside the executable</p>
+<p>- exported files are written inside `output/`</p>
+<p>- persistent caches are written inside `.cache/`</p>
+<p>&nbsp;</p>
+<p>v20260423T151444Z</p>
+<p>v20260423T151444Z</p>
+<p>Platforms:</p>
+<p>- Windows amd64</p>
+<p>- Linux amd64</p>
+<p>- macOS amd64</p>
+<p>- macOS arm64</p>
+<p>&nbsp;</p>
+<p>phytozome-batch-cli v20260422T074122Z</p>
+<p>Automated release of prebuilt binaries for phytozome-batch-cli.</p>
+<p>Includes:</p>
+<p>- Windows x86_64 (exe)</p>
+<p>- Linux x86_64</p>
+<p>- macOS x86_64</p>
+<p>- macOS arm64</p>
+<p>These binaries were built from the current repository state. Use at your own discretion.</p>
 <p>&nbsp;</p>
 </body>
 
