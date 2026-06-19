@@ -7,11 +7,30 @@
 
 <body bgcolor="#FFFFFF">
 
+<p>phytozome GO v20260619T101650Z</p>
+<p>User-visible updates:</p>
+<p>- Improved Canvas tree/MSA snapshot restoration and display-name metadata persistence.</p>
+<p>- Updated Reactree and JalviewJS viewer assets for tree preview, MSA rendering, scrollbars, DPI behavior, and viewer state handling.</p>
+<p>- Refined TUI templates, prompt handling, BLAST workflow details, and related snapshot documentation.</p>
+<p>Validation:</p>
+<p>- gofmt</p>
+<p>- tree-viewer tests and production build</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- scripts\build-release.ps1 -Publish</p>
+<p>Assets:</p>
+<p>- phytozome-go_windows_amd64_wezterm.zip</p>
+<p>- phytozome-go_linux_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_amd64_wezterm.tar.gz</p>
+<p>- phytozome-go_macos_arm64_wezterm.tar.gz</p>
+<p>- SHA256SUMS.txt</p>
+<p>&nbsp;</p>
 <p>phytozome GO v20260619T005906Z</p>
 <p>Release v20260619T005906Z</p>
 <p>Highlights:</p>
 <p>- Hardened Canvas PHgo, Tree, and native JalviewJS MSA synchronization.</p>
-<p>- Added native MSA Apply flow support for green/yellow/red row states: green is selected for Tree/MSA, yellow is unchecked for both Tree/MSA but marked as MSA-origin in PHgo, and red is ordinary unchecked.</p>
+<p>- Added native MSA Apply flow support for green/yellow/red row states: green is selected for Tree/MSA, yellow is PHgo/Tree-unchecked but retained unchecked in MSA, and red is excluded from both.</p>
 <p>- Added shared refresh status reporting so Tree and MSA pages show refresh-in-progress while PHgo recomputes.</p>
 <p>- Added durable MSA state synchronization for row states, Jalview groups, annotations, markers, and settings through the local viewer service.</p>
 <p>- Updated .pgo snapshot format to preserve durable Canvas Tree and MSA state while dropping transient UI-open state.</p>
