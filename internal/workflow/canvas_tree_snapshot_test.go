@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -68,13 +69,21 @@ func TestSnapshotCanvasTreeArtifactsPacksRuntimeFiles(t *testing.T) {
 
 func TestSnapshotCanvasTreeStateKeepsPanelWithoutRun(t *testing.T) {
 	w := NewBlastWizard(nil)
-	w.prompt.RestoreCanvasTreePanelState(canvasStateKey("canvas"), treePanelForSnapshotTest())
+	panel := treePanelForSnapshotTest()
+	panel.Expanded = true
+	panel.Focused = true
+	panel.CurrentControl = 2
+	panel.ScrollOffset = 7
+	w.prompt.RestoreCanvasTreePanelState(canvasStateKey("canvas"), panel)
 	tree, manifest, payloads, err := w.snapshotCanvasTreeState()
 	if err != nil {
 		t.Fatalf("snapshotCanvasTreeState returned error: %v", err)
 	}
 	if tree == nil || !tree.PanelState.EnabledEver || tree.PanelState.AlignmentMethod != string(phylo.AlignmentMUSCLE) {
 		t.Fatalf("tree panel state not captured: %#v", tree)
+	}
+	if tree.PanelState.Expanded || tree.PanelState.Focused || tree.PanelState.CurrentControl != 0 || tree.PanelState.ScrollOffset != 0 {
+		t.Fatalf("tree panel snapshot should drop UI-open state: %#v", tree.PanelState)
 	}
 	if manifest != nil || payloads != nil {
 		t.Fatalf("unexpected artifact bundle without a run: %#v %#v", manifest, payloads)
@@ -91,7 +100,7 @@ func TestSnapshotCanvasTreeStateCapturesViewerState(t *testing.T) {
 	}
 	defer w.closeCanvasTreeViewer()
 
-	viewerState := json.RawMessage(`{"schema_version":2,"reactree":{"layout":"rectangular","fontFamily":"Georgia"}}`)
+	viewerState := json.RawMessage(`{"schema_version":2,"reactree":{"layout":"rectangular","fontFamily":"Georgia","searchText":"PAL","openMenu":"file"},"phgo":{"split_percent":42,"viewport":{"inner_width":1200}}}`)
 	if err := putViewerState(ctx, server, w.canvasTreeSessionID(), viewerState); err != nil {
 		t.Fatalf("putViewerState returned error: %v", err)
 	}
@@ -103,11 +112,69 @@ func TestSnapshotCanvasTreeStateCapturesViewerState(t *testing.T) {
 	if tree == nil {
 		t.Fatal("snapshotCanvasTreeState returned nil tree")
 	}
-	if string(tree.ViewerState) != string(viewerState) {
-		t.Fatalf("viewer state not captured: %s", tree.ViewerState)
+	if strings.Contains(string(tree.ViewerState), "searchText") || strings.Contains(string(tree.ViewerState), "openMenu") || strings.Contains(string(tree.ViewerState), "viewport") {
+		t.Fatalf("viewer state should drop UI-only fields: %s", tree.ViewerState)
+	}
+	if !strings.Contains(string(tree.ViewerState), `"layout":"rectangular"`) || !strings.Contains(string(tree.ViewerState), `"split_percent":42`) {
+		t.Fatalf("viewer state should keep durable viewer settings: %s", tree.ViewerState)
 	}
 	if string(w.canvasTreeViewerState) != string(viewerState) {
 		t.Fatalf("wizard viewer state cache not updated: %s", w.canvasTreeViewerState)
+	}
+}
+
+func TestSnapshotCanvasMSAStateCapturesFlagsAndJalviewState(t *testing.T) {
+	w := NewBlastWizard(nil)
+	now := time.Now()
+	payload := phylo.ViewerPayload{
+		SchemaVersion: 1,
+		SessionID:     "canvas",
+		UpdatedAt:     now,
+		AlignedFASTA:  ">PHGOT000001\nAAA\n>PHGOT000002\nBBB\n>PHGOT000003\nCCC\n",
+		Metadata: phylo.Metadata{Records: []phylo.InputRecord{
+			{TaxonID: "PHGOT000001", DisplayName: "green", CanvasItem: "msa", CanvasRow: 0},
+			{TaxonID: "PHGOT000002", DisplayName: "yellow", CanvasItem: "msa", CanvasRow: 1},
+			{TaxonID: "PHGOT000003", DisplayName: "red", CanvasItem: "msa", CanvasRow: 2},
+		}},
+	}
+	w.canvasTreeLastMSAPayload = payload
+	items := []model.CanvasItem{{
+		Title:    "msa",
+		Selected: []bool{true, false, false},
+		MSAFlags: []bool{false, true, false},
+		Rows: []model.CanvasRow{
+			{Kind: model.CanvasKindFasta, DisplayName: "green"},
+			{Kind: model.CanvasKindFasta, DisplayName: "yellow"},
+			{Kind: model.CanvasKindFasta, DisplayName: "red"},
+		},
+	}}
+	server := phylo.NewViewerServer("127.0.0.1:0")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := server.Start(ctx); err != nil {
+		t.Fatalf("viewer server start: %v", err)
+	}
+	w.canvasTreeViewer = server
+	server.SetMSAPayload("canvas", payload)
+	server.SetMSAState("canvas", phylo.MSAState{
+		SchemaVersion: 1,
+		Rows: []phylo.MSASelectionRow{
+			{TaxonID: "PHGOT000001", State: "green"},
+			{TaxonID: "PHGOT000002", State: "yellow"},
+			{TaxonID: "PHGOT000003", State: "red"},
+		},
+		Groups: []map[string]any{{"name": "manual"}},
+	})
+
+	msa := w.snapshotCanvasMSAState(items)
+	if msa == nil || len(msa.State.Rows) != 3 {
+		t.Fatalf("MSA snapshot missing rows: %#v", msa)
+	}
+	if msa.State.Rows[1].State != "yellow" || msa.State.Rows[2].State != "red" {
+		t.Fatalf("MSA snapshot row states = %#v", msa.State.Rows)
+	}
+	if len(msa.State.Groups) != 1 || msa.LastPayload.AlignedFASTA == "" {
+		t.Fatalf("MSA snapshot should keep Jalview groups and payload: %#v", msa)
 	}
 }
 
@@ -825,6 +892,93 @@ func TestOpenBrowserURLStartsDetachedFromLaterContextCancellation(t *testing.T) 
 	}
 	if !called {
 		t.Fatal("browser starter was not called")
+	}
+}
+
+func TestStartJalviewCommandRejectsEmptyAlignmentPath(t *testing.T) {
+	if err := startJalviewCommand("  "); err == nil || !strings.Contains(strings.ToLower(err.Error()), "empty") {
+		t.Fatalf("startJalviewCommand error = %v, want empty path error", err)
+	}
+}
+
+func TestOpenCanvasTreeViewerOpensTreeAndMSAPages(t *testing.T) {
+	w := NewBlastWizard(nil)
+	oldOpen := openBrowserURLFunc
+	defer func() { openBrowserURLFunc = oldOpen }()
+
+	var opened []string
+	openBrowserURLFunc = func(ctx context.Context, rawURL string) error {
+		opened = append(opened, rawURL)
+		return nil
+	}
+
+	if err := w.openCanvasTreeViewer(context.Background(), nil, phylo.DefaultTreeSettings()); err != nil {
+		t.Fatalf("openCanvasTreeViewer returned error: %v", err)
+	}
+	if len(opened) != 2 {
+		t.Fatalf("opened URLs = %#v, want 2", opened)
+	}
+	if !strings.Contains(opened[0], "/sessions/canvas/tree") {
+		t.Fatalf("first opened URL = %q, want tree session page", opened[0])
+	}
+	if !strings.Contains(opened[1], "/sessions/canvas/msa") {
+		t.Fatalf("second opened URL = %q, want msa page", opened[1])
+	}
+}
+
+func TestOpenCanvasTreeViewerInstallsLiveMSAApplyHandler(t *testing.T) {
+	w := NewBlastWizard(nil)
+	w.suppressTaskModals = true
+	oldOpen := openBrowserURLFunc
+	defer func() { openBrowserURLFunc = oldOpen }()
+	openBrowserURLFunc = func(ctx context.Context, rawURL string) error { return nil }
+
+	state := canvasLaunchState{
+		Items: []model.CanvasItem{{
+			Title:    "msa rows",
+			Selected: []bool{true, true},
+			Rows: []model.CanvasRow{
+				{Kind: model.CanvasKindFasta},
+				{Kind: model.CanvasKindFasta},
+			},
+		}},
+	}
+	w.canvasTreeLastPlan = phylo.RunPlan{
+		Records: []phylo.InputRecord{
+			{TaxonID: "PHGOT000001", CanvasItem: "msa rows", CanvasRow: 0},
+			{TaxonID: "PHGOT000002", CanvasItem: "msa rows", CanvasRow: 1},
+		},
+	}
+	refreshCalled := false
+	w.canvasTreeRefreshRun = func(ctx context.Context, runState canvasLaunchState, settings phylo.TreeSettings) error {
+		refreshCalled = true
+		selected := selectedCanvasRowsInOrder(runState.Items)
+		if len(selected) != 1 || selected[0].RowIndex != 0 {
+			t.Fatalf("Apply refresh selected rows = %#v, want only green row", selected)
+		}
+		return nil
+	}
+
+	if err := w.openCanvasTreeViewer(context.Background(), &state, phylo.DefaultTreeSettings()); err != nil {
+		t.Fatalf("openCanvasTreeViewer returned error: %v", err)
+	}
+	if w.canvasTreeViewer == nil {
+		t.Fatal("viewer server was not created")
+	}
+	resp, err := http.Post(w.canvasTreeViewer.URL()+"/sessions/canvas/msa/apply", "application/json", strings.NewReader(`{"rows":[{"taxon_id":"PHGOT000001","state":"green"},{"taxon_id":"PHGOT000002","state":"red"}]}`))
+	if err != nil {
+		t.Fatalf("MSA apply post: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("MSA apply status = %d body = %s", resp.StatusCode, body)
+	}
+	if !refreshCalled {
+		t.Fatal("MSA apply did not trigger a tree refresh")
+	}
+	if got, want := state.Items[0].Selected, []bool{true, false}; !slices.Equal(got, want) {
+		t.Fatalf("canvas selection = %#v, want %#v", got, want)
 	}
 }
 
@@ -1595,6 +1749,131 @@ func TestRefreshCanvasTreeInteractiveSkipUnchecksRowsAndRetries(t *testing.T) {
 	}
 	if got := state.Items[1].Subtitle; got != "0/1 lines" {
 		t.Fatalf("dna canvas subtitle = %q, want selection summary updated", got)
+	}
+}
+
+func TestApplyMSASelectionToCanvasStateUpdatesCanvasSelection(t *testing.T) {
+	w := NewBlastWizard(nil)
+	w.canvasTreeLastPlan = phylo.RunPlan{
+		Records: []phylo.InputRecord{
+			{TaxonID: "PHGOT000001", CanvasItem: "msa rows", CanvasRow: 0},
+			{TaxonID: "PHGOT000002", CanvasItem: "msa rows", CanvasRow: 1},
+			{TaxonID: "PHGOT000003", CanvasItem: "msa rows", CanvasRow: 2},
+		},
+	}
+	state := canvasLaunchState{
+		Items: []model.CanvasItem{{
+			Title:    "msa rows",
+			Selected: []bool{true, true, false},
+			Rows: []model.CanvasRow{
+				{Kind: model.CanvasKindFasta},
+				{Kind: model.CanvasKindFasta},
+				{Kind: model.CanvasKindFasta},
+			},
+		}},
+	}
+
+	changed := w.applyMSASelectionToCanvasState(&state, phylo.MSAApplyRequest{Rows: []phylo.MSAApplyRow{
+		{TaxonID: "PHGOT000001", State: "yellow"},
+		{TaxonID: "PHGOT000002", State: "red"},
+		{TaxonID: "PHGOT000003", State: "green"},
+	}})
+	if !changed {
+		t.Fatal("applyMSASelectionToCanvasState reported no change")
+	}
+	if got, want := state.Items[0].Selected, []bool{false, false, true}; !slices.Equal(got, want) {
+		t.Fatalf("canvas selected mask = %#v, want %#v", got, want)
+	}
+	if got := state.Items[0].Subtitle; got != "1/3 lines" {
+		t.Fatalf("canvas subtitle = %q, want selection summary updated", got)
+	}
+}
+
+func TestMSASelectedRowsFromApplyRequestKeepsGreenAndYellow(t *testing.T) {
+	w := NewBlastWizard(nil)
+	w.canvasTreeLastPlan = phylo.RunPlan{
+		Records: []phylo.InputRecord{
+			{TaxonID: "PHGOT000001", CanvasItem: "msa rows", CanvasRow: 0},
+			{TaxonID: "PHGOT000002", CanvasItem: "msa rows", CanvasRow: 1},
+			{TaxonID: "PHGOT000003", CanvasItem: "msa rows", CanvasRow: 2},
+		},
+	}
+	items := []model.CanvasItem{{
+		Title: "msa rows",
+		Rows: []model.CanvasRow{
+			{Kind: model.CanvasKindFasta, DisplayName: "green"},
+			{Kind: model.CanvasKindFasta, DisplayName: "yellow"},
+			{Kind: model.CanvasKindFasta, DisplayName: "red"},
+		},
+	}}
+
+	rows := w.msaSelectedRowsFromApplyRequest(items, phylo.MSAApplyRequest{Rows: []phylo.MSAApplyRow{
+		{TaxonID: "PHGOT000001", State: "green"},
+		{TaxonID: "PHGOT000002", State: "yellow"},
+		{TaxonID: "PHGOT000003", State: "red"},
+	}})
+	if len(rows) != 2 {
+		t.Fatalf("MSA selected rows = %#v, want green and yellow only", rows)
+	}
+	if rows[0].Row.DisplayName != "green" || rows[1].Row.DisplayName != "yellow" {
+		t.Fatalf("MSA selected row order = %#v, want green then yellow", rows)
+	}
+}
+
+func TestMSAApplyYellowForcesTreeRefreshEvenWhenCanvasSelectionAlreadyMatches(t *testing.T) {
+	w := NewBlastWizard(nil)
+	server := phylo.NewViewerServer("127.0.0.1:0")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := server.Start(ctx); err != nil {
+		t.Fatalf("viewer server start: %v", err)
+	}
+	w.canvasTreeViewer = server
+	w.canvasTreeLastPlan = phylo.RunPlan{
+		Records: []phylo.InputRecord{
+			{TaxonID: "PHGOT000001", CanvasItem: "msa rows", CanvasRow: 0},
+			{TaxonID: "PHGOT000002", CanvasItem: "msa rows", CanvasRow: 1},
+		},
+	}
+	state := canvasLaunchState{
+		Items: []model.CanvasItem{{
+			Title:    "msa rows",
+			Selected: []bool{true, false},
+			Rows: []model.CanvasRow{
+				{Kind: model.CanvasKindFasta, DisplayName: "green"},
+				{Kind: model.CanvasKindFasta, DisplayName: "yellow"},
+			},
+		}},
+	}
+	refreshCalled := false
+	w.canvasTreeRefreshRun = func(ctx context.Context, runState canvasLaunchState, settings phylo.TreeSettings) error {
+		refreshCalled = true
+		selected := selectedCanvasRowsInOrder(runState.Items)
+		if len(selected) != 1 || selected[0].Row.DisplayName != "green" {
+			t.Fatalf("tree refresh rows = %#v, want green row only", selected)
+		}
+		return nil
+	}
+	w.canvasTreeMSARefreshRun = func(ctx context.Context, runState canvasLaunchState, settings phylo.TreeSettings, req phylo.MSAApplyRequest) error {
+		selected := w.msaSelectedRowsFromApplyRequest(runState.Items, req)
+		if len(selected) != 2 || selected[0].Row.DisplayName != "green" || selected[1].Row.DisplayName != "yellow" {
+			t.Fatalf("MSA refresh rows = %#v, want green and yellow rows", selected)
+		}
+		return nil
+	}
+	w.installCanvasTreeMSAApplyHandlerOnServer(server, &state, nil)
+
+	resp, err := http.Post(server.URL()+"/sessions/canvas/msa/apply", "application/json", strings.NewReader(`{"rows":[{"taxon_id":"PHGOT000001","state":"green"},{"taxon_id":"PHGOT000002","state":"yellow"}]}`))
+	if err != nil {
+		t.Fatalf("MSA apply post: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("MSA apply status = %d body = %s", resp.StatusCode, body)
+	}
+	if !refreshCalled {
+		t.Fatal("yellow MSA apply should force a tree refresh even when Canvas selection already matches")
 	}
 }
 

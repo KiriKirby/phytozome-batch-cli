@@ -204,6 +204,9 @@ Current export plumbing:
   creates an isolated viewer session from the snapshot payload/state.
 - The Canvas viewer page intentionally has no top-right `.pgv` open button, so
   live Canvas sessions stay tied to the current PHgo payload.
+- Canvas `.pgo` snapshots may sample viewer state for durable render settings,
+  but they filter out pure UI-open state such as transient search/menu/ribbon
+  state and browser viewport metadata. Full browser UI state belongs to `.pgv`.
 - `.pgv` never recomputes alignment/tree data and never writes back to
   `runtime-request.json`, `aligned.fasta`, or `tree.nwk`; it is a render-state
   carrier only.

@@ -174,6 +174,7 @@ type CanvasItem struct {
 	Kind          CanvasKind     `json:"kind"`
 	Rows          []CanvasRow    `json:"rows"`
 	Selected      []bool         `json:"selected,omitempty"`
+	MSAFlags      []bool         `json:"msa_flags,omitempty"`
 	SourceLabel   string         `json:"source_label,omitempty"`
 	ImportedFrom  string         `json:"imported_from,omitempty"`
 	ActiveColumns []CanvasColumn `json:"active_columns,omitempty"`

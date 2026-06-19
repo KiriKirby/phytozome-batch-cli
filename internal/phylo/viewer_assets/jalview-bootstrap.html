@@ -1,0 +1,287 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Phgomsar</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #ffffff;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      }
+
+      body {
+        display: flex;
+        flex-direction: column;
+      }
+
+      #jalview-shell {
+        position: relative;
+        flex: 1 1 auto;
+        width: 100dvw;
+        height: 100dvh;
+        padding: 0;
+        overflow: hidden;
+        background: #ffffff;
+      }
+
+      #jalview-desktop-div {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 2000;
+        width: 100dvw;
+        height: 100dvh;
+        overflow: visible;
+        background: transparent;
+        pointer-events: none;
+      }
+
+      body.phgo-jalview-ready #jalview-desktop-div,
+      #jalview-desktop-div.phgo-window-manager {
+        display: block !important;
+        visibility: visible !important;
+        width: 100dvw !important;
+        height: 100dvh !important;
+        pointer-events: none !important;
+      }
+
+      #jalview-desktop-div .swingjs-window {
+        pointer-events: auto;
+      }
+
+      #jalview-desktop-div .phgo-root-desktop-frame {
+        background: transparent !important;
+        border: 0 !important;
+        box-shadow: none !important;
+        overflow: visible !important;
+        pointer-events: none !important;
+      }
+
+      #jalview-desktop-div .phgo-root-desktop-frame [id*="_RootPaneUI"],
+      #jalview-desktop-div .phgo-root-desktop-frame [id*="_LayeredPaneUI"],
+      #jalview-desktop-div .phgo-root-desktop-frame [id*="_DesktopPaneUI"] {
+        visibility: visible !important;
+      }
+
+      #jalview-desktop-div .phgo-root-desktop-frame .swingjs-desktop,
+      #jalview-desktop-div .phgo-root-desktop-frame [id*="_DesktopPaneUI"] {
+        background: transparent !important;
+        pointer-events: none !important;
+      }
+
+      #jalview-desktop-div .phgo-root-desktop-frame [id*="_MenuBarUI"],
+      #jalview-desktop-div .phgo-root-desktop-frame canvas {
+        visibility: hidden !important;
+        pointer-events: none !important;
+      }
+
+      #jalview-desktop-div .phgo-root-desktop-frame .swingjs-window,
+      #jalview-desktop-div .phgo-root-desktop-frame .swingjs-popup,
+      #jalview-desktop-div .phgo-root-desktop-frame .swingjs-menu,
+      #jalview-desktop-div .phgo-root-desktop-frame .ui-j2smenu-node,
+      #jalview-desktop-div .phgo-root-desktop-frame [role="dialog"],
+      #jalview-desktop-div .phgo-root-desktop-frame [role="menu"] {
+        visibility: visible !important;
+        pointer-events: auto !important;
+      }
+
+      #jalview-desktop-div .phgo-root-desktop-frame .swingjs-desktop .swingjs-window,
+      #jalview-desktop-div .phgo-root-desktop-frame .swingjs-desktop [role="dialog"],
+      #jalview-desktop-div .phgo-root-desktop-frame .swingjs-desktop [role="menu"] {
+        pointer-events: auto !important;
+      }
+
+      #jalview-desktop-div .phgo-root-desktop-frame [id*="_MenuBarUI"],
+      #jalview-desktop-div .phgo-root-desktop-frame [id*="_MenuBarUI"] *,
+      #jalview-desktop-div .phgo-root-desktop-frame canvas {
+        visibility: hidden !important;
+        pointer-events: none !important;
+      }
+
+      #jalview-alignment-div {
+        position: absolute;
+        inset: 0;
+        width: 100dvw;
+        height: 100dvh;
+        min-width: 100dvw;
+        min-height: 100dvh;
+        overflow: hidden;
+        background: #ffffff;
+      }
+
+      #jalview-structureviewer-div,
+      #jalview-tree-div,
+      #jalview-pca-div {
+        display: none;
+      }
+
+      #sysoutdiv {
+        position: fixed;
+        right: 0;
+        bottom: 0;
+        width: 320px;
+        height: 160px;
+        display: none;
+        overflow: auto;
+        border: 1px solid #d0d0d0;
+        background: rgba(255, 255, 255, 0.95);
+        font: 11px/1.4 Consolas, "Courier New", monospace;
+        z-index: 9999;
+      }
+
+      .phgo-warning-toast {
+        position: fixed;
+        left: 18px;
+        bottom: 18px;
+        z-index: 100000;
+        max-width: min(520px, calc(100vw - 36px));
+        padding: 8px 10px;
+        border: 1px solid #111;
+        border-radius: 0;
+        background: #fff;
+        box-shadow: none;
+        color: #111;
+        pointer-events: auto;
+      }
+
+      .phgo-warning-toast-message,
+      .phgo-warning-toast button {
+        margin: 0;
+        color: #111;
+        font: 12px/1.35 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      }
+
+      .phgo-warning-toast button {
+        border: 1px solid #111;
+        border-radius: 0;
+        padding: 1px 6px;
+        background: #fff;
+        cursor: pointer;
+      }
+
+    </style>
+    <script>
+      window.__PHGOJalviewInitialState = null;
+    </script>
+    <script src="/assets/jalviewjs/phgo-bridge.js"></script>
+    <script src="/assets/jalviewjs/swingjs/swingjs2.js"></script>
+    <script>
+      (function() {
+        const bridge = window.PHGOJalviewBridge.init();
+
+        window.addEventListener("load", () => {
+          bridge.notify("loaded", { href: window.location.href, open: bridge.openTarget, args: bridge.args, state: bridge.collectState() });
+        });
+
+        window.addEventListener("error", (event) => {
+          const err = event.error || event.message || event;
+          const details = {
+            message: bridge.formatValue(err),
+            name: err && err.name ? err.name : "",
+            stack: err && err.stack ? err.stack : "",
+            filename: event.filename || "",
+            lineno: event.lineno || 0,
+            colno: event.colno || 0
+          };
+          window.__PHGOBootstrapErrors = window.__PHGOBootstrapErrors || [];
+          window.__PHGOBootstrapErrors.push(details);
+          if (window.console && window.console.error) {
+            window.console.error(`[phgo-jalviewjs] window error ${details.name}: ${details.message}\n${details.stack}`);
+          }
+          bridge.notify("error", { message: `Bootstrap window error: ${details.message}` });
+        });
+
+        window.addEventListener("unhandledrejection", (event) => {
+          if (window.console && window.console.error) {
+            window.console.error("[phgo-jalviewjs] unhandled rejection", event.reason || event);
+          }
+          bridge.notify("error", { message: `Bootstrap unhandled rejection: ${bridge.formatValue(event.reason || "Unknown rejection")}` });
+        });
+
+        if (!self.SwingJS) {
+          bridge.notify("error", { message: "swingjs2.js was not loaded." });
+        }
+
+        window.Info = {
+          code: null,
+          main: "jalview.bin.Jalview",
+          args: bridge.args,
+          core: "jvexamplefile",
+          readyFunction: function(applet) {
+            window.setTimeout(() => {
+              bridge.adaptLayout();
+              bridge.notify("ready", {
+                appletId: applet && applet._id ? applet._id : "JalviewJSEmbedded",
+                state: bridge.collectState()
+              });
+            }, 150);
+          },
+          serverURL: "https://chemapps.stolaf.edu/jmol/jsmol/php/jsmol.php",
+          j2sPath: "/assets/jalviewjs/swingjs/j2s",
+          console: "sysoutdiv",
+          allowjavascript: true,
+          language: "en",
+          jalview_language: "en",
+          jalview_SCREEN_WIDTH: Math.max(320, window.innerWidth || document.documentElement.clientWidth || 1024),
+          jalview_SCREEN_HEIGHT: Math.max(240, window.innerHeight || document.documentElement.clientHeight || 768),
+          jalview_SCREEN_X: 0,
+          jalview_SCREEN_Y: 0,
+          jalview_EMBEDDED: true,
+          jalview_PHGO_SESSION: bridge.phgoState.session,
+          jalview_PHGO_OPEN: bridge.phgoState.open,
+          jalview_PHGO_TITLE: bridge.phgoState.title,
+          jalview_PHGO_SEQUENCE_KIND: bridge.phgoState.sequenceKind,
+          jalview_PHGO_CONVERSION_TARGET: bridge.phgoState.conversionTarget,
+          jalview_PHGO_ALIGNMENT_METHOD: bridge.phgoState.alignmentMethod,
+          jalview_PHGO_TREE_METHOD: bridge.phgoState.treeMethod,
+          jalview_SHOW_ANNOTATIONS: false
+        };
+
+        window.addEventListener("DOMContentLoaded", () => {
+          bridge.installLayoutBridge();
+          bridge.notify("loaded", { href: window.location.href, open: bridge.openTarget, args: bridge.args, state: bridge.collectState() });
+        });
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="jalview-shell">
+      <div id="jalview-desktop-div"></div>
+      <div id="jalview-alignment-div"></div>
+      <div id="jalview-structureviewer-div"></div>
+      <div id="jalview-tree-div"></div>
+      <div id="jalview-pca-div"></div>
+    </div>
+    <script>
+      try {
+        SwingJS.getApplet("JalviewJSEmbedded", window.Info);
+        if (window.__PHGOJalviewBridgeAPI && window.parent !== window) {
+          window.__PHGOJalviewBridgeAPI.notify("started", {
+            state: {
+              title: document.title,
+              hasSwingJS: !!window.SwingJS,
+              hasJalviewJSEmbedded: !!window.JalviewJSEmbedded
+            }
+          });
+        }
+      } catch (error) {
+        if (window.__PHGOJalviewBridgeAPI && window.parent !== window) {
+          window.__PHGOJalviewBridgeAPI.notify("error", { message: error && error.message ? error.message : String(error) });
+        }
+      }
+    </script>
+    <div id="sysoutdiv"></div>
+  </body>
+</html>

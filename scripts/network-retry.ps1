@@ -17,14 +17,22 @@ function Invoke-WebRequestWithRetry {
         [int]$InitialDelaySeconds = 3
     )
 
+    $targetDir = Split-Path -Parent $OutFile
+    if (-not [string]::IsNullOrWhiteSpace($targetDir)) {
+        New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+    }
+    $tempFile = "$OutFile.download"
     $attempt = 0
     $delay = [Math]::Max(1, $InitialDelaySeconds)
     while ($true) {
         $attempt++
         try {
-            Invoke-WebRequest -Uri $Uri -OutFile $OutFile
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+            Invoke-WebRequest -Uri $Uri -OutFile $tempFile
+            Move-Item -LiteralPath $tempFile -Destination $OutFile -Force
             return
         } catch {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
             if ($attempt -ge $MaxAttempts) {
                 throw

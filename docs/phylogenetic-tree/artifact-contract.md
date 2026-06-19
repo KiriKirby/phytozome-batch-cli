@@ -38,7 +38,7 @@ When PHgo reuses an existing alignment/tree because only preview metadata change
 
 The request and `input.fasta` keep the original selected sequences. PHgo does not sanitize, trim, translate, reverse-translate, or repair protein/nucleotide content before runtime execution; the runtime hands the selected data to MEGA-derived alignment/tree components and surfaces their output or error text.
 
-Reactree in-page visual state is persisted through the independent text `.pgv` PHgo Viewer Snapshot format. A `.pgv` stores the current `viewer.payload.json` data plus `viewer_state`, including Reactree layout/edit state and PHgo viewer-only panel state. Canvas `.pgo` snapshots still preserve the computation payload and panel state; browser-owned visual edits are round-tripped by exporting/opening `.pgv`.
+Reactree in-page visual state is persisted through the independent text `.pgv` PHgo Viewer Snapshot format. A `.pgv` stores the current `viewer.payload.json` data plus `viewer_state`, including Reactree layout/edit state and PHgo viewer-only panel state. Canvas `.pgo` snapshots preserve durable computation payloads, settings, tree operations, and MSA state, but deliberately drop pure UI-open state such as open menus, transient search text, current settings page, panel focus, scroll offsets, and browser viewport metadata.
 
 ## Stable Taxon IDs
 
@@ -282,7 +282,7 @@ The viewer service owns SVG/PNG/PDF/Newick export generation. Canvas does not pr
 
 Session snapshots must preserve:
 
-- latest tree tool panel state
+- latest durable tree tool settings
 - latest display-name values
 - latest run manifest
 - latest input metadata
@@ -290,14 +290,16 @@ Session snapshots must preserve:
 - aligned FASTA
 - Newick tree output
 - latest Reactree viewer payload
+- latest MSA payload, row states, and durable Jalview state
 - generated export artifacts when the viewer later exposes persisted export files
 - exported `.pgv` files when a user explicitly saves browser viewer visual state
 
 Implemented snapshot shape:
 
-- The Canvas module stores a `tree` object with the last tree panel state, last viewer payload, last run manifest, last run directory, last aligned FASTA, last Newick tree, and the computation fingerprints.
+- The Canvas module stores a `tree` object with durable tree settings, last viewer payload, last run manifest, last run directory, last aligned FASTA, last Newick tree, and the computation fingerprints.
+- The `canvas-msa-state-v1` module stores MSA row states (`green`, `yellow`, `red`), the last MSA payload/aligned FASTA, and Jalview-owned durable state such as groups, annotations, markers, and settings when available. Browser Jalview state is synchronized with PHgo through `GET`/`PUT /sessions/<id>/msa/state` so snapshot save reads the latest durable MSA state instead of relying on stale launch-time data.
 - The artifact manifest packs the last run directory's core files under `artifacts/tree/<session>/<run>/`, including `input.fasta`, `input.meta.json`, `runtime-request.json`, `runtime-response.json`, `aligned.fasta`, `tree.nwk`, `viewer.payload.json`, `run.manifest.json`, and runtime logs when they exist.
-- Snapshot open restores packed files to their original run directory, restores the Canvas tree panel state, and keeps the last payload/plan in memory so reopening the tree panel can immediately push the previous tree to the local Reactree service.
+- Snapshot open restores packed files to their original run directory, restores the Canvas tree settings, restores the MSA row/durable Jalview state, and keeps the last payload/plan in memory so reopening the tree panel can immediately push the previous tree and MSA payloads to the local viewer service.
 - Snapshot save synchronizes the last tree payload metadata from the current Canvas table before packing the snapshot. If the user changed `display_name` or the display-name source after the last tree refresh, the snapshot records those current labels in `last_payload` and updates only the preview fingerprint. Alignment/tree fingerprints and runtime artifacts are not changed, and `mega-phgo-runtime` is not rerun during snapshot save.
 - Snapshot restore rebuilds an in-memory tree run plan from the saved payload, manifest, and restored artifact files. If an older or partial snapshot has an empty `last_payload` but still contains `viewer.payload.json`, restore reads that artifact as a fallback so reopening the tree panel can still recover the rendered tree.
 - Snapshot-restored run plans keep the requested Protein/DNA target from the manifest or panel state. The next explicit refresh always reruns `mega-phgo-runtime`; only later refreshes may reuse runtime artifacts when the computation fingerprints match and the only change is label/render metadata.

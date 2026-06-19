@@ -1,13 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { Component, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
-  Button,
-  Dialog,
-  DialogActions,
-  DialogBody,
-  DialogContent,
-  DialogSurface,
-  DialogTitle,
   FluentProvider,
   webLightTheme,
 } from '@fluentui/react-components';
@@ -25,6 +18,41 @@ import {
 } from './pgv.js';
 
 const VIEWER_STATE_SCHEMA_VERSION = PGV_VIEWER_STATE_SCHEMA_VERSION;
+
+class ViewerErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { message: '' };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { message: error instanceof Error ? error.message : String(error) };
+  }
+
+  componentDidCatch(error, info) {
+    const message = error instanceof Error ? error.message : String(error);
+    window.__phgoViewerLastRenderError = { message, stack: error?.stack || '', componentStack: info?.componentStack || '' };
+    console.error('[phgo-viewer] render failed', error, info);
+  }
+
+  render() {
+    if (!this.state.message) {
+      return this.props.children;
+    }
+    return (
+      <FluentProvider theme={webLightTheme} className="phgo-viewer-provider">
+        <main className="shell">
+          <section className="phgo-warning-toast" role="alert" aria-live="assertive">
+            <p className="phgo-warning-toast-message">Tree viewer render failed: {this.state.message}</p>
+            <button type="button" className="phgo-warning-toast-close" onClick={() => this.setState({ message: '' })}>
+              Close
+            </button>
+          </section>
+        </main>
+      </FluentProvider>
+    );
+  }
+}
 
 function sessionIDFromPath() {
   const parts = window.location.pathname.split('/').filter(Boolean);
@@ -44,6 +72,12 @@ async function fetchPayload(sessionID) {
 async function fetchViewerState(sessionID) {
   const response = await fetch(`/sessions/${encodeURIComponent(sessionID)}/state`, { cache: 'no-store' });
   if (!response.ok) throw new Error(`viewer state request failed: ${response.status}`);
+  return response.json();
+}
+
+async function fetchSessionStatus(sessionID) {
+  const response = await fetch(`/sessions/${encodeURIComponent(sessionID)}/status`, { cache: 'no-store' });
+  if (!response.ok) throw new Error(`viewer status request failed: ${response.status}`);
   return response.json();
 }
 
@@ -86,6 +120,7 @@ function App() {
   const [payload, setPayload] = useState(null);
   const [initialViewerState, setInitialViewerState] = useState(null);
   const viewerStateRef = useRef({});
+  const [sessionStatus, setSessionStatus] = useState({});
   const [error, setError] = useState('');
   const [splitPercent, setSplitPercent] = useState(42);
   const splitPercentRef = useRef(splitPercent);
@@ -99,7 +134,7 @@ function App() {
   const fasta = useMemo(() => relabelFasta(payload?.aligned_fasta, payload?.metadata), [payload]);
   const viewerTitle = useMemo(() => {
     const rawTitle = String(payload?.title || payload?.metadata?.title || sessionID || '').trim();
-    return rawTitle ? `PHgo-Viewer: ${rawTitle}` : 'PHgo-Viewer';
+    return rawTitle ? `Phgotreer: ${rawTitle}` : 'Phgotreer';
   }, [payload, sessionID]);
   const preventTextSelection = (event) => {
     event.preventDefault();
@@ -108,9 +143,10 @@ function App() {
   async function reload() {
     try {
       setError('');
-      const [nextPayload, nextState] = await Promise.all([
+      const [nextPayload, nextState, nextStatus] = await Promise.all([
         fetchPayload(sessionID),
         fetchViewerState(sessionID).catch(() => ({})),
+        fetchSessionStatus(sessionID).catch(() => ({})),
       ]);
       const statePayloadStamp = nextState?.phgo?.payload_updated_at;
       const payloadStamp = nextPayload?.updated_at || '';
@@ -118,6 +154,7 @@ function App() {
       const usableState = stateMatchesPayload ? liveInitialViewerState(nextState, sessionID) : {};
       const payloadChanged = !hasLoadedPayloadRef.current || loadedPayloadStampRef.current !== payloadStamp;
       setPayload(nextPayload);
+      setSessionStatus(nextStatus || {});
       loadedPayloadStampRef.current = payloadStamp;
       hasLoadedPayloadRef.current = true;
       if (payloadChanged) {
@@ -198,6 +235,23 @@ function App() {
   }, [sessionID]);
 
   useEffect(() => installPHGOSaveBridge((message) => setError(message)), []);
+
+  useEffect(() => {
+    if (!hasTree) return undefined;
+    const stopDoubleClickSearch = (event) => {
+      const target = event.target;
+      if (target?.closest?.('.Reactree_searchPanel, .Reactree_searchBtn, .phgo-office-search')) {
+        return;
+      }
+      if (target?.closest?.('.viewer-stage .Reactree_container, .viewer-stage svg, .Reactree_taxaList, .Reactree_taxaListItem, .Reactree_leftPanel, .Reactree_sidebar')) {
+        event.preventDefault();
+        event.stopImmediatePropagation?.();
+        event.stopPropagation();
+      }
+    };
+    document.addEventListener('dblclick', stopDoubleClickSearch, true);
+    return () => document.removeEventListener('dblclick', stopDoubleClickSearch, true);
+  }, [hasTree]);
 
   useEffect(() => {
     document.title = viewerTitle;
@@ -315,24 +369,19 @@ function App() {
   return (
     <FluentProvider theme={webLightTheme} className="phgo-viewer-provider">
       <main className="shell" onSelectStart={preventTextSelection} onDragStart={preventTextSelection}>
-        <Dialog
-          open={Boolean(error)}
-          onOpenChange={(_, data) => {
-            if (!data.open) setError('');
-          }}
-        >
-          <DialogSurface className="phgo-warning-dialog">
-            <DialogBody>
-              <DialogTitle>Tree viewer warning</DialogTitle>
-              <DialogContent>
-                <p className="phgo-warning-dialog-message">{error}</p>
-              </DialogContent>
-              <DialogActions>
-                <Button appearance="primary" onClick={() => setError('')}>Close</Button>
-              </DialogActions>
-            </DialogBody>
-          </DialogSurface>
-        </Dialog>
+        {error && (
+          <section className="phgo-warning-toast" role="status" aria-live="polite">
+            <p className="phgo-warning-toast-message">{error}</p>
+            <button type="button" className="phgo-warning-toast-close" onClick={() => setError('')}>
+              Close
+            </button>
+          </section>
+        )}
+        {sessionStatus?.refreshing && (
+          <section className="phgo-warning-toast phgo-status-toast" role="status" aria-live="polite">
+            <p className="phgo-warning-toast-message">{sessionStatus.message || 'Refreshing tree and MSA...'}</p>
+          </section>
+        )}
         {hasTree && (
           <div className="viewer-stage" ref={viewerStageRef}>
             <Reactree
@@ -350,4 +399,8 @@ function App() {
   );
 }
 
-createRoot(document.getElementById('root')).render(<App />);
+createRoot(document.getElementById('root')).render(
+  <ViewerErrorBoundary>
+    <App />
+  </ViewerErrorBoundary>,
+);

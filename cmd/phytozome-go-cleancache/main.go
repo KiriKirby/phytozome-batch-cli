@@ -456,6 +456,8 @@ func chooseLaunchWhileDownloading(appDir string, args []string, dbPath string, p
 	defer cancel()
 	stateCh := make(chan progressState, 64)
 	doneCh := make(chan error, 1)
+	var latest progressState
+	progressVisible := false
 	setState := func(state progressState) {
 		select {
 		case stateCh <- state:
@@ -479,7 +481,7 @@ func chooseLaunchWhileDownloading(appDir string, args []string, dbPath string, p
 	_, _ = fmt.Fprintf(os.Stdout, "%s...\n", label)
 	_, _ = fmt.Fprintf(os.Stdout, "Writing database to: %s\n", dbPath)
 	showPrompt := func() {
-		_, _ = fmt.Fprintf(os.Stdout, "%s ", prompt)
+		_, _ = fmt.Fprintf(os.Stdout, "%s ", startupDownloadPromptText(prompt))
 	}
 	showPrompt()
 
@@ -497,23 +499,30 @@ func chooseLaunchWhileDownloading(appDir string, args []string, dbPath string, p
 	for {
 		select {
 		case state := <-stateCh:
-			progress.Update(state.line, state.done)
-			if !launchNow && !state.done {
-				_, _ = fmt.Fprintln(os.Stdout)
-				showPrompt()
+			latest = state
+			if progressVisible {
+				progress.Update(state.line, state.done)
 			}
 		case answer := <-answerCh:
 			switch answer {
 			case "y", "yes":
 				launchNow = true
+				progressVisible = true
 				writeStartupStatus(appDir, startupstate.StatusDownloading, true, "Symbol name library is downloading.", dbPath)
 				_, _ = fmt.Fprintln(os.Stdout)
+				if strings.TrimSpace(latest.line) != "" {
+					progress.Update(latest.line, latest.done)
+				}
 				_, _ = fmt.Fprintln(os.Stdout, "Opening phytozome GO in a new tab while download continues in tab 0...")
 				if err := launchMainProgramInNewTab(args); err != nil {
 					return false, err
 				}
 			case "", "n", "no":
+				progressVisible = true
 				_, _ = fmt.Fprintln(os.Stdout)
+				if strings.TrimSpace(latest.line) != "" {
+					progress.Update(latest.line, latest.done)
+				}
 			default:
 				_, _ = fmt.Fprintln(os.Stdout)
 				_, _ = fmt.Fprintln(os.Stdout, "Please enter y or n.")
@@ -535,6 +544,14 @@ func chooseLaunchWhileDownloading(appDir string, args []string, dbPath string, p
 			return launchNow, nil
 		}
 	}
+}
+
+func startupDownloadPromptText(prompt string) string {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return "Downloading in background."
+	}
+	return "Downloading in background. " + prompt
 }
 
 func downloadSymbolNameDatabaseWithProgress(appDir string, label string, dbPath string, plan labelname.GeneInfoInstallPlan, allowUse bool) error {

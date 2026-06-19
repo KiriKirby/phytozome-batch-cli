@@ -157,6 +157,30 @@ func TestConsoleProgressFinishKeepsLastDetailedLineOnFailure(t *testing.T) {
 	}
 }
 
+func TestStartupDownloadPromptTextIncludesDownloadingStatusAndPrompt(t *testing.T) {
+	got := startupDownloadPromptText("Open phytozome GO while the symbol name library downloads? [y/N]:")
+	if !strings.Contains(got, "Downloading in background.") {
+		t.Fatalf("startupDownloadPromptText missing background status: %q", got)
+	}
+	if !strings.Contains(got, "Open phytozome GO while the symbol name library downloads? [y/N]:") {
+		t.Fatalf("startupDownloadPromptText missing prompt: %q", got)
+	}
+}
+
+func TestConsoleProgressSingleLineRefreshUsesCarriageReturn(t *testing.T) {
+	var out bytes.Buffer
+	progress := newConsoleProgress(&out)
+	progress.Update("Downloading prebuilt symbol name database... | 68.8% | 1.9 GiB/2.8 GiB | 89.1 MiB/s | 3 workers", false)
+	progress.Update("Downloading prebuilt symbol name database... | 69.7% | 2.0 GiB/2.8 GiB | 88.9 MiB/s | 3 workers", false)
+	text := out.String()
+	if strings.Count(text, "\n") != 0 {
+		t.Fatalf("console progress unexpectedly wrote newline during refresh:\n%s", text)
+	}
+	if strings.Count(text, "\r") < 2 {
+		t.Fatalf("console progress did not use carriage returns for single-line refresh:\n%s", text)
+	}
+}
+
 func TestUpdatePendingMarkerRoundTrip(t *testing.T) {
 	appDir := t.TempDir()
 	if err := writeUpdatePendingMarker(appDir, "v1"); err != nil {

@@ -127,15 +127,19 @@ type BlastWizard struct {
 	proteinSequenceMiss  map[string]error
 	proteinSequenceGroup singleflight.Group
 
-	canvasTreeViewerMu     sync.Mutex
-	canvasTreeViewer       *phylo.ViewerServer
-	canvasTreeViewerCancel context.CancelFunc
-	canvasTreeLastPayload  phylo.ViewerPayload
-	canvasTreeViewerState  json.RawMessage
-	canvasTreeLastPlan     phylo.RunPlan
-	canvasTreeForceCompute bool
-	canvasTreeRefreshRun   func(context.Context, canvasLaunchState, phylo.TreeSettings) error
-	canvasTreeRecover      func(description string, backTarget error, allowSkip bool) (string, error)
+	canvasTreeViewerMu       sync.Mutex
+	canvasTreeViewer         *phylo.ViewerServer
+	canvasTreeViewerCancel   context.CancelFunc
+	canvasTreeLastPayload    phylo.ViewerPayload
+	canvasTreeLastMSAPayload phylo.ViewerPayload
+	canvasTreeMSAState       phylo.MSAState
+	canvasTreeViewerState    json.RawMessage
+	canvasTreeLastPlan       phylo.RunPlan
+	canvasTreeMSARowMap      map[string]phylo.InputRecord
+	canvasTreeForceCompute   bool
+	canvasTreeRefreshRun     func(context.Context, canvasLaunchState, phylo.TreeSettings) error
+	canvasTreeMSARefreshRun  func(context.Context, canvasLaunchState, phylo.TreeSettings, phylo.MSAApplyRequest) error
+	canvasTreeRecover        func(description string, backTarget error, allowSkip bool) (string, error)
 }
 
 type InstanceLaunchRequest struct {

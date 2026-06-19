@@ -658,6 +658,7 @@ type CanvasSelection struct {
 	ActionRow     int
 	SaveBaseName  string
 	WriteSession  bool
+	MSAFlagsByRun [][]bool
 	TreeSettings  phylo.TreeSettings
 	TreePanel     tui.CanvasTreePanelState
 }
@@ -5564,6 +5565,7 @@ func (p *Prompter) SelectCanvas(initial []model.CanvasItem, currentItem int, nex
 				Rows:        rows,
 				RowNumbers:  canvasItemRowNumbers(*item),
 				Selected:    selected,
+				MSAFlags:    append([]bool(nil), item.MSAFlags...),
 			})
 		}
 		return out
@@ -5672,6 +5674,7 @@ func (p *Prompter) SelectCanvas(initial []model.CanvasItem, currentItem int, nex
 						Rows:        rows,
 						RowNumbers:  canvasItemRowNumbers(*item),
 						Selected:    selected,
+						MSAFlags:    append([]bool(nil), item.MSAFlags...),
 					})
 				}
 				return nextView
@@ -5774,6 +5777,9 @@ func (p *Prompter) SelectCanvas(initial []model.CanvasItem, currentItem int, nex
 				continue
 			}
 			items[i].Selected = append([]bool(nil), result.SelectedByRun[i]...)
+			if i < len(result.MSAFlagsByRun) && len(result.MSAFlagsByRun[i]) == len(items[i].Rows) {
+				items[i].MSAFlags = append([]bool(nil), result.MSAFlagsByRun[i]...)
+			}
 			items[i].Subtitle = canvasItemSelectionSummary(len(items[i].Rows), items[i].Selected)
 		}
 		return CanvasSelection{
@@ -5783,6 +5789,7 @@ func (p *Prompter) SelectCanvas(initial []model.CanvasItem, currentItem int, nex
 			GenerateFile:  result.GenerateFile || result.DoneAll,
 			Action:        result.Action,
 			ActionRow:     result.ActionRow,
+			MSAFlagsByRun: cloneBoolMatrixPrompt(result.MSAFlagsByRun),
 			TreeSettings:  treeSettingsFromPanel(result.TreePanel),
 			TreePanel:     result.TreePanel,
 		}, nil
@@ -6179,6 +6186,7 @@ func cloneCanvasItems(items []model.CanvasItem) []model.CanvasItem {
 			Subtitle:      items[i].Subtitle,
 			Kind:          items[i].Kind,
 			Selected:      append([]bool(nil), items[i].Selected...),
+			MSAFlags:      append([]bool(nil), items[i].MSAFlags...),
 			SourceLabel:   items[i].SourceLabel,
 			ImportedFrom:  items[i].ImportedFrom,
 			ActiveColumns: append([]model.CanvasColumn(nil), items[i].ActiveColumns...),

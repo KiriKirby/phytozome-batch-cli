@@ -55,19 +55,24 @@ if ($Platform -ne (Resolve-HostPlatform)) {
 function Invoke-RuntimeProbe {
     param([string]$Executable)
 
-    $stdoutPath = Join-Path $env:TEMP ("phgo-runtime-probe-" + [guid]::NewGuid().ToString() + ".out")
-    $stderrPath = Join-Path $env:TEMP ("phgo-runtime-probe-" + [guid]::NewGuid().ToString() + ".err")
-    try {
-        $proc = Start-Process -FilePath $Executable -ArgumentList "--phgo-runtime-probe" -NoNewWindow -PassThru -Wait -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
-        $stdout = if (Test-Path -LiteralPath $stdoutPath -PathType Leaf) { Get-Content -LiteralPath $stdoutPath -Raw } else { "" }
-        $stderr = if (Test-Path -LiteralPath $stderrPath -PathType Leaf) { Get-Content -LiteralPath $stderrPath -Raw } else { "" }
-        return [pscustomobject]@{
-            ExitCode = $proc.ExitCode
-            Output = (($stdout + "`n" + $stderr).Trim())
-        }
-    } finally {
-        Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $Executable
+    $psi.Arguments = "--phgo-runtime-probe"
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+
+    $proc = New-Object System.Diagnostics.Process
+    $proc.StartInfo = $psi
+    $proc.Start() | Out-Null
+    $stdout = $proc.StandardOutput.ReadToEnd()
+    $stderr = $proc.StandardError.ReadToEnd()
+    $proc.WaitForExit()
+
+    return [pscustomobject]@{
+        ExitCode = $proc.ExitCode
+        Output = (($stdout + "`n" + $stderr).Trim())
     }
 }
 

@@ -31,7 +31,7 @@ import (
 const (
 	FileExtension = ".pgo"
 	FormatName    = "phgo-session-snapshot"
-	FormatVersion = "2.7"
+	FormatVersion = "2.8"
 
 	contextModuleName       = "context"
 	keywordModuleName       = "keyword-result"
@@ -41,6 +41,7 @@ const (
 	keywordReviewName       = "keyword-review-state"
 	blastReviewName         = "blast-review-state"
 	canvasReviewName        = "canvas-review-state"
+	canvasMSAName           = "canvas-msa-state"
 	sequenceCacheName       = "sequence-cache"
 	exportSettingsName      = "export-settings"
 	externalReferencesName  = "external-references"
@@ -55,6 +56,7 @@ const (
 	keywordReviewModulePath = "modules/keyword-review-state-v2.xml"
 	blastReviewModulePath   = "modules/blast-review-state-v2.xml"
 	canvasReviewModulePath  = "modules/canvas-review-state-v2.xml"
+	canvasMSAModulePath     = "modules/canvas-msa-state-v1.xml"
 	sequenceCacheModulePath = "modules/sequence-cache-v2.xml"
 	exportModulePath        = "modules/export-settings-v2.xml"
 	referenceModulePath     = "modules/external-references-v2.xml"
@@ -69,6 +71,7 @@ type Snapshot struct {
 	KeywordSource      *KeywordSourceStateV4
 	Blast              *BlastResultV2
 	Canvas             *CanvasResultV2
+	CanvasMSA          *CanvasMSAV1
 	KeywordReview      *KeywordReviewStateV2
 	BlastReview        *BlastReviewStateV2
 	CanvasReview       *CanvasReviewStateV2
@@ -113,26 +116,26 @@ type KeywordSourceStateV4 struct {
 }
 
 type NCBIKeywordSourceV4 struct {
-	EntrezDatabase    string   `json:"entrez_database"`
-	RecordType        string   `json:"record_type"`
-	EUtilitiesBaseURL string   `json:"eutilities_base_url"`
-	EngineSchema      string   `json:"engine_schema"`
-	Accessions        []string `json:"accessions,omitempty"`
-	UIDs              []string `json:"uids,omitempty"`
-	RequestedIDs      []string `json:"requested_ids,omitempty"`
-	ReplacementTargets []string `json:"replacement_targets,omitempty"`
+	EntrezDatabase       string   `json:"entrez_database"`
+	RecordType           string   `json:"record_type"`
+	EUtilitiesBaseURL    string   `json:"eutilities_base_url"`
+	EngineSchema         string   `json:"engine_schema"`
+	Accessions           []string `json:"accessions,omitempty"`
+	UIDs                 []string `json:"uids,omitempty"`
+	RequestedIDs         []string `json:"requested_ids,omitempty"`
+	ReplacementTargets   []string `json:"replacement_targets,omitempty"`
 	ReplacementDecisions []string `json:"replacement_decisions,omitempty"`
-	LinkResolution    string   `json:"link_resolution,omitempty"`
-	LinkedFromDB      string   `json:"linked_from_db,omitempty"`
-	LinkedToDB        string   `json:"linked_to_db,omitempty"`
-	LinkedFromTypes   []string `json:"linked_from_search_types,omitempty"`
-	LinkedToTypes     []string `json:"linked_to_search_types,omitempty"`
-	LinkNames         []string `json:"link_names,omitempty"`
-	LinkSourceIDs     []string `json:"link_source_ids,omitempty"`
-	LinkTargetIDs     []string `json:"link_target_ids,omitempty"`
-	SearchTypeIDs     []string `json:"search_type_ids,omitempty"`
-	ResultDomains     []string `json:"result_domains,omitempty"`
-	GroupSearchTypes  []string `json:"group_search_types,omitempty"`
+	LinkResolution       string   `json:"link_resolution,omitempty"`
+	LinkedFromDB         string   `json:"linked_from_db,omitempty"`
+	LinkedToDB           string   `json:"linked_to_db,omitempty"`
+	LinkedFromTypes      []string `json:"linked_from_search_types,omitempty"`
+	LinkedToTypes        []string `json:"linked_to_search_types,omitempty"`
+	LinkNames            []string `json:"link_names,omitempty"`
+	LinkSourceIDs        []string `json:"link_source_ids,omitempty"`
+	LinkTargetIDs        []string `json:"link_target_ids,omitempty"`
+	SearchTypeIDs        []string `json:"search_type_ids,omitempty"`
+	ResultDomains        []string `json:"result_domains,omitempty"`
+	GroupSearchTypes     []string `json:"group_search_types,omitempty"`
 }
 
 type KeywordSourceStateV3 = KeywordSourceStateV4
@@ -179,6 +182,12 @@ type CanvasTreeV2 struct {
 	LastNewick       string                   `json:"last_newick,omitempty"`
 	Fingerprints     phylo.Fingerprints       `json:"fingerprints"`
 	ArtifactPaths    []string                 `json:"artifact_paths,omitempty"`
+}
+
+type CanvasMSAV1 struct {
+	State            phylo.MSAState      `json:"state"`
+	LastPayload      phylo.ViewerPayload `json:"last_payload,omitempty"`
+	LastAlignedFASTA string              `json:"last_aligned_fasta,omitempty"`
 }
 
 func IsLegacyTreeSnapshot(snapshot Snapshot) bool {
@@ -229,6 +238,7 @@ type CanvasItemV2 struct {
 	Kind          model.CanvasKind     `json:"kind"`
 	Rows          []CanvasRowV2        `json:"rows"`
 	Selected      []bool               `json:"selected"`
+	MSAFlags      []bool               `json:"msa_flags,omitempty"`
 	SourceLabel   string               `json:"source_label,omitempty"`
 	ImportedFrom  string               `json:"imported_from,omitempty"`
 	ActiveColumns []model.CanvasColumn `json:"active_columns,omitempty"`
@@ -535,14 +545,17 @@ func WriteFile(path string, snapshot Snapshot) error {
 	if snapshot.Keyword != nil {
 		addModule(keywordModuleName, "2", keywordModulePath, snapshot.Keyword)
 	}
-		if snapshot.KeywordSource != nil {
-			addModule(keywordSourceName, "4", keywordSourceModulePath, snapshot.KeywordSource)
+	if snapshot.KeywordSource != nil {
+		addModule(keywordSourceName, "4", keywordSourceModulePath, snapshot.KeywordSource)
 	}
 	if snapshot.Blast != nil {
 		addModule(blastModuleName, "2", blastModulePath, snapshot.Blast)
 	}
 	if snapshot.Canvas != nil {
 		addModule(canvasModuleName, "2", canvasModulePath, snapshot.Canvas)
+	}
+	if snapshot.CanvasMSA != nil {
+		addModule(canvasMSAName, "1", canvasMSAModulePath, snapshot.CanvasMSA)
 	}
 	if snapshot.KeywordReview != nil {
 		addModule(keywordReviewName, "2", keywordReviewModulePath, snapshot.KeywordReview)
@@ -689,6 +702,12 @@ func ReadFile(path string) (Snapshot, error) {
 				return Snapshot{}, err
 			}
 			snapshot.Canvas = &canvas
+		case canvasMSAName:
+			var msa CanvasMSAV1
+			if err := readModule(file, &msa); err != nil {
+				return Snapshot{}, err
+			}
+			snapshot.CanvasMSA = &msa
 		case keywordReviewName:
 			var review KeywordReviewStateV2
 			if err := readModule(file, &review); err != nil {

@@ -531,6 +531,9 @@ func (w *BlastWizard) reviewCanvasSnapshot(ctx context.Context, snapshot session
 	if module.Tree != nil {
 		w.restoreCanvasTreeSnapshot(*module.Tree, legacyTreeSnapshot)
 	}
+	if snapshot.CanvasMSA != nil {
+		w.restoreCanvasMSASnapshot(*snapshot.CanvasMSA)
+	}
 	w.hydrateCommonSnapshotState(snapshot)
 	w.hydrateRuntimeCache(snapshot.RuntimeCache)
 	w.hydrateSnapshotSequenceCache(snapshot.SequenceCache)
@@ -682,6 +685,7 @@ func (w *BlastWizard) restoreCanvasTreeSnapshot(tree sessionsnapshot.CanvasTreeV
 		plan.InputFASTA = phylo.InputFASTA(records)
 	}
 	w.canvasTreeLastPlan = plan
+	w.updateCanvasTreeMSARowMap(plan)
 	w.canvasTreeForceCompute = true
 	if hasPayload {
 		w.canvasTreeLastPayload = tree.LastPayload
@@ -697,6 +701,17 @@ func (w *BlastWizard) restoreCanvasTreeSnapshot(tree sessionsnapshot.CanvasTreeV
 		patched.AlignmentParams = cloneTreeParamMap(settings.AlignmentParams)
 		patched.TreeParams = cloneTreeParamMap(settings.TreeParams)
 		w.prompt.RestoreCanvasTreePanelState(canvasStateKey("canvas"), patched)
+	}
+}
+
+func (w *BlastWizard) restoreCanvasMSASnapshot(msa sessionsnapshot.CanvasMSAV1) {
+	w.canvasTreeLastMSAPayload = msa.LastPayload
+	if strings.TrimSpace(w.canvasTreeLastMSAPayload.AlignedFASTA) == "" {
+		w.canvasTreeLastMSAPayload.AlignedFASTA = strings.TrimSpace(msa.LastAlignedFASTA)
+	}
+	w.canvasTreeMSAState = msa.State
+	if w.canvasTreeMSAState.SchemaVersion == 0 && len(w.canvasTreeMSAState.Rows) > 0 {
+		w.canvasTreeMSAState.SchemaVersion = 1
 	}
 }
 
@@ -757,6 +772,7 @@ func canvasItemsFromSnapshot(items []sessionsnapshot.CanvasItemV1) []model.Canva
 		out[i].Title = items[i].Title
 		out[i].Kind = items[i].Kind
 		out[i].Selected = append([]bool(nil), items[i].Selected...)
+		out[i].MSAFlags = append([]bool(nil), items[i].MSAFlags...)
 		out[i].SourceLabel = items[i].SourceLabel
 		out[i].ImportedFrom = items[i].ImportedFrom
 		out[i].ActiveColumns = append([]model.CanvasColumn(nil), items[i].ActiveColumns...)
@@ -1746,26 +1762,26 @@ func snapshotKeywordSourceState(src source.DataSource, groups []model.KeywordSea
 		}
 		state.Extra["ncbi_search_type_id"] = searchTypeID
 		state.NCBI = &sessionsnapshot.NCBIKeywordSourceV4{
-			EntrezDatabase:    firstNonEmpty(keywordSnapshotFirstExtraValue(groups, "ncbi_entrez_database"), "protein"),
-			RecordType:        firstNonEmpty(keywordSnapshotFirstExtraValue(groups, "ncbi_record_type"), "protein"),
-			EUtilitiesBaseURL: firstNonEmpty(keywordSnapshotFirstExtraValue(groups, "ncbi_eutilities_base_url"), "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"),
-			EngineSchema:      firstNonEmpty(keywordSnapshotFirstExtraValue(groups, "ncbi_engine_schema"), "ncbi-eutilities-keyword-v4"),
-			Accessions:        keywordSnapshotExtraValues(groups, "ncbi_accession"),
-			UIDs:              keywordSnapshotExtraValues(groups, "ncbi_uid"),
-			RequestedIDs:      keywordSnapshotExtraValues(groups, "ncbi_requested_accession"),
-			ReplacementTargets: keywordSnapshotExtraValues(groups, "ncbi_replacement_accession"),
+			EntrezDatabase:       firstNonEmpty(keywordSnapshotFirstExtraValue(groups, "ncbi_entrez_database"), "protein"),
+			RecordType:           firstNonEmpty(keywordSnapshotFirstExtraValue(groups, "ncbi_record_type"), "protein"),
+			EUtilitiesBaseURL:    firstNonEmpty(keywordSnapshotFirstExtraValue(groups, "ncbi_eutilities_base_url"), "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"),
+			EngineSchema:         firstNonEmpty(keywordSnapshotFirstExtraValue(groups, "ncbi_engine_schema"), "ncbi-eutilities-keyword-v4"),
+			Accessions:           keywordSnapshotExtraValues(groups, "ncbi_accession"),
+			UIDs:                 keywordSnapshotExtraValues(groups, "ncbi_uid"),
+			RequestedIDs:         keywordSnapshotExtraValues(groups, "ncbi_requested_accession"),
+			ReplacementTargets:   keywordSnapshotExtraValues(groups, "ncbi_replacement_accession"),
 			ReplacementDecisions: keywordSnapshotExtraValues(groups, "ncbi_replacement_decision"),
-			LinkResolution:    keywordSnapshotFirstExtraValue(groups, "ncbi_link_resolution"),
-			LinkedFromDB:      keywordSnapshotFirstExtraValue(groups, "ncbi_linked_from_db"),
-			LinkedToDB:        keywordSnapshotFirstExtraValue(groups, "ncbi_linked_to_db"),
-			LinkedFromTypes:   keywordSnapshotExtraValues(groups, "ncbi_linked_from_search_type_id"),
-			LinkedToTypes:     keywordSnapshotExtraValues(groups, "ncbi_linked_to_search_type_id"),
-			LinkNames:         keywordSnapshotExtraValues(groups, "ncbi_linkname"),
-			LinkSourceIDs:     keywordSnapshotCSVExtraValues(groups, "ncbi_link_source_ids"),
-			LinkTargetIDs:     keywordSnapshotCSVExtraValues(groups, "ncbi_link_target_ids"),
-			SearchTypeIDs:     keywordSnapshotExtraValues(groups, "ncbi_search_type_id"),
-			ResultDomains:     keywordSnapshotExtraValues(groups, "ncbi_result_domain"),
-			GroupSearchTypes:  keywordSnapshotSearchTypes(groups),
+			LinkResolution:       keywordSnapshotFirstExtraValue(groups, "ncbi_link_resolution"),
+			LinkedFromDB:         keywordSnapshotFirstExtraValue(groups, "ncbi_linked_from_db"),
+			LinkedToDB:           keywordSnapshotFirstExtraValue(groups, "ncbi_linked_to_db"),
+			LinkedFromTypes:      keywordSnapshotExtraValues(groups, "ncbi_linked_from_search_type_id"),
+			LinkedToTypes:        keywordSnapshotExtraValues(groups, "ncbi_linked_to_search_type_id"),
+			LinkNames:            keywordSnapshotExtraValues(groups, "ncbi_linkname"),
+			LinkSourceIDs:        keywordSnapshotCSVExtraValues(groups, "ncbi_link_source_ids"),
+			LinkTargetIDs:        keywordSnapshotCSVExtraValues(groups, "ncbi_link_target_ids"),
+			SearchTypeIDs:        keywordSnapshotExtraValues(groups, "ncbi_search_type_id"),
+			ResultDomains:        keywordSnapshotExtraValues(groups, "ncbi_result_domain"),
+			GroupSearchTypes:     keywordSnapshotSearchTypes(groups),
 		}
 	}
 	return state

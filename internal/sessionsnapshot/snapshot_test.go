@@ -52,26 +52,26 @@ func TestWriteReadKeywordSnapshotRoundTrip(t *testing.T) {
 			SearchTypes:  []string{"NCBI protein accession"},
 			Terms:        []string{"XP_015650724.1"},
 			NCBI: &NCBIKeywordSourceV4{
-				EntrezDatabase:    "clinvar",
-				RecordType:        "clinvar",
-				EUtilitiesBaseURL: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils",
-				EngineSchema:      "ncbi-eutilities-keyword-v4",
-				Accessions:        []string{"XP_015650724.1"},
-				UIDs:              []string{"123"},
-				RequestedIDs:      []string{"RCV000000001"},
-				ReplacementTargets: []string{"RCV000000999"},
+				EntrezDatabase:       "clinvar",
+				RecordType:           "clinvar",
+				EUtilitiesBaseURL:    "https://eutils.ncbi.nlm.nih.gov/entrez/eutils",
+				EngineSchema:         "ncbi-eutilities-keyword-v4",
+				Accessions:           []string{"XP_015650724.1"},
+				UIDs:                 []string{"123"},
+				RequestedIDs:         []string{"RCV000000001"},
+				ReplacementTargets:   []string{"RCV000000999"},
 				ReplacementDecisions: []string{"new"},
-				LinkResolution:    "elink",
-				LinkedFromDB:      "gene",
-				LinkedToDB:        "clinvar",
-				LinkedFromTypes:   []string{"gene"},
-				LinkedToTypes:     []string{"clinvar"},
-				LinkNames:         []string{"gene_clinvar"},
-				LinkSourceIDs:     []string{"4345054"},
-				LinkTargetIDs:     []string{"123"},
-				SearchTypeIDs:     []string{"clinvar"},
-				ResultDomains:     []string{"variant-clinical"},
-				GroupSearchTypes:  []string{"NCBI clinvar accession"},
+				LinkResolution:       "elink",
+				LinkedFromDB:         "gene",
+				LinkedToDB:           "clinvar",
+				LinkedFromTypes:      []string{"gene"},
+				LinkedToTypes:        []string{"clinvar"},
+				LinkNames:            []string{"gene_clinvar"},
+				LinkSourceIDs:        []string{"4345054"},
+				LinkTargetIDs:        []string{"123"},
+				SearchTypeIDs:        []string{"clinvar"},
+				ResultDomains:        []string{"variant-clinical"},
+				GroupSearchTypes:     []string{"NCBI clinvar accession"},
 			},
 		},
 		KeywordReview: &KeywordReviewStateV1{
@@ -288,6 +288,7 @@ func TestWriteReadCanvasSnapshotRoundTrip(t *testing.T) {
 					{Kind: model.CanvasKindFasta, FASTA: &model.QuerySequenceSource{LabelName: "query1", Annotation: ">query1\nMSTNPKPQR"}},
 				},
 				Selected: []bool{true, false},
+				MSAFlags: []bool{false, true},
 			}},
 			CurrentItem:   0,
 			NextNumericID: 3,
@@ -321,6 +322,25 @@ func TestWriteReadCanvasSnapshotRoundTrip(t *testing.T) {
 				Fingerprints:     phylo.Fingerprints{Alignment: "a", Tree: "t", Preview: "p"},
 				ArtifactPaths:    []string{"artifacts/tree/canvas/run/tree.nwk"},
 			},
+		},
+		CanvasMSA: &CanvasMSAV1{
+			State: phylo.MSAState{
+				SchemaVersion: 1,
+				UpdatedAt:     time.Now(),
+				Rows: []phylo.MSASelectionRow{
+					{TaxonID: "PHGOT000001", DisplayName: "PAL1", Index: 0, State: "green"},
+					{TaxonID: "PHGOT000002", DisplayName: "query1", Index: 1, State: "yellow"},
+				},
+				Settings: map[string]any{"wrap": false},
+				Groups:   []map[string]any{{"name": "manual group", "start": float64(1), "end": float64(3)}},
+			},
+			LastPayload: phylo.ViewerPayload{
+				SchemaVersion: 1,
+				SessionID:     "canvas",
+				UpdatedAt:     time.Now(),
+				AlignedFASTA:  ">PHGOT000001\nMPEP\n>PHGOT000002\nMSEQ\n",
+			},
+			LastAlignedFASTA: ">PHGOT000001\nMPEP\n>PHGOT000002\nMSEQ\n",
 		},
 		SequenceCache: &SequenceCacheV1{
 			Entries: []SequenceCacheEntryV1{{
@@ -363,6 +383,9 @@ func TestWriteReadCanvasSnapshotRoundTrip(t *testing.T) {
 	if len(out.Canvas.Items[0].ActiveColumns) == 0 {
 		t.Fatalf("canvas active columns should round-trip: %#v", out.Canvas.Items[0])
 	}
+	if len(out.Canvas.Items[0].MSAFlags) != 2 || !out.Canvas.Items[0].MSAFlags[1] {
+		t.Fatalf("canvas MSA flags should round-trip: %#v", out.Canvas.Items[0].MSAFlags)
+	}
 	if out.Canvas.Items[0].Rows[0].RowNumber != 0 || out.Canvas.Items[0].Rows[1].RowNumber != 0 {
 		t.Fatalf("canvas row number payload mismatch: %#v", out.Canvas.Items[0].Rows)
 	}
@@ -374,6 +397,12 @@ func TestWriteReadCanvasSnapshotRoundTrip(t *testing.T) {
 	}
 	if out.Canvas.Tree.LastManifest.SchemaVersion != 1 || out.Canvas.Tree.Fingerprints.Tree != "t" {
 		t.Fatalf("canvas tree manifest/fingerprints mismatch: %#v", out.Canvas.Tree)
+	}
+	if out.CanvasMSA == nil || len(out.CanvasMSA.State.Rows) != 2 || out.CanvasMSA.State.Rows[1].State != "yellow" {
+		t.Fatalf("canvas MSA state did not round-trip: %#v", out.CanvasMSA)
+	}
+	if len(out.CanvasMSA.State.Groups) != 1 || out.CanvasMSA.LastPayload.AlignedFASTA == "" {
+		t.Fatalf("canvas MSA groups/payload did not round-trip: %#v", out.CanvasMSA)
 	}
 	if out.CanvasReview == nil || !out.CanvasReview.SelectionState.Valid || out.CanvasReview.SelectionState.ControlMode != 2 {
 		t.Fatalf("canvas review state did not round-trip: %#v", out.CanvasReview)

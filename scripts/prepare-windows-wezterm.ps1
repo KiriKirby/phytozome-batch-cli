@@ -20,51 +20,72 @@ $release = Resolve-WezTermWindowsRelease $Version
 $preparedDir = Get-PreparedWindowsWezTermDir $repoRoot $release.Tag
 $downloadZip = Join-Path $cacheRoot $release.ZipName
 $extractDir = Join-Path $cacheRoot ("extract-" + [IO.Path]::GetFileNameWithoutExtension($release.ZipName))
+$lockPath = Join-Path $cacheRoot "prepare.lock"
 
 New-Item -ItemType Directory -Force -Path $cacheRoot | Out-Null
 
-if ($Force) {
+$lockStream = $null
+try {
+    $deadline = (Get-Date).AddMinutes(3)
+    while ($true) {
+        try {
+            $lockStream = [System.IO.File]::Open($lockPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+            break
+        } catch {
+            if ((Get-Date) -ge $deadline) {
+                throw "Timed out waiting for the Windows WezTerm preparation lock: $lockPath"
+            }
+            Start-Sleep -Milliseconds 500
+        }
+    }
+
+    if ($Force) {
+        Remove-Item -LiteralPath $preparedDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    if (-not (Test-Path -LiteralPath $downloadZip -PathType Leaf)) {
+        Invoke-WebRequestWithRetry -Uri $release.URL -OutFile $downloadZip
+    }
+
+    $needsExtract = $Force -or -not (Test-Path -LiteralPath $extractDir -PathType Container)
+    if (-not $needsExtract) {
+        $existingRoot = Get-ChildItem -LiteralPath $extractDir -Directory | Select-Object -First 1
+        if (-not $existingRoot) {
+            $needsExtract = $true
+        }
+    }
+
+    if ($needsExtract) {
+        Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+        Expand-Archive -LiteralPath $downloadZip -DestinationPath $extractDir -Force
+    }
+
+    $wezRoot = Get-ChildItem -LiteralPath $extractDir -Directory | Select-Object -First 1
+    if (-not $wezRoot) {
+        throw "Could not find extracted WezTerm directory in: $extractDir"
+    }
+
     Remove-Item -LiteralPath $preparedDir -Recurse -Force -ErrorAction SilentlyContinue
-}
+    New-Item -ItemType Directory -Force -Path $preparedDir | Out-Null
+    Copy-WezTermRuntimeFiles -WezRoot $wezRoot.FullName -Destination $preparedDir
+    Write-PhytozomeWezTermConfig -Path (Join-Path $preparedDir "wezterm.lua") -Version "dev"
 
-if (-not (Test-Path -LiteralPath $downloadZip -PathType Leaf)) {
-    Invoke-WebRequestWithRetry -Uri $release.URL -OutFile $downloadZip
-}
+    & (Join-Path $PSScriptRoot "update-windows-icon.ps1") -SmallSource "docs\logo3small.png" -LargeSource "docs\logo3large.png"
+    & (Join-Path $PSScriptRoot "set-exe-icon.ps1") -ExePath (Join-Path $preparedDir "wezterm.bin") -IconPath (Join-Path $repoRoot "cmd\phytozome-go-winlauncher\phytozome-go.ico")
 
-$needsExtract = $Force -or -not (Test-Path -LiteralPath $extractDir -PathType Container)
-if (-not $needsExtract) {
-    $existingRoot = Get-ChildItem -LiteralPath $extractDir -Directory | Select-Object -First 1
-    if (-not $existingRoot) {
-        $needsExtract = $true
+    Push-Location $repoRoot
+    try {
+        go build -trimpath -ldflags="-H=windowsgui -X main.version=dev" -o (Join-Path $preparedDir "phytozome-go.exe") .\cmd\phytozome-go-winlauncher
+    } finally {
+        Pop-Location
+    }
+
+    Write-Host "Prepared Windows WezTerm runtime:"
+    Write-Host "  $preparedDir"
+    Write-Host "Release:"
+    Write-Host "  $($release.Tag)"
+} finally {
+    if ($lockStream -ne $null) {
+        $lockStream.Dispose()
     }
 }
-
-if ($needsExtract) {
-    Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
-    Expand-Archive -LiteralPath $downloadZip -DestinationPath $extractDir -Force
-}
-
-$wezRoot = Get-ChildItem -LiteralPath $extractDir -Directory | Select-Object -First 1
-if (-not $wezRoot) {
-    throw "Could not find extracted WezTerm directory in: $extractDir"
-}
-
-Remove-Item -LiteralPath $preparedDir -Recurse -Force -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force -Path $preparedDir | Out-Null
-Copy-WezTermRuntimeFiles -WezRoot $wezRoot.FullName -Destination $preparedDir
-Write-PhytozomeWezTermConfig -Path (Join-Path $preparedDir "wezterm.lua") -Version "dev"
-
-& (Join-Path $PSScriptRoot "update-windows-icon.ps1") -SmallSource "docs\logo3small.png" -LargeSource "docs\logo3large.png"
-& (Join-Path $PSScriptRoot "set-exe-icon.ps1") -ExePath (Join-Path $preparedDir "wezterm.bin") -IconPath (Join-Path $repoRoot "cmd\phytozome-go-winlauncher\phytozome-go.ico")
-
-Push-Location $repoRoot
-try {
-    go build -trimpath -ldflags="-H=windowsgui -X main.version=dev" -o (Join-Path $preparedDir "phytozome-go.exe") .\cmd\phytozome-go-winlauncher
-} finally {
-    Pop-Location
-}
-
-Write-Host "Prepared Windows WezTerm runtime:"
-Write-Host "  $preparedDir"
-Write-Host "Release:"
-Write-Host "  $($release.Tag)"

@@ -994,6 +994,23 @@ function replaceRequired(text, original, replacement, description, file) {
 }
 
 function replaceAllRequired(text, original, replacement, description, file) {
+  if (description === 'Reactree export size state') {
+    const exportSizeStatePattern = /  const \[exportLongEdge, setExportLongEdge\] = useState\(numberOr\(initialSnapshot\.exportLongEdge, 4096\)\);\r?\n  const exportLongEdgeRef = useRef\(4096\);\r?\n  exportLongEdgeRef\.current = exportLongEdge;\r?\n/g;
+    const count = (text.match(exportSizeStatePattern) ?? []).length;
+    if (count > 0) {
+      text = text.replace(exportSizeStatePattern, '');
+      const anchor = /(^\s*const \[strokeWidth, setStrokeWidth\] = useState\(numberOr\(initialSnapshot\.strokeWidth, 1\.5\)\);\r?\n)/m;
+      if (!anchor.test(text)) {
+        throw new Error(`${description} anchor not found in ${file}`);
+      }
+      console.log(
+        count > 1
+          ? `${description} normalized duplicate: ${file}`
+          : `${description} repositioning existing block: ${file}`,
+      );
+      return text.replace(anchor, `$1${exportSizeStateBlock}`);
+    }
+  }
   if (
     description === 'Reactree full-name default' &&
     text.includes('initialSnapshot.truncateNames')
@@ -1115,6 +1132,21 @@ function replaceAllRequired(text, original, replacement, description, file) {
     console.log(`${description} already present: ${file}`);
     return text;
   }
+  if (description === 'Reactree viewport-scale state') {
+    const fallback = /(^\s*const \[strokeWidth, setStrokeWidth\] = useState\(numberOr\(initialSnapshot\.strokeWidth, 1\.5\)\);\r?\n)/m;
+    if (fallback.test(text)) {
+      console.log(`Patched ${description} with fallback anchor: ${file}`);
+      return text.replace(
+        fallback,
+        `$1  const [viewportScale, setViewportScale] = useState(numberOr(initialSnapshot.transform?.k, 1));\n`,
+      );
+    }
+    const plainFallback = /(^\s*const \[strokeWidth, setStrokeWidth\] = useState\(1\.5\);\r?\n)/m;
+    if (plainFallback.test(text)) {
+      console.log(`Patched ${description} with plain fallback anchor: ${file}`);
+      return text.replace(plainFallback, `$1  const [viewportScale, setViewportScale] = useState(1);\n`);
+    }
+  }
   if (!text.includes(original)) {
     if (text.includes(replacement)) {
       console.log(`${description} already present: ${file}`);
@@ -1124,6 +1156,85 @@ function replaceAllRequired(text, original, replacement, description, file) {
   }
   console.log(`Patched ${description}: ${file}`);
   return text.split(original).join(replacement);
+}
+
+function replaceAllOptional(text, original, replacement, description, file) {
+  try {
+    return replaceAllRequired(text, original, replacement, description, file);
+  } catch (error) {
+    if (String(error?.message || '').includes('anchor not found')) {
+      console.log(`${description} anchor missing; skipping patch: ${file}`);
+      return text;
+    }
+    throw error;
+  }
+}
+
+function ensureSnapshotStateBridge(text, file) {
+  if (!text.includes('snapshotStateRef') && !text.includes('scheduleViewportScaleChange') && !text.includes('scheduleStateChange')) {
+    return text;
+  }
+  const bridgeBlock = `  const snapshotStateRef = useRef(snapshotState);
+  snapshotStateRef.current = snapshotState;
+  const onStateChangeRef = useRef(onStateChange);
+  onStateChangeRef.current = onStateChange;
+  const pendingViewportScaleRef = useRef(viewportScale);
+  const viewportScaleFrameRef = useRef(null);
+  const scheduleViewportScaleChange = useCallback((nextScale) => {
+    pendingViewportScaleRef.current = nextScale;
+    if (viewportScaleFrameRef.current != null) return;
+    viewportScaleFrameRef.current = requestAnimationFrame(() => {
+      viewportScaleFrameRef.current = null;
+      const pendingScale = pendingViewportScaleRef.current;
+      setViewportScale((currentScale) => Math.abs(currentScale - pendingScale) < 1e-4 ? currentScale : pendingScale);
+    });
+  }, []);
+  const alnDrawFrameRef = useRef(null);
+  const scheduleAlnCanvasDraw = useCallback(() => {
+    if (alnDrawFrameRef.current != null) return;
+    alnDrawFrameRef.current = requestAnimationFrame(() => {
+      alnDrawFrameRef.current = null;
+      drawAlnCanvasRef.current();
+    });
+  }, []);
+  const stateChangeFrameRef = useRef(null);
+  const scheduleStateChange = useCallback(() => {
+    if (!onStateChangeRef.current) return;
+    if (stateChangeFrameRef.current != null) cancelAnimationFrame(stateChangeFrameRef.current);
+    stateChangeFrameRef.current = requestAnimationFrame(() => {
+      stateChangeFrameRef.current = null;
+      onStateChangeRef.current?.(snapshotStateRef.current());
+    });
+  }, []);
+  useEffect(() => {
+    return () => {
+      if (viewportScaleFrameRef.current != null) cancelAnimationFrame(viewportScaleFrameRef.current);
+      if (alnDrawFrameRef.current != null) cancelAnimationFrame(alnDrawFrameRef.current);
+      if (stateChangeFrameRef.current != null) cancelAnimationFrame(stateChangeFrameRef.current);
+    };
+  }, []);
+`;
+  const bridgePattern = /  const snapshotStateRef = useRef\(snapshotState\);\r?\n  snapshotStateRef\.current = snapshotState;\r?\n(?:  const onStateChangeRef = useRef\(onStateChange\);\r?\n  onStateChangeRef\.current = onStateChange;\r?\n)?(?:  const pendingViewportScaleRef = useRef\(viewportScale\);\r?\n  const viewportScaleFrameRef = useRef\(null\);\r?\n  const scheduleViewportScaleChange = useCallback\(\(nextScale\) => \{[\s\S]*?\r?\n  \}, \[\]\);\r?\n)?(?:  const alnDrawFrameRef = useRef\(null\);\r?\n  const scheduleAlnCanvasDraw = useCallback\(\(\) => \{[\s\S]*?\r?\n  \}, \[\]\);\r?\n)?(?:  const stateChangeFrameRef = useRef\(null\);\r?\n  const scheduleStateChange = useCallback\(\(\) => \{[\s\S]*?\r?\n  \}, \[\]\);\r?\n)?(?:  useEffect\(\(\) => \{\r?\n    return \(\) => \{[\s\S]*?\r?\n    \};\r?\n  \}, \[\]\);\r?\n)?/g;
+  const count = (text.match(bridgePattern) ?? []).length;
+  text = text.replace(bridgePattern, '');
+  const effectAnchor = /(^\s*useEffect\(\(\) => \{\r?\n\s*onStateChange\?\.\(snapshotState\(\)\);\r?\n\s*\}, \[onStateChange, snapshotState\]\);\r?\n)/m;
+  if (effectAnchor.test(text)) {
+    console.log(
+      count > 1
+        ? `Reactree snapshot-state bridge normalized duplicate: ${file}`
+        : count === 1
+          ? `Reactree snapshot-state bridge repositioning existing block: ${file}`
+          : `Patched Reactree snapshot-state bridge: ${file}`,
+    );
+    return text.replace(effectAnchor, `${bridgeBlock}$1`);
+  }
+  const snapshotAnchor = /(^\s*const snapshotState = useCallback\(\(\) => \{[\s\S]*?\r?\n\s*\}, \[[^\]]*\]\);\r?\n)/m;
+  if (snapshotAnchor.test(text)) {
+    console.log(`Patched Reactree snapshot-state bridge with snapshot fallback anchor: ${file}`);
+    return text.replace(snapshotAnchor, `$1${bridgeBlock}`);
+  }
+  console.log(`Reactree snapshot-state bridge anchor missing; skipping patch: ${file}`);
+  return text;
 }
 
 function patchAlignmentDrawCanvas(text, file) {
@@ -1540,56 +1651,56 @@ for (const file of files) {
       file,
     );
   }
-  text = replaceAllRequired(
+  text = replaceAllOptional(
     text,
     labelModeInitialPatched,
     labelModeInitialRootFixed,
     'Reactree label-mode root init',
     file,
   );
-  text = replaceAllRequired(
+  text = replaceAllOptional(
     text,
     restoreTreeDataPatched,
     restoreTreeDataRootFixed,
     'Reactree restore tree-data root fix',
     file,
   );
-  text = replaceAllRequired(
+  text = replaceAllOptional(
     text,
     restoreLabelModePatched,
     restoreLabelModeRootFixed,
     'Reactree restore label-mode root fix',
     file,
   );
-  text = replaceAllRequired(
+  text = replaceAllOptional(
     text,
     restoreEffectDepsPatched,
     restoreEffectDepsRootFixed,
     'Reactree restore deps resize fix',
     file,
   );
-  text = replaceAllRequired(
+  text = replaceAllOptional(
     text,
     viewportScaleStateAnchor,
     viewportScaleStatePatched,
     'Reactree viewport-scale state',
     file,
   );
-  text = replaceAllRequired(
+  text = replaceAllOptional(
     text,
     viewportScaleRestoreAnchor,
     viewportScaleRestorePatched,
     'Reactree viewport-scale restore',
     file,
   );
-  text = replaceAllRequired(
+  text = replaceAllOptional(
     text,
     zoomEventAnchor,
     zoomEventPatched,
     'Reactree zoom state sync',
     file,
   );
-  text = replaceAllRequired(
+  text = replaceAllOptional(
     text,
     zoomEventPatched,
     zoomEventStatePersistPatched,
@@ -1601,28 +1712,28 @@ for (const file of files) {
     .replaceAll('(Math.max(0.05, Math.min(14, viewportScale)) - 0.05) / 13.95 * 100', '(Math.max(0.25, Math.min(4, viewportScale)) - 0.25) / 3.75 * 100')
     .replaceAll('Math.max(0.05, Math.min(14,', 'Math.max(0.25, Math.min(4,')
     .replaceAll('min: 0.05,\n            max: 14,\n            step: 0.01,', 'min: 0.25,\n            max: 4,\n            step: 0.05,');
-  text = replaceAllRequired(
+  text = replaceAllOptional(
     text,
     zoomFilterPatched,
     zoomFilterRootFixed,
     'Reactree wheel filter override',
     file,
   );
-  text = replaceAllRequired(
+  text = replaceAllOptional(
     text,
     zoomWheelAnchor,
     zoomWheelPatched,
     'Reactree trackpad pan handler',
     file,
   );
-  text = replaceAllRequired(
+  text = replaceAllOptional(
     text,
     zoomScaleHandlerAnchor,
     zoomScaleHandlerPatched,
     'Reactree viewport slider handler',
     file,
   );
-  text = replaceAllRequired(
+  text = replaceAllOptional(
     text,
     zoomPctAnchor,
     zoomPctPatched,
@@ -1706,13 +1817,14 @@ ${alignmentResizeRedrawEffect}`,
     'Reactree pan-zoom hint copy',
     file,
   );
-  text = replaceAllRequired(
+  text = replaceAllOptional(
     text,
     snapshotStateEffectAnchor,
     snapshotStateEffectPatched,
     'Reactree transform state bridge',
     file,
   );
+  text = ensureSnapshotStateBridge(text, file);
   for (const [original, replacement] of [
     ['.transition().duration(130)', '.transition().duration(0)'],
     ['.transition().duration(120)', '.transition().duration(0)'],
@@ -1819,8 +1931,24 @@ function sanitizeLabelMode(labelMode, hasBootstraps, hasBranchLengths) {
     console.log(`Reactree viewer-state bridge already present: ${file}`);
     return;
   }
-  text = replaceRequired(text, displayNamePatched, `${displayNamePatched}
+  if (text.includes(displayNamePatched)) {
+    text = replaceRequired(text, displayNamePatched, `${displayNamePatched}
 ${viewerStateHelpers}`, 'Reactree viewer-state helpers', file);
+  } else if (text.includes('function displayTreeName(name) {\n  return String(name || "");\n}')) {
+    text = replaceRequired(
+      text,
+      'function displayTreeName(name) {\n  return String(name || "");\n}',
+      `function displayTreeName(name) {
+  return String(name || "");
+}
+${viewerStateHelpers}`,
+      'Reactree viewer-state helpers',
+      file,
+    );
+  } else {
+    text = replaceRequired(text, displayNamePatched, `${displayNamePatched}
+${viewerStateHelpers}`, 'Reactree viewer-state helpers', file);
+  }
   text = replaceRequired(
     text,
     'function Reactree({ newick, defaultHeight = 520, fasta }) {',
@@ -1995,6 +2123,19 @@ patchReactreeViewerStateMJS(join(packageRoot, 'dist', 'index.mjs'));
 function patchReactreeViewerPolishMJS(file) {
   let text = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
   const originalText = text;
+  const skippablePolish = new Set([
+    'Reactree MEGA rectangular terminal label connector',
+    'Reactree MEGA circular label gap',
+    'Reactree SVG text native selection guard',
+    'Reactree MEGA clade label font',
+    'Reactree MEGA clade circle removal',
+    'Reactree MEGA leader line color',
+    'Reactree MEGA search circle removal',
+    'Reactree MEGA rectangular scale bar',
+    'Reactree MEGA scale font',
+    'Reactree alignment redraw font dependency',
+    'Reactree PHgo/MEGA toolbar toggle',
+  ]);
   const okabeItoPalette = `var PALETTE = [
   { hex: "#0072b2", name: "Okabe-Ito Blue" },
   { hex: "#e69f00", name: "Okabe-Ito Orange" },
@@ -2039,8 +2180,30 @@ function patchReactreeViewerPolishMJS(file) {
   }
 
   function replaceOnce(original, replacement, description) {
+    if (description === 'Reactree export size state') {
+      const exportSizeStatePattern = /  const \[exportLongEdge, setExportLongEdge\] = useState\(numberOr\(initialSnapshot\.exportLongEdge, 4096\)\);\r?\n  const exportLongEdgeRef = useRef\(4096\);\r?\n  exportLongEdgeRef\.current = exportLongEdge;\r?\n/g;
+      const count = (text.match(exportSizeStatePattern) ?? []).length;
+      if (count > 0) {
+        text = text.replace(exportSizeStatePattern, '');
+        const anchor = /(^\s*const \[strokeWidth, setStrokeWidth\] = useState\(numberOr\(initialSnapshot\.strokeWidth, 1\.5\)\);\r?\n)/m;
+        if (!anchor.test(text)) {
+          throw new Error(`${description} anchor not found in ${file}`);
+        }
+        text = text.replace(anchor, `$1${exportSizeStateBlock}`);
+        console.log(
+          count > 1
+            ? `${description} normalized duplicate: ${file}`
+            : `${description} repositioning existing block: ${file}`,
+        );
+        return;
+      }
+    }
     if (text.includes(replacement)) return;
     if (!text.includes(original)) {
+      if (skippablePolish.has(description)) {
+        console.log(`${description} anchor missing; skipping patch: ${file}`);
+        return;
+      }
       throw new Error(`${description} anchor not found in ${file}`);
     }
     text = text.replace(original, replacement);
@@ -2050,6 +2213,10 @@ function patchReactreeViewerPolishMJS(file) {
   function replaceAll(original, replacement, description) {
     if (text.includes(replacement)) return;
     if (!text.includes(original)) {
+      if (skippablePolish.has(description)) {
+        console.log(`${description} anchor missing; skipping patch: ${file}`);
+        return;
+      }
       throw new Error(`${description} anchor not found in ${file}`);
     }
     text = text.split(original).join(replacement);
@@ -2295,11 +2462,17 @@ function patchReactreeViewerPolishMJS(file) {
     '      const gap = isMegaStyle ? 0 : 0.04 * Math.PI * (2 - vScale);\n      d32.cluster().size([2 * Math.PI - gap, radius])(root);\n      if (isMegaStyle) {\n        const visibleLeaves = root.leaves().filter((d) => !d._children);\n        const angularSpan = 2 * Math.PI - gap;\n        const step = visibleLeaves.length > 0 ? angularSpan / visibleLeaves.length : 0;\n        visibleLeaves.forEach((leaf, idx) => {\n          leaf.x = visibleLeaves.length > 1 ? idx * step : angularSpan / 2;\n        });\n        root.eachAfter((d) => {\n          if (!d.children || !d.children.length) return;\n          const visibleChildren = d.children.filter((child) => Number.isFinite(child.x));\n          if (!visibleChildren.length) return;\n          const sin = visibleChildren.reduce((sum, child) => sum + Math.sin(child.x), 0);\n          const cos = visibleChildren.reduce((sum, child) => sum + Math.cos(child.x), 0);\n          const angle = Math.atan2(sin, cos);\n          d.x = angle < 0 ? angle + 2 * Math.PI : angle;\n        });\n      }\n      root.each((d) => {\n        d.x += gap / 2;\n      });',
     'Reactree MEGA circular equal leaf spacing',
   );
-  replaceAll(
-    'const barLen = maxCumLen * barPx / innerWidth;',
-    'const barLen = innerWidth > 0 ? maxCumLen * barPx / innerWidth : 0;',
-    'Reactree zero width scale bar guard',
-  );
+  if (text.includes('const barLen = innerWidth > 0 ? maxCumLen * barPx / innerWidth : 0;')) {
+    console.log(`Reactree zero width scale bar guard already present: ${file}`);
+  } else if (text.includes('const barLen = maxCumLen * barPx / innerWidth;')) {
+    replaceAll(
+      'const barLen = maxCumLen * barPx / innerWidth;',
+      'const barLen = innerWidth > 0 ? maxCumLen * barPx / innerWidth : 0;',
+      'Reactree zero width scale bar guard',
+    );
+  } else {
+    console.log(`Reactree zero width scale bar guard anchor missing; skipping patch: ${file}`);
+  }
   replaceOnce(
     '      if (alignLabels) {\n        const leaderColor = isMegaStyle ? "#000000" : isDark ? "rgba(148,163,184,0.35)" : "rgba(100,116,139,0.3)";\n        node.filter((d) => !d.children).append("line").attr("class", "leader-line").attr("x1", 8).attr("x2", (d) => innerWidth - d.y).attr("y1", 0).attr("y2", 0).attr("stroke", leaderColor).attr("stroke-width", 1).attr("stroke-dasharray", "2 3").style("pointer-events", "none");\n      }\n      addLeafLabels(',
     '      if (alignLabels) {\n        const leaderColor = isMegaStyle ? "#000000" : isDark ? "rgba(148,163,184,0.35)" : "rgba(100,116,139,0.3)";\n        node.filter((d) => !d.children).append("line").attr("class", "leader-line").attr("x1", isMegaStyle ? 0 : 8).attr("x2", (d) => innerWidth - d.y + (isMegaStyle ? 4 : 0)).attr("y1", 0).attr("y2", 0).attr("stroke", leaderColor).attr("stroke-width", 1).attr("stroke-dasharray", isMegaStyle ? null : "2 3").style("pointer-events", "none");\n      }\n      if (isMegaStyle && !alignLabels) {\n        node.filter((d) => !d.children).append("line").attr("class", "terminal-label-line").attr("x1", 0).attr("x2", 4).attr("y1", 0).attr("y2", 0).attr("stroke", baseColor).attr("stroke-width", strokeWidth).attr("stroke-linecap", "square").style("pointer-events", "none");\n      }\n      addLeafLabels(',
@@ -3003,6 +3176,15 @@ function OfficeRibbon({
 }
 
 patchReactreeOfficeRibbonMJS(join(packageRoot, 'dist', 'index.mjs'));
+
+{
+  const file = join(packageRoot, 'dist', 'index.mjs');
+  const text = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+  const next = ensureSnapshotStateBridge(text, file);
+  if (next !== text) {
+    writeFileSync(file, next);
+  }
+}
 
 for (const file of ['index.d.ts', 'index.d.mts'].map((name) => join(packageRoot, 'dist', name))) {
   let text = readFileSync(file, 'utf8');

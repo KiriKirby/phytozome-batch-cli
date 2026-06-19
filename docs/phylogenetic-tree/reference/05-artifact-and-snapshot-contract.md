@@ -135,7 +135,7 @@ Reuse still rewrites payload metadata so display names remain current.
 
 A Canvas snapshot must preserve:
 
-- tree panel state
+- durable tree settings
 - target mode
 - alignment method and parameters
 - tree method and parameters
@@ -152,9 +152,19 @@ A Canvas snapshot must preserve:
 - `viewer.payload.json`
 - `run.manifest.json`
 - runtime logs when present
+- MSA row states (`green`, `yellow`, `red`)
+- last MSA payload/aligned FASTA
+- durable Jalview MSA state such as groups, annotations, markers, and settings when available
+
+A Canvas snapshot must not preserve pure UI-open state such as expanded/focused
+tool panels, current settings page, scroll offsets, browser viewport metadata,
+transient search text, or open menu/ribbon state. The yellow MSA row state means
+the row is unchecked for PHgo and tree computation, but remains present and
+unchecked in the MSA payload because the exclusion came from MSA.
 
 Opening a snapshot restores enough in-memory state to reopen the tree panel,
-save the snapshot again, and update preview metadata without recomputing.
+reopen the MSA view, save the snapshot again, and update preview metadata
+without recomputing.
 
 The first explicit `Refresh tree` after opening a snapshot must recompute
 through `mega-phgo-runtime` even when restored fingerprints match.

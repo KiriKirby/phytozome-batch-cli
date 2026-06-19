@@ -213,6 +213,36 @@ function Resolve-RceditBinary {
     return $binaryPath
 }
 
+function Invoke-WithFileRetry {
+    param(
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$Action,
+        [int]$MaxAttempts = 8,
+        [int]$InitialDelayMilliseconds = 400
+    )
+
+    $attempt = 0
+    $delay = [Math]::Max(100, $InitialDelayMilliseconds)
+    while ($true) {
+        $attempt++
+        try {
+            & $Action
+            return
+        } catch {
+            $message = $_.Exception.Message
+            $isSharingViolation =
+                $message -match "being used by another process" -or
+                $message -match "cannot access the file" -or
+                $message -match "used by another process"
+            if (-not $isSharingViolation -or $attempt -ge $MaxAttempts) {
+                throw
+            }
+            Start-Sleep -Milliseconds $delay
+            $delay = [Math]::Min($delay * 2, 3000)
+        }
+    }
+}
+
 $iconBytes = [System.IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $IconPath))
 if ($iconBytes.Length -lt 6) {
     throw "Invalid icon file: $IconPath"
@@ -315,9 +345,11 @@ try {
             $env:NODE_PATH = Join-Path $rceditRoot "node_modules"
             $env:PHYTOZOME_RCEDIT_EXE = $resourceTarget.ActivePath
             $env:PHYTOZOME_RCEDIT_ICON = (Resolve-Path -LiteralPath $IconPath)
-            & node -e "const rcedit = require('rcedit'); rcedit(process.env.PHYTOZOME_RCEDIT_EXE, { icon: process.env.PHYTOZOME_RCEDIT_ICON }).catch(error => { console.error(error); process.exit(1); });"
-            if ($LASTEXITCODE -ne 0) {
-                throw "rcedit failed to update the executable icon."
+            Invoke-WithFileRetry -Action {
+                & node -e "const rcedit = require('rcedit'); rcedit(process.env.PHYTOZOME_RCEDIT_EXE, { icon: process.env.PHYTOZOME_RCEDIT_ICON }).catch(error => { console.error(error); process.exit(1); });"
+                if ($LASTEXITCODE -ne 0) {
+                    throw "rcedit failed to update the executable icon."
+                }
             }
         } finally {
             $env:NODE_PATH = $oldNodePath
@@ -326,9 +358,11 @@ try {
         }
     } else {
         $rceditBinary = Resolve-RceditBinary -RepoRoot $repoRoot
-        & $rceditBinary $resourceTarget.ActivePath --set-icon (Resolve-Path -LiteralPath $IconPath)
-        if ($LASTEXITCODE -ne 0) {
-            throw "rcedit executable fallback failed to update the executable icon."
+        Invoke-WithFileRetry -Action {
+            & $rceditBinary $resourceTarget.ActivePath --set-icon (Resolve-Path -LiteralPath $IconPath)
+            if ($LASTEXITCODE -ne 0) {
+                throw "rcedit executable fallback failed to update the executable icon."
+            }
         }
     }
 } finally {

@@ -289,6 +289,7 @@ type BlastRunItem struct {
 	RowNumbers  []int
 	Selected    []bool
 	FilterFlags []bool
+	MSAFlags    []bool
 }
 
 type BlastRunSelectionPage struct {
@@ -352,6 +353,7 @@ type BlastRunSelectionResult struct {
 	Selected         []bool
 	SelectedByRun    [][]bool
 	FilterFlagsByRun [][]bool
+	MSAFlagsByRun    [][]bool
 	FilterRequested  bool
 	GenerateFile     bool
 	Action           string
@@ -453,6 +455,7 @@ type CanvasResult struct {
 	State         BlastRunSelectionState
 	RunIndex      int
 	SelectedByRun [][]bool
+	MSAFlagsByRun [][]bool
 	TreePanel     CanvasTreePanelState
 }
 
@@ -566,6 +569,7 @@ func RunCanvasPage(page CanvasPage) (CanvasResult, error) {
 		NextNumericID: page.NextNumericID,
 		RunIndex:      blastResult.RunIndex,
 		SelectedByRun: blastResult.SelectedByRun,
+		MSAFlagsByRun: blastResult.MSAFlagsByRun,
 		TreePanel:     blastResult.TreePanel,
 	}, nil
 }
@@ -4920,9 +4924,11 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 	}
 	selectedByRun := make([][]bool, len(page.Items))
 	filterFlagsByRun := make([][]bool, len(page.Items))
+	msaFlagsByRun := make([][]bool, len(page.Items))
 	for i, item := range page.Items {
 		selectedByRun[i] = normalizeSelection(item.Selected, len(item.Rows), true)
 		filterFlagsByRun[i] = normalizeSelection(item.FilterFlags, len(item.Rows), false)
+		msaFlagsByRun[i] = normalizeSelection(item.MSAFlags, len(item.Rows), false)
 	}
 	tableStates := make([]BlastRunTableState, len(page.Items))
 	if page.State.Valid {
@@ -5323,6 +5329,9 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 	currentFilterFlags := func() []bool {
 		return filterFlagsByRun[currentRun]
 	}
+	currentMSAFlags := func() []bool {
+		return msaFlagsByRun[currentRun]
+	}
 	table.SetMouseCapture(func(action tview.MouseAction, event *tcell.EventMouse) (tview.MouseAction, *tcell.EventMouse) {
 		if event != nil && (action == tview.MouseLeftDown || action == tview.MouseLeftClick) {
 			if treePanelState.Focused && treeExpanded() {
@@ -5362,6 +5371,7 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 		result.Selected = append([]bool(nil), selectedByRun[runIndex]...)
 		result.SelectedByRun = cloneBoolMatrix(selectedByRun)
 		result.FilterFlagsByRun = cloneBoolMatrix(filterFlagsByRun)
+		result.MSAFlagsByRun = cloneBoolMatrix(msaFlagsByRun)
 		result.FilterRequested = false
 		result.GenerateFile = false
 		result.DoneAll = false
@@ -5394,6 +5404,7 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 			result.Selected = append([]bool(nil), currentSelected()...)
 			result.SelectedByRun = cloneBoolMatrix(selectedByRun)
 			result.FilterFlagsByRun = cloneBoolMatrix(filterFlagsByRun)
+			result.MSAFlagsByRun = cloneBoolMatrix(msaFlagsByRun)
 			result.State = captureState()
 			result.TreePanel = captureTreeState()
 			app.Stop()
@@ -5661,6 +5672,9 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 			nextValue := !allSelected()
 			for i := range currentSelected() {
 				currentSelected()[i] = nextValue && currentRowSelectable(i)
+				if i < len(currentMSAFlags()) {
+					currentMSAFlags()[i] = false
+				}
 			}
 			syncVisibleSelectionMarkers()
 			setSelectionHeader()
@@ -5686,6 +5700,8 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 		} else if currentSelected()[originalRow] {
 			rowMarker = "[x]"
 			rowMarkerColor = colorSelectionOn
+		} else if originalRow < len(currentMSAFlags()) && currentMSAFlags()[originalRow] {
+			rowMarkerColor = colorTreeAction
 		}
 		rowIndex := originalRow
 		table.SetCell(displayRow, 0, paddedTableCell(tview.Escape(rowMarker)).SetTextColor(rowMarkerColor).SetAlign(tview.AlignCenter).SetClickedFunc(func() bool {
@@ -5693,6 +5709,9 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 				return true
 			}
 			currentSelected()[rowIndex] = !currentSelected()[rowIndex]
+			if rowIndex < len(currentMSAFlags()) {
+				currentMSAFlags()[rowIndex] = false
+			}
 			updateMarkerRow(displayRow, rowIndex)
 			setSelectionHeader()
 			refreshList()
@@ -5872,6 +5891,7 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 		result.Selected = append([]bool(nil), currentSelected()...)
 		result.SelectedByRun = cloneBoolMatrix(selectedByRun)
 		result.FilterFlagsByRun = cloneBoolMatrix(filterFlagsByRun)
+		result.MSAFlagsByRun = cloneBoolMatrix(msaFlagsByRun)
 		result.GenerateFile = !doneAll
 		result.DoneAll = doneAll
 		result.State = captureState()
@@ -5991,6 +6011,7 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 		result.Selected = append([]bool(nil), currentSelected()...)
 		result.SelectedByRun = cloneBoolMatrix(selectedByRun)
 		result.FilterFlagsByRun = cloneBoolMatrix(filterFlagsByRun)
+		result.MSAFlagsByRun = cloneBoolMatrix(msaFlagsByRun)
 		result.FilterRequested = true
 		result.State = captureState()
 		result.TreePanel = captureTreeState()
@@ -6025,6 +6046,9 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 		if originalRow >= 0 && originalRow < len(currentSelected()) && currentRowSelectable(originalRow) {
 			row, _ := table.GetSelection()
 			currentSelected()[originalRow] = !currentSelected()[originalRow]
+			if originalRow < len(currentMSAFlags()) {
+				currentMSAFlags()[originalRow] = false
+			}
 			updateMarkerRow(row, originalRow)
 			setSelectionHeader()
 			refreshList()
@@ -6764,6 +6788,9 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 			if len(currentSelected()) > 0 {
 				for i := range currentSelected() {
 					currentSelected()[i] = currentRowSelectable(i)
+					if i < len(currentMSAFlags()) {
+						currentMSAFlags()[i] = false
+					}
 				}
 				syncVisibleSelectionMarkers()
 				setSelectionHeader()
@@ -6773,6 +6800,7 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 		case tcell.KeyCtrlN:
 			if len(currentSelected()) > 0 {
 				setAll(currentSelected(), false)
+				setAll(currentMSAFlags(), false)
 				syncVisibleSelectionMarkers()
 				setSelectionHeader()
 				refreshList()
@@ -6863,6 +6891,7 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 		result.Selected = append([]bool(nil), selectedByRun[currentRun]...)
 		result.SelectedByRun = cloneBoolMatrix(selectedByRun)
 		result.FilterFlagsByRun = cloneBoolMatrix(filterFlagsByRun)
+		result.MSAFlagsByRun = cloneBoolMatrix(msaFlagsByRun)
 	}
 	if !result.State.Valid {
 		result.State = captureState()

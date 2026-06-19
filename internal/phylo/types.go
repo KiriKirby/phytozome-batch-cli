@@ -121,12 +121,31 @@ type Metadata struct {
 	DisplayNameSource     string            `json:"display_name_source"`
 	TreeComputationSource string            `json:"tree_computation_source,omitempty"`
 	SequenceKind          SequenceKind      `json:"sequence_kind,omitempty"`
+	ConversionTarget      ConversionTarget  `json:"conversion_target,omitempty"`
 	AlignmentMethod       AlignmentMethod   `json:"alignment_method,omitempty"`
 	TreeMethod            TreeMethod        `json:"tree_method,omitempty"`
 	AlignmentParams       map[string]string `json:"alignment_params,omitempty"`
 	TreeParams            map[string]string `json:"tree_params,omitempty"`
 	TreeCount             int               `json:"tree_count,omitempty"`
 	Records               []InputRecord     `json:"records"`
+}
+
+type MSASelectionRow struct {
+	TaxonID     string `json:"taxon_id"`
+	DisplayName string `json:"display_name,omitempty"`
+	Index       int    `json:"index"`
+	State       string `json:"state"`
+}
+
+type MSAState struct {
+	SchemaVersion int               `json:"schema_version"`
+	UpdatedAt     time.Time         `json:"updated_at,omitempty"`
+	Rows          []MSASelectionRow `json:"rows,omitempty"`
+	ViewerState   map[string]any    `json:"viewer_state,omitempty"`
+	Settings      map[string]any    `json:"settings,omitempty"`
+	Annotations   []map[string]any  `json:"annotations,omitempty"`
+	Groups        []map[string]any  `json:"groups,omitempty"`
+	Markers       []map[string]any  `json:"markers,omitempty"`
 }
 
 type ViewerPayload struct {

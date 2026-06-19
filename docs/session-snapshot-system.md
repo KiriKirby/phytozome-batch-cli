@@ -93,11 +93,13 @@ Canvas item titles follow a fixed source rule:
 - FASTA/text files use the shortened source filename
 - pasted FASTA text uses a numeric title
 
-Canvas tree snapshots also preserve the system-tree tool panel state: the current page, display-name source, target mode, skip-unselect setting, alignment method/parameters, and tree method/parameters. The default restored page is the target-mode page, so reopened snapshots expose the Protein/DNA mode choice before alignment and tree settings. A restored tree payload may be shown immediately, but the first user-triggered `Refresh tree` after opening a Canvas snapshot must run a full `mega-phgo-runtime` compute pass before rendering; only later display-label-only changes are render-only.
+Canvas tree snapshots preserve durable system-tree configuration and results: display-name source, target mode, skip-unselect setting, alignment method/parameters, tree method/parameters, the last tree payload, run manifest, fingerprints, and runtime artifacts. They intentionally do not preserve pure UI-open state such as whether the tool panel was expanded, which tree settings page was focused, scroll offsets, browser viewport metadata, transient search text, or open menu/ribbon state. A restored tree payload may be shown immediately, but the first user-triggered `Refresh tree` after opening a Canvas snapshot must run a full `mega-phgo-runtime` compute pass before rendering; only later display-label-only changes are render-only.
+
+Canvas MSA snapshots are stored in a separate `canvas-msa-state-v1` module. The module preserves the MSA-facing row state (`green`, `yellow`, and `red`), the last MSA payload/aligned FASTA, and Jalview-owned durable state such as groups, annotations, markers, and alignment settings when the bridge provides them. The Jalview bridge saves that durable state through `PUT /sessions/<id>/msa/state` during startup, selection changes, and Apply, and PHgo serves it back through `GET /sessions/<id>/msa/state` for snapshot collection. The yellow state means PHgo/Tree treats the row as unchecked, while MSA keeps the row visible and unchecked because the exclusion came from the MSA view.
 
 ## Current Version Rule
 
-- The current unreleased snapshot format is `v2.7`.
+- The current unreleased snapshot format is `v2.8`.
 - Because the software is not yet released, the code may refactor snapshot structure directly instead of carrying long-term compatibility burden for older draft formats.
 - New modules should still keep their meanings explicit and versioned so future changes can evolve cleanly. The `keyword-source-state-v4` module is the current extension point for NCBI keyword-search source metadata beyond the earlier protein-only first implementation.
 - Store mode/database/result identifiers as plain strings so new workflows can be routed without creating a hardcoded tree.

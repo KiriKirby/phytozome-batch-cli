@@ -87,10 +87,32 @@ Current user-visible workflow families:
 - BLAST multi-query review
 - Family BLAST merged review
 - TAIR family index search and review
+- Canvas review, system-tree preview, and MSA preview
 - keyword-to-BLAST transfer
 - BLAST-row-to-BLAST transfer
 - session open / session reopen
 - export flows
+
+## Canvas Tree and MSA Workflows
+
+Must preserve:
+
+- Canvas items, row order, row data, display names, selected checkboxes, and MSA-origin exclusion flags
+- tree target mode, display-name source, skip-unselect setting, alignment method/parameters, and tree method/parameters
+- last tree payload, run manifest, computation fingerprints, aligned FASTA, Newick, runtime request/response, input metadata, and runtime logs when present
+- MSA row states: `green` for PHgo checked, `yellow` for PHgo unchecked but kept in MSA because MSA excluded it, and `red` for ordinary unchecked
+- last MSA payload/aligned FASTA plus durable Jalview state such as groups, annotations, markers, and settings when available
+
+Must not preserve as `.pgo` workflow state:
+
+- tree panel expanded/focused state, current settings page, scroll offsets, transient search text, open menus/ribbons, hover state, or browser viewport metadata
+- UI state that only describes how a menu/dialog was open, unless it changes the tree, MSA, row selection, or exported result
+
+Must not rebuild on open:
+
+- runtime tree artifacts already packed into the snapshot
+- MSA yellow/red/green row state
+- Jalview groups/annotations/settings already captured by the MSA bridge
 
 ## Keyword Workflows
 

@@ -160,6 +160,7 @@ func (p RunPlan) ToArtifactSet() ArtifactSet {
 	metadata := p.Metadata
 	metadata.TreeComputationSource = "mega-phgo-runtime"
 	metadata.SequenceKind = p.Kind
+	metadata.ConversionTarget = p.Settings.ConversionTarget
 	metadata.AlignmentMethod = p.Settings.AlignmentMethod
 	metadata.TreeMethod = p.Settings.TreeMethod
 	metadata.AlignmentParams = cloneStringMap(p.Settings.AlignmentParams)
