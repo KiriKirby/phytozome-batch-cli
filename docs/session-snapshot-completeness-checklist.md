@@ -100,8 +100,8 @@ Must preserve:
 - Canvas items, row order, row data, display names, selected checkboxes, and MSA-origin exclusion flags
 - tree target mode, display-name source, skip-unselect setting, alignment method/parameters, and tree method/parameters
 - last tree payload, run manifest, computation fingerprints, aligned FASTA, Newick, runtime request/response, input metadata, and runtime logs when present
-- MSA row states: `green` for PHgo checked, `yellow` for PHgo unchecked but kept in MSA because MSA excluded it, and `red` for ordinary unchecked
-- last MSA payload/aligned FASTA plus durable Jalview state such as groups, annotations, markers, and settings when available
+- MSA row states: `green` for rows selected and sent to both tree and MSA, `yellow` for rows unchecked for both tree and MSA because MSA Apply excluded them, and `red` for ordinary unchecked rows
+- last shared tree/MSA payload and aligned FASTA plus durable Jalview state such as groups, annotations, markers, and settings when available
 
 Must not preserve as `.pgo` workflow state:
 

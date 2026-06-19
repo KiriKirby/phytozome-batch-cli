@@ -138,7 +138,8 @@ type BlastWizard struct {
 	canvasTreeMSARowMap      map[string]phylo.InputRecord
 	canvasTreeForceCompute   bool
 	canvasTreeRefreshRun     func(context.Context, canvasLaunchState, phylo.TreeSettings) error
-	canvasTreeMSARefreshRun  func(context.Context, canvasLaunchState, phylo.TreeSettings, phylo.MSAApplyRequest) error
+	canvasTreeMSAApplyRun    func(context.Context, canvasLaunchState, phylo.TreeSettings) error
+	canvasTreeMSAApplyMu     sync.Mutex
 	canvasTreeRecover        func(description string, backTarget error, allowSkip bool) (string, error)
 }
 
@@ -863,6 +864,7 @@ func NewBlastWizardWithTUIInfo(out io.Writer, tuiInfo tui.StartupInfo) *BlastWiz
 		_ = state
 		_ = opened
 	})
+	w.prompt.SetCanvasTreePreviewReady(w.canvasTreePreviewAvailable)
 	w.prompt.SetHomeNavigationEnabled(true)
 	return w
 }

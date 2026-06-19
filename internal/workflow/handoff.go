@@ -19,37 +19,37 @@ import (
 )
 
 type InstanceHandoff struct {
-	Kind          string                     `json:"kind"`
-	RunID         string                     `json:"run_id"`
-	ParentID      string                     `json:"parent_id"`
-	InstanceID    string                     `json:"instance_id"`
-	Database      string                     `json:"database"`
-	Mode          string                     `json:"mode"`
-	BlastContext  blastHandoffContext        `json:"blast_context"`
-	StartupSource string                     `json:"startup_source"`
+	Kind          string              `json:"kind"`
+	RunID         string              `json:"run_id"`
+	ParentID      string              `json:"parent_id"`
+	InstanceID    string              `json:"instance_id"`
+	Database      string              `json:"database"`
+	Mode          string              `json:"mode"`
+	BlastContext  blastHandoffContext `json:"blast_context"`
+	StartupSource string              `json:"startup_source"`
 }
 
 type blastHandoffContext struct {
-	PendingMode            string                  `json:"pending_mode"`
-	TransferKind           string                  `json:"transfer_kind"`
-	BlastProgramPath       string                  `json:"blast_program_path"`
-	ReuseLastBlastInput    bool                    `json:"reuse_last_blast_input"`
-	ReuseLastBlastRows     bool                    `json:"reuse_last_blast_rows"`
-	ReuseLastKeywordRows   bool                    `json:"reuse_last_keyword_rows"`
-	RewindBlastToInput     bool                    `json:"rewind_blast_to_input"`
-	RewindKeywordToInput   bool                    `json:"rewind_keyword_to_input"`
-	TransferSourceSpecies  model.SpeciesCandidate  `json:"transfer_source_species"`
-	TransferKeywordRows    []model.KeywordResultRow `json:"transfer_keyword_rows"`
-	TransferBlastRows      []model.BlastResultRow  `json:"transfer_blast_rows"`
-	TransferCanvasItems    []model.CanvasItem      `json:"transfer_canvas_items"`
-	TransferCanvasCurrent  int                     `json:"transfer_canvas_current"`
-	TransferCanvasNextID   int                     `json:"transfer_canvas_next_id"`
-	LastBlastItems         []blastQueryItem        `json:"last_blast_items"`
+	PendingMode            string                     `json:"pending_mode"`
+	TransferKind           string                     `json:"transfer_kind"`
+	BlastProgramPath       string                     `json:"blast_program_path"`
+	ReuseLastBlastInput    bool                       `json:"reuse_last_blast_input"`
+	ReuseLastBlastRows     bool                       `json:"reuse_last_blast_rows"`
+	ReuseLastKeywordRows   bool                       `json:"reuse_last_keyword_rows"`
+	RewindBlastToInput     bool                       `json:"rewind_blast_to_input"`
+	RewindKeywordToInput   bool                       `json:"rewind_keyword_to_input"`
+	TransferSourceSpecies  model.SpeciesCandidate     `json:"transfer_source_species"`
+	TransferKeywordRows    []model.KeywordResultRow   `json:"transfer_keyword_rows"`
+	TransferBlastRows      []model.BlastResultRow     `json:"transfer_blast_rows"`
+	TransferCanvasItems    []model.CanvasItem         `json:"transfer_canvas_items"`
+	TransferCanvasCurrent  int                        `json:"transfer_canvas_current"`
+	TransferCanvasNextID   int                        `json:"transfer_canvas_next_id"`
+	LastBlastItems         []blastQueryItem           `json:"last_blast_items"`
 	LastKeywordGroups      []model.KeywordSearchGroup `json:"last_keyword_groups"`
-	LastKeywordReport      *keywordReportRunContext `json:"last_keyword_report,omitempty"`
-	LastKeywordSpecies     model.SpeciesCandidate  `json:"last_keyword_species"`
-	LastBlastRowContext    *blastRowContext        `json:"last_blast_row_context,omitempty"`
-	LastBlastReviewContext *blastReviewContext     `json:"last_blast_review_context,omitempty"`
+	LastKeywordReport      *keywordReportRunContext   `json:"last_keyword_report,omitempty"`
+	LastKeywordSpecies     model.SpeciesCandidate     `json:"last_keyword_species"`
+	LastBlastRowContext    *blastRowContext           `json:"last_blast_row_context,omitempty"`
+	LastBlastReviewContext *blastReviewContext        `json:"last_blast_review_context,omitempty"`
 }
 
 func (w *BlastWizard) SnapshotHandoff(database string, mode QueryMode, instanceID string, parentID string, runID string) InstanceHandoff {
@@ -60,20 +60,20 @@ func (w *BlastWizard) SnapshotHandoff(database string, mode QueryMode, instanceI
 		InstanceID:    strings.TrimSpace(instanceID),
 		Database:      strings.TrimSpace(database),
 		Mode:          string(mode),
-		StartupSource:  "database-selection",
+		StartupSource: "database-selection",
 	}
 	handoff.BlastContext = blastHandoffContext{
-		PendingMode:          string(w.pendingMode),
-		BlastProgramPath:     strings.TrimSpace(w.blastProgramPath),
-		ReuseLastBlastInput:  w.reuseLastBlastInput,
-		ReuseLastBlastRows:   w.reuseLastBlastRows,
-		ReuseLastKeywordRows: w.reuseLastKeywordRows,
-		RewindBlastToInput:   w.rewindBlastToInput,
-		RewindKeywordToInput: w.rewindKeywordToInput,
-		LastBlastItems:       cloneBlastQueryItems(w.lastBlastItems),
-		LastKeywordGroups:    cloneKeywordSearchGroups(w.lastKeywordGroups),
-		LastKeywordSpecies:   w.lastKeywordSpecies,
-		TransferCanvasItems:  cloneCanvasItems(w.transferCanvasItems),
+		PendingMode:           string(w.pendingMode),
+		BlastProgramPath:      strings.TrimSpace(w.blastProgramPath),
+		ReuseLastBlastInput:   w.reuseLastBlastInput,
+		ReuseLastBlastRows:    w.reuseLastBlastRows,
+		ReuseLastKeywordRows:  w.reuseLastKeywordRows,
+		RewindBlastToInput:    w.rewindBlastToInput,
+		RewindKeywordToInput:  w.rewindKeywordToInput,
+		LastBlastItems:        cloneBlastQueryItems(w.lastBlastItems),
+		LastKeywordGroups:     cloneKeywordSearchGroups(w.lastKeywordGroups),
+		LastKeywordSpecies:    w.lastKeywordSpecies,
+		TransferCanvasItems:   cloneCanvasItems(w.transferCanvasItems),
 		TransferCanvasCurrent: w.transferCanvasCurrent,
 		TransferCanvasNextID:  w.transferCanvasNextID,
 	}

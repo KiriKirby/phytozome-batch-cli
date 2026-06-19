@@ -470,7 +470,9 @@ func (w *BlastWizard) canvasTreeRecoveryAction(description string, backTarget er
 
 func (w *BlastWizard) refreshCanvasTreeWithProgress(ctx context.Context, state canvasLaunchState, settings phylo.TreeSettings) error {
 	w.setCanvasTreeViewerRefreshing(true, "Refreshing tree and MSA...")
+	w.prompt.UpdateOpenCanvasRefreshStatus(true, "Refreshing tree and MSA...")
 	defer w.setCanvasTreeViewerRefreshing(false, "")
+	defer w.prompt.UpdateOpenCanvasRefreshStatus(false, "")
 	if w.suppressTaskModals {
 		return w.refreshCanvasTree(ctx, state, settings)
 	}
@@ -492,6 +494,22 @@ func (w *BlastWizard) refreshCanvasTreeWithProgress(ctx context.Context, state c
 		return struct{}{}, nil
 	})
 	return err
+}
+
+func (w *BlastWizard) refreshCanvasTreeForMSAApply(ctx context.Context, state canvasLaunchState, settings phylo.TreeSettings) error {
+	w.setCanvasTreeViewerRefreshing(true, "Refreshing tree and MSA...")
+	w.prompt.UpdateOpenCanvasRefreshStatus(true, "Refreshing tree and MSA...")
+	defer w.setCanvasTreeViewerRefreshing(false, "")
+	defer w.prompt.UpdateOpenCanvasRefreshStatus(false, "")
+	progress := func(current int, message string) {
+		message = strings.TrimSpace(message)
+		if message == "" {
+			return
+		}
+		w.setCanvasTreeViewerRefreshing(true, message)
+		w.prompt.UpdateOpenCanvasRefreshStatus(true, message)
+	}
+	return w.refreshCanvasTree(progressctx.WithProgress(ctx, progress), state, settings)
 }
 
 func (w *BlastWizard) setCanvasTreeViewerRefreshing(refreshing bool, message string) {
@@ -525,34 +543,31 @@ func (w *BlastWizard) installCanvasTreeMSAApplyHandlerOnServer(server *phylo.Vie
 		if state == nil {
 			return phylo.MSAApplyResponse{}, fmt.Errorf("canvas state is unavailable")
 		}
+		w.canvasTreeMSAApplyMu.Lock()
+		defer w.canvasTreeMSAApplyMu.Unlock()
 		treeSettings := phylo.DefaultTreeSettings()
 		if settings != nil {
 			treeSettings = *settings
 		}
-		w.setCanvasTreeViewerRefreshing(true, "Refreshing tree and MSA...")
-		defer w.setCanvasTreeViewerRefreshing(false, "")
 		changed := w.applyMSASelectionToCanvasState(state, req)
-		hasYellow := msaApplyRequestHasYellow(req)
-		if !changed && !hasYellow {
+		if changed {
+			selected, msaFlags := canvasSelectionMasks(state.Items)
+			w.prompt.UpdateOpenCanvasSelection(selected, msaFlags)
+		}
+		if !changed {
 			return phylo.MSAApplyResponse{Accepted: true, Refreshing: false, Message: "MSA selection is already applied."}, nil
 		}
-		if changed || hasYellow {
-			run := w.canvasTreeRefreshRun
-			if run == nil {
-				run = func(runCtx context.Context, runState canvasLaunchState, runSettings phylo.TreeSettings) error {
-					return w.refreshCanvasTreeWithProgress(runCtx, runState, runSettings)
-				}
-			}
-			if err := w.refreshCanvasTreeInteractiveWithRun(applyCtx, state, treeSettings, run); err != nil {
-				return phylo.MSAApplyResponse{}, err
+		run := w.canvasTreeMSAApplyRun
+		if run == nil {
+			run = func(runCtx context.Context, runState canvasLaunchState, runSettings phylo.TreeSettings) error {
+				return w.refreshCanvasTreeForMSAApply(runCtx, runState, runSettings)
 			}
 		}
-		msaRun := w.canvasTreeMSARefreshRun
-		if msaRun == nil {
-			msaRun = w.refreshCanvasMSAPayloadForSelection
-		}
-		if err := msaRun(applyCtx, *state, treeSettings, req); err != nil {
+		if err := run(applyCtx, *state, treeSettings); err != nil {
 			return phylo.MSAApplyResponse{}, err
+		}
+		if !w.canvasTreeLastPayload.UpdatedAt.IsZero() || strings.TrimSpace(w.canvasTreeLastPayload.AlignedFASTA) != "" {
+			w.canvasTreeLastMSAPayload = w.canvasTreeLastPayload
 		}
 		w.canvasTreeMSAState = canvasMSAStateFromItems(state.Items, w.canvasTreeLastMSAPayload)
 		server.SetMSAState(w.canvasTreeSessionID(), w.canvasTreeMSAState)
@@ -609,107 +624,6 @@ func (w *BlastWizard) applyMSASelectionToCanvasState(state *canvasLaunchState, r
 	return changed
 }
 
-func (w *BlastWizard) refreshCanvasMSAPayloadForSelection(ctx context.Context, state canvasLaunchState, settings phylo.TreeSettings, req phylo.MSAApplyRequest) error {
-	w.canvasTreeViewerMu.Lock()
-	server := w.canvasTreeViewer
-	w.canvasTreeViewerMu.Unlock()
-	if server == nil {
-		return nil
-	}
-	if !msaApplyRequestHasYellow(req) {
-		if !w.canvasTreeLastPayload.UpdatedAt.IsZero() || strings.TrimSpace(w.canvasTreeLastPayload.AlignedFASTA) != "" {
-			server.SetMSAPayload(w.canvasTreeSessionID(), w.canvasTreeLastPayload)
-			w.canvasTreeLastMSAPayload = w.canvasTreeLastPayload
-		}
-		return nil
-	}
-	selectedRows := w.msaSelectedRowsFromApplyRequest(state.Items, req)
-	if len(selectedRows) == 0 {
-		return fmt.Errorf("no green or yellow MSA rows are available for alignment refresh")
-	}
-	now := time.Now()
-	progressctx.Report(ctx, 5, fmt.Sprintf("Preparing %d green/yellow Canvas rows for MSA refresh...", len(selectedRows)))
-	rowSources, err := w.canvasTreeRowSourcesWithSkippedForSettings(ctx, state, selectedRows, settings)
-	if err != nil {
-		return err
-	}
-	records, meta, err := phylo.BuildInput(rowSources, settings.DisplayNameSource, w.canvasTreeSessionID(), now)
-	if err != nil {
-		return err
-	}
-	runID := canvasTreeRunID(now) + "_msa"
-	artifactDir := mustCanvasTreeArtifactDir(w.canvasTreeSessionID(), runID)
-	plan, err := phylo.BuildRunPlan(w.canvasTreeSessionID(), runID, artifactDir, settings, canvasTreeTargetSequenceKind(settings), records, meta, "", "", now)
-	if err != nil {
-		return err
-	}
-	result, err := phylo.RunPlanWithRuntime(ctx, plan, phylo.RuntimeOptions{})
-	if err != nil {
-		if strings.TrimSpace(result.ArtifactDir) != "" {
-			return fmt.Errorf("%w\n\nmega-phgo-runtime MSA artifacts were kept at:\n%s", err, result.ArtifactDir)
-		}
-		return err
-	}
-	payload := result.Plan.ToArtifactSet().Payload
-	server.SetMSAPayload(w.canvasTreeSessionID(), payload)
-	w.canvasTreeLastMSAPayload = payload
-	return nil
-}
-
-func msaApplyRequestHasYellow(req phylo.MSAApplyRequest) bool {
-	for _, row := range req.Rows {
-		if strings.EqualFold(strings.TrimSpace(row.State), "yellow") {
-			return true
-		}
-	}
-	return false
-}
-
-func (w *BlastWizard) msaSelectedRowsFromApplyRequest(items []model.CanvasItem, req phylo.MSAApplyRequest) []canvasSelectedRow {
-	if len(w.canvasTreeMSARowMap) == 0 {
-		w.updateCanvasTreeMSARowMap(w.canvasTreeLastPlan)
-	}
-	rowByTaxonID := make(map[string]phylo.InputRecord, len(w.canvasTreeMSARowMap)+len(w.canvasTreeLastPlan.Records))
-	for taxonID, record := range w.canvasTreeMSARowMap {
-		rowByTaxonID[taxonID] = record
-	}
-	for _, record := range w.canvasTreeLastPlan.Records {
-		taxonID := strings.TrimSpace(record.TaxonID)
-		if taxonID != "" {
-			rowByTaxonID[taxonID] = record
-		}
-	}
-	seen := make(map[string]struct{}, len(req.Rows))
-	for _, row := range req.Rows {
-		state := strings.ToLower(strings.TrimSpace(row.State))
-		if state != "green" && state != "yellow" {
-			continue
-		}
-		record, ok := rowByTaxonID[strings.TrimSpace(row.TaxonID)]
-		if !ok {
-			continue
-		}
-		key := strings.TrimSpace(record.CanvasItem) + "\x00" + strconv.Itoa(record.CanvasRow)
-		seen[key] = struct{}{}
-	}
-	out := make([]canvasSelectedRow, 0, len(seen))
-	for itemIndex := range items {
-		itemTitle := strings.TrimSpace(items[itemIndex].Title)
-		for rowIndex := range items[itemIndex].Rows {
-			key := itemTitle + "\x00" + strconv.Itoa(rowIndex)
-			if _, ok := seen[key]; !ok {
-				continue
-			}
-			out = append(out, canvasSelectedRow{
-				ItemTitle: itemTitle,
-				RowIndex:  rowIndex,
-				Row:       items[itemIndex].Rows[rowIndex],
-			})
-		}
-	}
-	return out
-}
-
 func canvasMSAStateFromItems(items []model.CanvasItem, payload phylo.ViewerPayload) phylo.MSAState {
 	stateByCanvasRow := map[string]string{}
 	for itemIndex := range items {
@@ -748,6 +662,16 @@ func canvasMSAStateFromItems(items []model.CanvasItem, payload phylo.ViewerPaylo
 		UpdatedAt:     time.Now(),
 		Rows:          rows,
 	}
+}
+
+func canvasSelectionMasks(items []model.CanvasItem) ([][]bool, [][]bool) {
+	selected := make([][]bool, len(items))
+	msaFlags := make([][]bool, len(items))
+	for i := range items {
+		selected[i] = normalizeCanvasSelection(items[i].Selected, len(items[i].Rows))
+		msaFlags[i] = normalizeCanvasMSAFlags(items[i].MSAFlags, len(items[i].Rows))
+	}
+	return selected, msaFlags
 }
 
 func (w *BlastWizard) buildCanvasTreeArtifacts(ctx context.Context, state canvasLaunchState, selectedRows []canvasSelectedRow, settings phylo.TreeSettings) (phylo.RunResult, error) {
@@ -858,6 +782,11 @@ func (w *BlastWizard) closeCanvasTreeViewer() {
 	w.canvasTreeForceCompute = false
 }
 
+func (w *BlastWizard) canvasTreePreviewAvailable() bool {
+	payload := w.canvasTreeLastPayload
+	return strings.TrimSpace(payload.Newick) != "" && strings.TrimSpace(payload.AlignedFASTA) != ""
+}
+
 func (w *BlastWizard) openCanvasTreeViewer(ctx context.Context, state *canvasLaunchState, settings phylo.TreeSettings) error {
 	server, url, err := w.ensureCanvasTreeViewer(ctx)
 	if err != nil {
@@ -870,9 +799,6 @@ func (w *BlastWizard) openCanvasTreeViewer(ctx context.Context, state *canvasLau
 		if err := w.putCanvasTreeViewerPayload(ctx, server, w.canvasTreeLastPayload); err != nil {
 			return err
 		}
-	}
-	if !w.canvasTreeLastMSAPayload.UpdatedAt.IsZero() || strings.TrimSpace(w.canvasTreeLastMSAPayload.AlignedFASTA) != "" {
-		server.SetMSAPayload(w.canvasTreeSessionID(), w.canvasTreeLastMSAPayload)
 	}
 	if len(w.canvasTreeMSAState.Rows) > 0 || len(w.canvasTreeMSAState.Groups) > 0 || len(w.canvasTreeMSAState.Annotations) > 0 || len(w.canvasTreeMSAState.Settings) > 0 || len(w.canvasTreeMSAState.Markers) > 0 {
 		server.SetMSAState(w.canvasTreeSessionID(), w.canvasTreeMSAState)
@@ -901,9 +827,9 @@ func (w *BlastWizard) updateCanvasTreeViewer(ctx context.Context, plan phylo.Run
 	if err := w.putCanvasTreeViewerPayload(ctx, server, payload); err != nil {
 		return err
 	}
-	server.SetMSAPayload(w.canvasTreeSessionID(), payload)
 	w.canvasTreeLastPayload = payload
 	w.canvasTreeLastMSAPayload = payload
+	w.canvasTreeMSAState = server.GetMSAState(w.canvasTreeSessionID())
 	w.canvasTreeLastPlan = plan
 	w.updateCanvasTreeMSARowMap(plan)
 	return nil

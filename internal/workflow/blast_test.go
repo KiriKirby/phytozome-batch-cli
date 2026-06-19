@@ -3732,15 +3732,15 @@ func TestHydrateKeywordSnapshotSourceStateBackfillsNCBIMetadata(t *testing.T) {
 		t.Fatalf("SourceDatabase = %q", row.SourceDatabase)
 	}
 	for key, want := range map[string]string{
-		"ncbi_entrez_database":  "clinvar",
-		"ncbi_record_type":      "clinvar",
+		"ncbi_entrez_database":     "clinvar",
+		"ncbi_record_type":         "clinvar",
 		"ncbi_eutilities_base_url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils",
-		"ncbi_engine_schema":    "ncbi-eutilities-keyword-v4",
-		"ncbi_link_resolution":  "elink",
-		"ncbi_linked_from_db":   "gene",
-		"ncbi_linked_to_db":     "clinvar",
-		"ncbi_result_domain":    "variant-clinical",
-		"ncbi_search_type_id":   "clinvar",
+		"ncbi_engine_schema":       "ncbi-eutilities-keyword-v4",
+		"ncbi_link_resolution":     "elink",
+		"ncbi_linked_from_db":      "gene",
+		"ncbi_linked_to_db":        "clinvar",
+		"ncbi_result_domain":       "variant-clinical",
+		"ncbi_search_type_id":      "clinvar",
 	} {
 		if got := row.ExtraColumns[key]; got != want {
 			t.Fatalf("%s = %q, want %q", key, got, want)

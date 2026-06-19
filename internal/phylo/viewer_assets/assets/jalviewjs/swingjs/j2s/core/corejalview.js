@@ -74705,7 +74705,8 @@ Clazz_newMeth(C$, 'updateDOMNode$', function () {
 C$.superclazz.prototype.updateDOMNode$.apply(this, []);
 if (this.isAWT && !this.jc.isBackgroundSet$() ) {
 this.jc.setBackground$java_awt_Color($I$(1).LIGHT_GRAY);
-}return this.domNode;
+}this.applyPHgoFluentScrollBarStyle$();
+return this.domNode;
 });
 
 Clazz_newMeth(C$, ['propertyChange$java_beans_PropertyChangeEvent','propertyChange$'], function (e) {
@@ -74773,6 +74774,20 @@ $I$(3).setStyles(this.sliderHandle, ["border", "none", "left", leftt, "margin-bo
 } else {
 $I$(3).setStyles(this.sliderTrack, ["top", top, "height", thickness]);
 $I$(3).setStyles(this.sliderHandle, ["border", "none", "top", leftt, "margin-left", "0px", "height", thickness]);
+}this.applyPHgoFluentScrollBarStyle$();
+});
+
+Clazz_newMeth(C$, 'applyPHgoFluentScrollBarStyle$', function () {
+if (this.sliderTrack == null  || this.sliderHandle == null ) return;
+$I$(3).setStyles(this.sliderTrack, ["background", "#f3f2f1", "border", "none", "border-radius", "999px", "box-shadow", "none"]);
+$I$(3).setStyles(this.sliderHandle, ["background", "#8a8886", "border", "none", "border-radius", "999px", "box-shadow", "none", "opacity", "1"]);
+var handle=this.sliderHandle;
+if (!handle.__phgoFluentScrollBarStyle) {
+handle.__phgoFluentScrollBarStyle=true;
+handle.onmouseenter=function(){handle.style.background="#605e5c";};
+handle.onmouseleave=function(){handle.style.background="#8a8886";};
+handle.onmousedown=function(){handle.style.background="#323130";};
+handle.onmouseup=function(){handle.style.background="#605e5c";};
 }});
 
 Clazz_newMeth(C$, 'scrollByBlock$I$I', function (direction, val0) {
@@ -246212,7 +246227,8 @@ Clazz_newMeth(C$, 'updateDOMNode$', function () {
 C$.superclazz.prototype.updateDOMNode$.apply(this, []);
 if (this.isAWT && !this.jc.isBackgroundSet$() ) {
 this.jc.setBackground$java_awt_Color($I$(1).LIGHT_GRAY);
-}return this.domNode;
+}this.applyPHgoFluentScrollBarStyle$();
+return this.domNode;
 });
 
 Clazz_newMeth(C$, ['propertyChange$java_beans_PropertyChangeEvent','propertyChange$'], function (e) {
@@ -246280,6 +246296,20 @@ $I$(3).setStyles(this.sliderHandle, ["border", "none", "left", leftt, "margin-bo
 } else {
 $I$(3).setStyles(this.sliderTrack, ["top", top, "height", thickness]);
 $I$(3).setStyles(this.sliderHandle, ["border", "none", "top", leftt, "margin-left", "0px", "height", thickness]);
+}this.applyPHgoFluentScrollBarStyle$();
+});
+
+Clazz_newMeth(C$, 'applyPHgoFluentScrollBarStyle$', function () {
+if (this.sliderTrack == null  || this.sliderHandle == null ) return;
+$I$(3).setStyles(this.sliderTrack, ["background", "#f3f2f1", "border", "none", "border-radius", "999px", "box-shadow", "none"]);
+$I$(3).setStyles(this.sliderHandle, ["background", "#8a8886", "border", "none", "border-radius", "999px", "box-shadow", "none", "opacity", "1"]);
+var handle=this.sliderHandle;
+if (!handle.__phgoFluentScrollBarStyle) {
+handle.__phgoFluentScrollBarStyle=true;
+handle.onmouseenter=function(){handle.style.background="#605e5c";};
+handle.onmouseleave=function(){handle.style.background="#8a8886";};
+handle.onmousedown=function(){handle.style.background="#323130";};
+handle.onmouseup=function(){handle.style.background="#605e5c";};
 }});
 
 Clazz_newMeth(C$, 'scrollByBlock$I$I', function (direction, val0) {

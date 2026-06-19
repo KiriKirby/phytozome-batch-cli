@@ -59,9 +59,9 @@ func TestEngineMapsTAIRPrograms(t *testing.T) {
 			"HTTPS://WWW.ARABIDOPSIS.ORG/SERVLETS/TAIROBJECT?TYPE=LOCUS&NAME=AT1G01010": {{GeneIdentifier: "AT1G01010", LabelName: "NAC001"}},
 		},
 		idRows: map[string][]model.KeywordResultRow{
-			"GENE|AT1G01010":   {{GeneIdentifier: "AT1G01010", LabelName: "NAC001"}},
+			"GENE|AT1G01010":    {{GeneIdentifier: "AT1G01010", LabelName: "NAC001"}},
 			"MODEL|AT1G01010.1": {{TranscriptID: "AT1G01010.1", GeneIdentifier: "AT1G01010", LabelName: "NAC001"}},
-			"ANY|AT1G01010-P1": {{ProteinID: "AT1G01010-P1", GeneIdentifier: "AT1G01010", LabelName: "NAC001"}},
+			"ANY|AT1G01010-P1":  {{ProteinID: "AT1G01010-P1", GeneIdentifier: "AT1G01010", LabelName: "NAC001"}},
 		},
 		labelRows: map[string][]model.KeywordResultRow{
 			"NAC001": {{GeneIdentifier: "AT1G01010", LabelName: "NAC001"}},

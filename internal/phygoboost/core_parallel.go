@@ -19,10 +19,10 @@ const (
 )
 
 type ParallelSpec struct {
-	Level       ExecLevel
-	Domain      string
+	Level             ExecLevel
+	Domain            string
 	ForceOwnResources bool
-	Description string
+	Description       string
 }
 
 func ParallelForSpec(ctx context.Context, spec ParallelSpec, total int, fn func(context.Context, int) error) error {

@@ -50,6 +50,10 @@ type Prompter struct {
 	loadKeywordFASTA       func(row model.KeywordResultRow) (string, error)
 	loadBlastFASTA         func(row model.BlastResultRow) (string, error)
 	canvasTreePanelChanged func(state tui.CanvasTreePanelState, opened bool)
+	canvasExternalUpdateMu sync.Mutex
+	canvasExternalUpdate   func(selected [][]bool, msaFlags [][]bool)
+	canvasExternalRefresh  func(refreshing bool, message string)
+	canvasTreePreviewReady func() bool
 	detailFASTACache       map[string]string
 	keywordTableCuePending bool
 	blastTableCuePending   bool
@@ -89,6 +93,34 @@ func (p *Prompter) SetDetailLoaders(keyword func(row model.KeywordResultRow) (st
 
 func (p *Prompter) SetCanvasTreePanelChanged(handler func(state tui.CanvasTreePanelState, opened bool)) {
 	p.canvasTreePanelChanged = handler
+}
+
+func (p *Prompter) SetCanvasTreePreviewReady(handler func() bool) {
+	p.canvasTreePreviewReady = handler
+}
+
+func (p *Prompter) UpdateOpenCanvasSelection(selected [][]bool, msaFlags [][]bool) {
+	if p == nil {
+		return
+	}
+	p.canvasExternalUpdateMu.Lock()
+	update := p.canvasExternalUpdate
+	p.canvasExternalUpdateMu.Unlock()
+	if update != nil {
+		update(cloneBoolMatrixPrompt(selected), cloneBoolMatrixPrompt(msaFlags))
+	}
+}
+
+func (p *Prompter) UpdateOpenCanvasRefreshStatus(refreshing bool, message string) {
+	if p == nil {
+		return
+	}
+	p.canvasExternalUpdateMu.Lock()
+	update := p.canvasExternalRefresh
+	p.canvasExternalUpdateMu.Unlock()
+	if update != nil {
+		update(refreshing, strings.TrimSpace(message))
+	}
 }
 
 func (p *Prompter) QueueKeywordResultTableCue() {
@@ -5539,36 +5571,7 @@ func (p *Prompter) SelectCanvas(initial []model.CanvasItem, currentItem int, nex
 		items = nil
 	}
 	views := func() []tui.BlastRunItem {
-		out := make([]tui.BlastRunItem, 0, len(items))
-		for itemIndex := range items {
-			item := &items[itemIndex]
-			columns, rows := buildCanvasSelectionTable(*item)
-			selected := append([]bool(nil), item.Selected...)
-			if len(selected) != len(item.Rows) {
-				selected = make([]bool, len(item.Rows))
-				for i := range selected {
-					selected[i] = true
-				}
-			}
-			for i, row := range item.Rows {
-				if i < len(selected) && !canvasRowHasSequence(row) {
-					selected[i] = false
-				}
-			}
-			item.Selected = append([]bool(nil), selected...)
-			item.Subtitle = canvasItemSelectionSummary(len(item.Rows), selected)
-			out = append(out, tui.BlastRunItem{
-				Label:       firstNonEmptyText(strings.TrimSpace(item.Title), "Canvas item"),
-				AltLabel:    "",
-				Description: item.Subtitle,
-				Columns:     columns,
-				Rows:        rows,
-				RowNumbers:  canvasItemRowNumbers(*item),
-				Selected:    selected,
-				MSAFlags:    append([]bool(nil), item.MSAFlags...),
-			})
-		}
-		return out
+		return canvasViewsFromItems(items)
 	}
 	for {
 		viewItems := views()
@@ -5606,7 +5609,7 @@ func (p *Prompter) SelectCanvas(initial []model.CanvasItem, currentItem int, nex
 			},
 			State:         p.blastRunStates[stateKey],
 			AliasColumnID: "label_name",
-			TreePanel:     buildCanvasTreePanel(viewItems, items, treeSettings, p.canvasTreeStates[stateKey]),
+			TreePanel:     buildCanvasTreePanel(viewItems, items, treeSettings, p.canvasTreeStates[stateKey], p.canvasTreePreviewAvailable()),
 			LoadAliases: func(runIndex int, rowIndex int) tui.RowAliasChoices {
 				if runIndex < 0 || runIndex >= len(items) || rowIndex < 0 || rowIndex >= len(items[runIndex].Rows) {
 					return tui.RowAliasChoices{}
@@ -5678,6 +5681,31 @@ func (p *Prompter) SelectCanvas(initial []model.CanvasItem, currentItem int, nex
 					})
 				}
 				return nextView
+			},
+			SetExternalSelectionUpdater: func(update func(selected [][]bool, msaFlags [][]bool)) {
+				p.canvasExternalUpdateMu.Lock()
+				if update == nil {
+					p.canvasExternalUpdate = nil
+				} else {
+					p.canvasExternalUpdate = func(selected [][]bool, msaFlags [][]bool) {
+						update(cloneBoolMatrixPrompt(selected), cloneBoolMatrixPrompt(msaFlags))
+					}
+				}
+				p.canvasExternalUpdateMu.Unlock()
+			},
+			ExternalSelectionApplied: func(selected [][]bool, msaFlags [][]bool) {
+				applyCanvasSelectionMasks(items, selected, msaFlags)
+			},
+			SetExternalRefreshUpdater: func(update func(refreshing bool, message string)) {
+				p.canvasExternalUpdateMu.Lock()
+				if update == nil {
+					p.canvasExternalRefresh = nil
+				} else {
+					p.canvasExternalRefresh = func(refreshing bool, message string) {
+						update(refreshing, strings.TrimSpace(message))
+					}
+				}
+				p.canvasExternalUpdateMu.Unlock()
 			},
 			TreePanelChanged: func(state tui.CanvasTreePanelState, opened bool) {
 				if p.canvasTreePanelChanged != nil {
@@ -5796,6 +5824,51 @@ func (p *Prompter) SelectCanvas(initial []model.CanvasItem, currentItem int, nex
 	}
 }
 
+func canvasViewsFromItems(items []model.CanvasItem) []tui.BlastRunItem {
+	out := make([]tui.BlastRunItem, 0, len(items))
+	for itemIndex := range items {
+		item := items[itemIndex]
+		columns, rows := buildCanvasSelectionTable(item)
+		selected := append([]bool(nil), item.Selected...)
+		if len(selected) != len(item.Rows) {
+			selected = make([]bool, len(item.Rows))
+			for i := range selected {
+				selected[i] = true
+			}
+		}
+		for i, row := range item.Rows {
+			if i < len(selected) && !canvasRowHasSequence(row) {
+				selected[i] = false
+			}
+		}
+		item.Selected = append([]bool(nil), selected...)
+		item.Subtitle = canvasItemSelectionSummary(len(item.Rows), selected)
+		out = append(out, tui.BlastRunItem{
+			Label:       firstNonEmptyText(strings.TrimSpace(item.Title), "Canvas item"),
+			AltLabel:    "",
+			Description: item.Subtitle,
+			Columns:     columns,
+			Rows:        rows,
+			RowNumbers:  canvasItemRowNumbers(item),
+			Selected:    selected,
+			MSAFlags:    append([]bool(nil), item.MSAFlags...),
+		})
+	}
+	return out
+}
+
+func applyCanvasSelectionMasks(items []model.CanvasItem, selected [][]bool, msaFlags [][]bool) {
+	for i := range items {
+		if i < len(selected) && len(selected[i]) == len(items[i].Rows) {
+			items[i].Selected = append([]bool(nil), selected[i]...)
+			items[i].Subtitle = canvasItemSelectionSummary(len(items[i].Rows), items[i].Selected)
+		}
+		if i < len(msaFlags) && len(msaFlags[i]) == len(items[i].Rows) {
+			items[i].MSAFlags = append([]bool(nil), msaFlags[i]...)
+		}
+	}
+}
+
 func canvasKeywordStoredDetailFASTA(row model.CanvasRow) string {
 	if row.KeywordRow == nil {
 		return ""
@@ -5818,7 +5891,14 @@ func canvasBlastStoredDetailFASTA(row model.CanvasRow) string {
 	return formatInlineDetailFASTA(header, row.SequenceData.Sequence)
 }
 
-func buildCanvasTreePanel(items []tui.BlastRunItem, canvasItems []model.CanvasItem, settings phylo.TreeSettings, state tui.CanvasTreePanelState) tui.CanvasTreePanel {
+func (p *Prompter) canvasTreePreviewAvailable() bool {
+	if p == nil || p.canvasTreePreviewReady == nil {
+		return false
+	}
+	return p.canvasTreePreviewReady()
+}
+
+func buildCanvasTreePanel(items []tui.BlastRunItem, canvasItems []model.CanvasItem, settings phylo.TreeSettings, state tui.CanvasTreePanelState, previewAvailable ...bool) tui.CanvasTreePanel {
 	displayNames := make([]tui.Choice, 0, 16)
 	if len(items) > 0 || len(canvasItems) > 0 {
 		for _, column := range canvasDefaultFixedColumns() {
@@ -5884,8 +5964,10 @@ func buildCanvasTreePanel(items []tui.BlastRunItem, canvasItems []model.CanvasIt
 		state.TreeParams = cloneStringMap(settings.TreeParams)
 	}
 	state.EnabledEver = state.EnabledEver || len(items) > 0
+	hasPreview := len(previewAvailable) > 0 && previewAvailable[0]
 	return tui.CanvasTreePanel{
 		Available:          len(items) > 0,
+		PreviewAvailable:   hasPreview,
 		State:              state,
 		DisplayNameSources: displayNames,
 		AlignmentMethods:   alignmentMethods,

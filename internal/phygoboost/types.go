@@ -33,11 +33,11 @@ type ResourceRequest struct {
 }
 
 type TaskSpec struct {
-	Level       ExecLevel
-	Domain      string
-	Network     map[string]int
+	Level             ExecLevel
+	Domain            string
+	Network           map[string]int
 	ForceOwnResources bool
-	Description string
+	Description       string
 }
 
 type BudgetProfile struct {

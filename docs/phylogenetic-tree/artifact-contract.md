@@ -290,14 +290,14 @@ Session snapshots must preserve:
 - aligned FASTA
 - Newick tree output
 - latest Reactree viewer payload
-- latest MSA payload, row states, and durable Jalview state
+- latest shared tree/MSA payload, row states, and durable Jalview state
 - generated export artifacts when the viewer later exposes persisted export files
 - exported `.pgv` files when a user explicitly saves browser viewer visual state
 
 Implemented snapshot shape:
 
 - The Canvas module stores a `tree` object with durable tree settings, last viewer payload, last run manifest, last run directory, last aligned FASTA, last Newick tree, and the computation fingerprints.
-- The `canvas-msa-state-v1` module stores MSA row states (`green`, `yellow`, `red`), the last MSA payload/aligned FASTA, and Jalview-owned durable state such as groups, annotations, markers, and settings when available. Browser Jalview state is synchronized with PHgo through `GET`/`PUT /sessions/<id>/msa/state` so snapshot save reads the latest durable MSA state instead of relying on stale launch-time data.
+- The `canvas-msa-state-v1` module stores row states (`green`, `yellow`, `red`), the last shared tree/MSA payload and aligned FASTA, and Jalview-owned durable state such as groups, annotations, markers, and settings when available. Browser Jalview state is synchronized with PHgo through `GET`/`PUT /sessions/<id>/msa/state` so snapshot save reads the latest durable MSA state instead of relying on stale launch-time data. PHgo keeps one selected-row set for tree and MSA: green is selected for both, yellow is unchecked for both but marked as MSA-origin in PHgo, and red is ordinary unchecked.
 - The artifact manifest packs the last run directory's core files under `artifacts/tree/<session>/<run>/`, including `input.fasta`, `input.meta.json`, `runtime-request.json`, `runtime-response.json`, `aligned.fasta`, `tree.nwk`, `viewer.payload.json`, `run.manifest.json`, and runtime logs when they exist.
 - Snapshot open restores packed files to their original run directory, restores the Canvas tree settings, restores the MSA row/durable Jalview state, and keeps the last payload/plan in memory so reopening the tree panel can immediately push the previous tree and MSA payloads to the local viewer service.
 - Snapshot save synchronizes the last tree payload metadata from the current Canvas table before packing the snapshot. If the user changed `display_name` or the display-name source after the last tree refresh, the snapshot records those current labels in `last_payload` and updates only the preview fingerprint. Alignment/tree fingerprints and runtime artifacts are not changed, and `mega-phgo-runtime` is not rerun during snapshot save.

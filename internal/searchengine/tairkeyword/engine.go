@@ -264,7 +264,7 @@ func (labelSymbolProgram) Name() string { return SearchTypeLabelSymbol }
 func (labelSymbolProgram) Match(term string) bool {
 	term = strings.TrimSpace(term)
 	if term == "" || strings.ContainsAny(term, " \t") {
-		 return false
+		return false
 	}
 	return symbolPattern.MatchString(term)
 }
@@ -300,7 +300,7 @@ func (identifierProgram) Search(ctx context.Context, engine *Engine, species mod
 
 type keywordProgram struct{}
 
-func (keywordProgram) Name() string { return SearchTypeKeyword }
+func (keywordProgram) Name() string           { return SearchTypeKeyword }
 func (keywordProgram) Match(term string) bool { return strings.TrimSpace(term) != "" }
 func (keywordProgram) Search(ctx context.Context, engine *Engine, species model.SpeciesCandidate, term string) ([]model.KeywordResultRow, error) {
 	return engine.finder.SearchKeywordRowsByKeywordText(ctx, species, term, 50)
@@ -308,7 +308,7 @@ func (keywordProgram) Search(ctx context.Context, engine *Engine, species model.
 
 type familySearchProgram struct{}
 
-func (familySearchProgram) Name() string { return SearchTypeFamily }
+func (familySearchProgram) Name() string           { return SearchTypeFamily }
 func (familySearchProgram) Match(term string) bool { return strings.TrimSpace(term) != "" }
 func (familySearchProgram) Search(ctx context.Context, engine *Engine, species model.SpeciesCandidate, term string) ([]model.KeywordResultRow, error) {
 	return engine.finder.SearchKeywordRowsByFamily(ctx, species, term, 10000)
@@ -317,7 +317,7 @@ func (familySearchProgram) Search(ctx context.Context, engine *Engine, species m
 type wideSearchProgram struct{}
 type broadSearchProgram struct{}
 
-func (wideSearchProgram) Name() string { return SearchTypeWide }
+func (wideSearchProgram) Name() string           { return SearchTypeWide }
 func (wideSearchProgram) Match(term string) bool { return strings.TrimSpace(term) != "" }
 func (wideSearchProgram) Search(ctx context.Context, engine *Engine, species model.SpeciesCandidate, term string) ([]model.KeywordResultRow, error) {
 	term = strings.TrimSpace(term)
@@ -394,7 +394,7 @@ func (wideSearchProgram) Search(ctx context.Context, engine *Engine, species mod
 	return rows, nil
 }
 
-func (broadSearchProgram) Name() string { return SearchTypeBroad }
+func (broadSearchProgram) Name() string           { return SearchTypeBroad }
 func (broadSearchProgram) Match(term string) bool { return strings.TrimSpace(term) != "" }
 func (broadSearchProgram) Search(ctx context.Context, engine *Engine, species model.SpeciesCandidate, term string) ([]model.KeywordResultRow, error) {
 	return engine.finder.SearchKeywordRowsByBroadText(ctx, species, term, 10000)

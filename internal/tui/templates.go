@@ -293,40 +293,43 @@ type BlastRunItem struct {
 }
 
 type BlastRunSelectionPage struct {
-	Breadcrumb                 string
-	Path                       []string
-	Title                      string
-	Description                string
-	Items                      []BlastRunItem
-	SidebarTitle               string
-	EmptyTitle                 string
-	EmptyMessage               string
-	TableTitle                 string
-	HideCopy                   bool
-	ForceExportScope           bool
-	DisableExportScope         bool
-	DisableDoneAll             bool
-	AllowFilter                bool
-	FilterText                 string
-	AllowBack                  bool
-	AllowHome                  bool
-	ConfirmText                string
-	GenerateText               string
-	ExtraText                  string
-	ExtraShortcut              string
-	ExtraAction                string
-	ExtraActions               []Action
-	DetailAction               string
-	Hints                      []string
-	State                      BlastRunSelectionState
-	LoadDetail                 func(runIndex int, rowIndex int, pageIndex int, itemIndex int) (DetailItem, bool, error)
-	AliasColumnID              string
-	LoadAliases                func(runIndex int, rowIndex int) RowAliasChoices
-	ApplyAlias                 func(runIndex int, rowIndex int, alias string) (TableRow, error)
-	ApplyCellEdit              func(runIndex int, rowIndex int, columnID string, value string) (TableRow, error)
-	ApplyTreeDisplayNameSource func(sourceColumnID string) []BlastRunItem
-	TreePanelChanged           func(state CanvasTreePanelState, opened bool)
-	TreePanel                  CanvasTreePanel
+	Breadcrumb                  string
+	Path                        []string
+	Title                       string
+	Description                 string
+	Items                       []BlastRunItem
+	SidebarTitle                string
+	EmptyTitle                  string
+	EmptyMessage                string
+	TableTitle                  string
+	HideCopy                    bool
+	ForceExportScope            bool
+	DisableExportScope          bool
+	DisableDoneAll              bool
+	AllowFilter                 bool
+	FilterText                  string
+	AllowBack                   bool
+	AllowHome                   bool
+	ConfirmText                 string
+	GenerateText                string
+	ExtraText                   string
+	ExtraShortcut               string
+	ExtraAction                 string
+	ExtraActions                []Action
+	DetailAction                string
+	Hints                       []string
+	State                       BlastRunSelectionState
+	LoadDetail                  func(runIndex int, rowIndex int, pageIndex int, itemIndex int) (DetailItem, bool, error)
+	AliasColumnID               string
+	LoadAliases                 func(runIndex int, rowIndex int) RowAliasChoices
+	ApplyAlias                  func(runIndex int, rowIndex int, alias string) (TableRow, error)
+	ApplyCellEdit               func(runIndex int, rowIndex int, columnID string, value string) (TableRow, error)
+	ApplyTreeDisplayNameSource  func(sourceColumnID string) []BlastRunItem
+	SetExternalSelectionUpdater func(func(selected [][]bool, msaFlags [][]bool))
+	ExternalSelectionApplied    func(selected [][]bool, msaFlags [][]bool)
+	SetExternalRefreshUpdater   func(func(refreshing bool, message string))
+	TreePanelChanged            func(state CanvasTreePanelState, opened bool)
+	TreePanel                   CanvasTreePanel
 }
 
 type BlastRunTableState struct {
@@ -365,6 +368,7 @@ type BlastRunSelectionResult struct {
 
 type CanvasTreePanel struct {
 	Available          bool
+	PreviewAvailable   bool
 	State              CanvasTreePanelState
 	DisplayNameSources []Choice
 	AlignmentMethods   []CanvasTreeMethod
@@ -420,27 +424,30 @@ func blastRunSelectionShowsExportScope(page BlastRunSelectionPage) bool {
 }
 
 type CanvasPage struct {
-	Breadcrumb                 string
-	Path                       []string
-	Title                      string
-	Description                string
-	Items                      []BlastRunItem
-	CurrentItem                int
-	NextNumericID              int
-	AllowBack                  bool
-	AllowHome                  bool
-	ConfirmText                string
-	GenerateText               string
-	ExtraActions               []Action
-	State                      BlastRunSelectionState
-	AliasColumnID              string
-	LoadAliases                func(runIndex int, rowIndex int) RowAliasChoices
-	ApplyAlias                 func(runIndex int, rowIndex int, alias string) (TableRow, error)
-	ApplyCellEdit              func(runIndex int, rowIndex int, columnID string, value string) (TableRow, error)
-	ApplyTreeDisplayNameSource func(sourceColumnID string) []BlastRunItem
-	LoadDetail                 func(runIndex int, rowIndex int, pageIndex int, itemIndex int) (DetailItem, bool, error)
-	TreePanel                  CanvasTreePanel
-	TreePanelChanged           func(state CanvasTreePanelState, opened bool)
+	Breadcrumb                  string
+	Path                        []string
+	Title                       string
+	Description                 string
+	Items                       []BlastRunItem
+	CurrentItem                 int
+	NextNumericID               int
+	AllowBack                   bool
+	AllowHome                   bool
+	ConfirmText                 string
+	GenerateText                string
+	ExtraActions                []Action
+	State                       BlastRunSelectionState
+	AliasColumnID               string
+	LoadAliases                 func(runIndex int, rowIndex int) RowAliasChoices
+	ApplyAlias                  func(runIndex int, rowIndex int, alias string) (TableRow, error)
+	ApplyCellEdit               func(runIndex int, rowIndex int, columnID string, value string) (TableRow, error)
+	ApplyTreeDisplayNameSource  func(sourceColumnID string) []BlastRunItem
+	SetExternalSelectionUpdater func(func(selected [][]bool, msaFlags [][]bool))
+	ExternalSelectionApplied    func(selected [][]bool, msaFlags [][]bool)
+	SetExternalRefreshUpdater   func(func(refreshing bool, message string))
+	LoadDetail                  func(runIndex int, rowIndex int, pageIndex int, itemIndex int) (DetailItem, bool, error)
+	TreePanel                   CanvasTreePanel
+	TreePanelChanged            func(state CanvasTreePanelState, opened bool)
 }
 
 type CanvasResult struct {
@@ -528,32 +535,35 @@ func RunCanvasPage(page CanvasPage) (CanvasResult, error) {
 		return result, nil
 	}
 	blastResult, err := RunBlastRunSelectionPage(BlastRunSelectionPage{
-		Breadcrumb:                 page.Breadcrumb,
-		Path:                       page.Path,
-		Title:                      page.Title,
-		Description:                page.Description,
-		Items:                      items,
-		SidebarTitle:               "Canvas list",
-		EmptyTitle:                 "Canvas",
-		EmptyMessage:               "Canvas is empty. Add a canvas item to start building this workspace.",
-		TableTitle:                 "Canvas",
-		HideCopy:                   true,
-		DisableExportScope:         true,
-		DisableDoneAll:             true,
-		AllowBack:                  page.AllowBack,
-		AllowHome:                  page.AllowHome,
-		ConfirmText:                page.ConfirmText,
-		GenerateText:               page.GenerateText,
-		ExtraActions:               page.ExtraActions,
-		State:                      page.State,
-		AliasColumnID:              page.AliasColumnID,
-		LoadAliases:                page.LoadAliases,
-		ApplyAlias:                 page.ApplyAlias,
-		ApplyCellEdit:              page.ApplyCellEdit,
-		ApplyTreeDisplayNameSource: page.ApplyTreeDisplayNameSource,
-		LoadDetail:                 page.LoadDetail,
-		TreePanel:                  page.TreePanel,
-		TreePanelChanged:           page.TreePanelChanged,
+		Breadcrumb:                  page.Breadcrumb,
+		Path:                        page.Path,
+		Title:                       page.Title,
+		Description:                 page.Description,
+		Items:                       items,
+		SidebarTitle:                "Canvas list",
+		EmptyTitle:                  "Canvas",
+		EmptyMessage:                "Canvas is empty. Add a canvas item to start building this workspace.",
+		TableTitle:                  "Canvas",
+		HideCopy:                    true,
+		DisableExportScope:          true,
+		DisableDoneAll:              true,
+		AllowBack:                   page.AllowBack,
+		AllowHome:                   page.AllowHome,
+		ConfirmText:                 page.ConfirmText,
+		GenerateText:                page.GenerateText,
+		ExtraActions:                page.ExtraActions,
+		State:                       page.State,
+		AliasColumnID:               page.AliasColumnID,
+		LoadAliases:                 page.LoadAliases,
+		ApplyAlias:                  page.ApplyAlias,
+		ApplyCellEdit:               page.ApplyCellEdit,
+		ApplyTreeDisplayNameSource:  page.ApplyTreeDisplayNameSource,
+		SetExternalSelectionUpdater: page.SetExternalSelectionUpdater,
+		ExternalSelectionApplied:    page.ExternalSelectionApplied,
+		SetExternalRefreshUpdater:   page.SetExternalRefreshUpdater,
+		LoadDetail:                  page.LoadDetail,
+		TreePanel:                   page.TreePanel,
+		TreePanelChanged:            page.TreePanelChanged,
 	})
 	if err != nil {
 		return CanvasResult{}, err
@@ -5853,6 +5863,110 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 		}
 		rebuildContentLayout()
 	}
+	if page.SetExternalSelectionUpdater != nil {
+		applyExternalSelection := func(updatedSelected [][]bool, updatedMSAFlags [][]bool) {
+			if len(updatedSelected) == 0 && len(updatedMSAFlags) == 0 {
+				return
+			}
+			saveCurrentTableState()
+			for i, item := range page.Items {
+				if i < len(updatedSelected) && len(updatedSelected[i]) == len(item.Rows) {
+					selectedByRun[i] = append([]bool(nil), updatedSelected[i]...)
+					page.Items[i].Selected = append([]bool(nil), updatedSelected[i]...)
+				}
+				if i < len(updatedMSAFlags) && len(updatedMSAFlags[i]) == len(item.Rows) {
+					msaFlagsByRun[i] = append([]bool(nil), updatedMSAFlags[i]...)
+					page.Items[i].MSAFlags = append([]bool(nil), updatedMSAFlags[i]...)
+				}
+			}
+			refresh()
+			if updateAliasButtonVisibility != nil {
+				updateAliasButtonVisibility()
+			}
+			if rebuildActionRow != nil {
+				rebuildActionRow()
+			}
+			if page.ExternalSelectionApplied != nil {
+				page.ExternalSelectionApplied(cloneBoolMatrix(selectedByRun), cloneBoolMatrix(msaFlagsByRun))
+			}
+		}
+		page.SetExternalSelectionUpdater(func(selected [][]bool, msaFlags [][]bool) {
+			_ = app.QueueUpdateDraw(func() {
+				applyExternalSelection(selected, msaFlags)
+			})
+		})
+		defer page.SetExternalSelectionUpdater(nil)
+	}
+	if page.SetExternalRefreshUpdater != nil {
+		externalRefreshOpen := false
+		externalRefreshText := (*tview.TextView)(nil)
+		closeExternalRefresh := func() {
+			if !externalRefreshOpen {
+				return
+			}
+			externalRefreshOpen = false
+			modalOpen = false
+			modalText = nil
+			helpModal = nil
+			detailModal = nil
+			aliasModalCapture = nil
+			exportScopeCapture = nil
+			externalRefreshText = nil
+			if pageRoot != nil {
+				setPageRoot(app, pageRoot)
+			}
+			if treePanelState.Focused && treePanel != nil {
+				app.SetFocus(treePanel)
+			} else if controlMode == 2 {
+				app.SetFocus(list)
+			} else {
+				app.SetFocus(table)
+			}
+		}
+		showExternalRefresh := func(message string) {
+			message = strings.TrimSpace(message)
+			if message == "" {
+				message = "Refreshing tree and MSA..."
+			}
+			if externalRefreshOpen && externalRefreshText != nil {
+				externalRefreshText.SetText(message)
+				return
+			}
+			modalBody := newButtonFlex()
+			modalBody.SetBorder(true)
+			modalBody.SetTitle(" Refreshing system tree ")
+			modalBody.SetTitleAlign(tview.AlignCenter)
+			setFocusBorder(modalBody.Box, true)
+			attachFocusBorder(modalBody.Box)
+			externalRefreshText = tview.NewTextView().
+				SetDynamicColors(true).
+				SetWrap(true).
+				SetTextColor(tview.Styles.PrimaryTextColor)
+			externalRefreshText.SetText(message)
+			modalBody.AddItem(textBlock("Updating the shared PHgo, MSA, and tree state."), 2, 0, false)
+			modalBody.AddItem(externalRefreshText, 0, 1, true)
+			closeModal = func() {}
+			modalOpen = true
+			modalText = externalRefreshText
+			helpModal = nil
+			detailModal = nil
+			aliasModalCapture = nil
+			exportScopeCapture = nil
+			externalRefreshOpen = true
+			setPageRoot(app, overlayRootOn(pageRoot, modalBody, 90, 14))
+			app.SetFocus(modalBody)
+		}
+		page.SetExternalRefreshUpdater(func(refreshing bool, message string) {
+			_ = app.QueueUpdateDraw(func() {
+				if refreshing {
+					showExternalRefresh(message)
+					return
+				}
+				closeExternalRefresh()
+			})
+		})
+		defer page.SetExternalRefreshUpdater(nil)
+	}
 	setCurrentRun := func(index int) {
 		if index < 0 || index >= len(page.Items) {
 			return
@@ -6510,7 +6624,7 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 				continue
 			}
 			if strings.EqualFold(strings.TrimSpace(button.Value), "open_tree_viewer") {
-				button.Visible = treePanelState.Expanded && treePanelState.Focused
+				button.Visible = page.TreePanel.PreviewAvailable && treePanelState.Expanded && treePanelState.Focused
 				continue
 			}
 			if strings.EqualFold(strings.TrimSpace(button.Value), "refresh_tree") {
@@ -6711,7 +6825,7 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 			toggleTreeTools()
 			return nil
 		}
-		if !treePanelState.Focused && treePreviewShortcutActive(event, treeExpanded()) {
+		if page.TreePanel.PreviewAvailable && !treePanelState.Focused && treePreviewShortcutActive(event, treeExpanded()) {
 			runCanvasTreeActionForRow("open_tree_viewer", currentRun, -1)
 			return nil
 		}

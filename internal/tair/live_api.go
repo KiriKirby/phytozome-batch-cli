@@ -16,51 +16,51 @@ import (
 )
 
 type tairSearchResponse struct {
-	Total int              `json:"total"`
-	Docs  []tairSearchDoc  `json:"docs"`
+	Total int             `json:"total"`
+	Docs  []tairSearchDoc `json:"docs"`
 }
 
 type tairSearchDoc struct {
-	ID               string   `json:"id"`
-	GeneName         []string `json:"gene_name"`
-	GeneModelIDs     []string `json:"gene_model_ids"`
-	Description      []string `json:"description"`
-	OtherNames       []string `json:"other_names"`
-	Keywords         []string `json:"keywords"`
-	KeywordTypes     []string `json:"keyword_types"`
-	UniProtIDs       []string `json:"uniprot_ids"`
-	EvidenceCodes    []string `json:"evidence_codes"`
-	Phenotypes       []string `json:"phenotypes"`
-	GeneModelType    []string `json:"gene_model_type"`
-	Chromosome       string   `json:"chromosome"`
-	MapType          string   `json:"map_type"`
-	LocusTAIRObjectID string  `json:"locus_tairObjectId"`
-	GeneTAIRObjectID string   `json:"gene_tairObjectId"`
-	HasPublications  bool     `json:"has_publications"`
-	IsObselete       bool     `json:"is_obselete"`
-	IsSequenced      bool     `json:"is_sequenced"`
+	ID                string   `json:"id"`
+	GeneName          []string `json:"gene_name"`
+	GeneModelIDs      []string `json:"gene_model_ids"`
+	Description       []string `json:"description"`
+	OtherNames        []string `json:"other_names"`
+	Keywords          []string `json:"keywords"`
+	KeywordTypes      []string `json:"keyword_types"`
+	UniProtIDs        []string `json:"uniprot_ids"`
+	EvidenceCodes     []string `json:"evidence_codes"`
+	Phenotypes        []string `json:"phenotypes"`
+	GeneModelType     []string `json:"gene_model_type"`
+	Chromosome        string   `json:"chromosome"`
+	MapType           string   `json:"map_type"`
+	LocusTAIRObjectID string   `json:"locus_tairObjectId"`
+	GeneTAIRObjectID  string   `json:"gene_tairObjectId"`
+	HasPublications   bool     `json:"has_publications"`
+	IsObselete        bool     `json:"is_obselete"`
+	IsSequenced       bool     `json:"is_sequenced"`
 }
 
 type tairKeywordSearchResponse struct {
-	Total int                   `json:"total"`
+	Total int                    `json:"total"`
 	Docs  []tairKeywordSearchDoc `json:"docs"`
 }
 
 type tairKeywordSearchDoc struct {
-	ID            string   `json:"id"`
-	KwID          string   `json:"kwId"`
-	KwName        []string `json:"kwName"`
-	KwNameExact   string   `json:"kwNameExact"`
-	KwCategory    []string `json:"kwCategory"`
-	GOPOID        []string `json:"gopoId"`
-	Synonyms      []string `json:"synonyms"`
-	KwChildNames  []string `json:"kwChildNames"`
-	LociCount     int      `json:"lociCount"`
-	LociCountChild int     `json:"lociCount_child"`
-	AnnotCount    int      `json:"annotCount"`
-	AnnotCountChild int    `json:"annotCount_child"`
-	PubCount      int      `json:"pubCount"`
-	PubCountChild int      `json:"pubCount_child"`
+	ID              string   `json:"id"`
+	KwID            string   `json:"kwId"`
+	KwName          []string `json:"kwName"`
+	KwNameExact     string   `json:"kwNameExact"`
+	KwCategory      []string `json:"kwCategory"`
+	GOPOID          []string `json:"gopoId"`
+	Synonyms        []string `json:"synonyms"`
+	KwChildNames    []string `json:"kwChildNames"`
+	LociCount       int      `json:"lociCount"`
+	LociCountChild  int      `json:"lociCount_child"`
+	AnnotCount      int      `json:"annotCount"`
+	AnnotCountChild int      `json:"annotCount_child"`
+	PubCount        int      `json:"pubCount"`
+	PubCountChild   int      `json:"pubCount_child"`
 }
 
 func (c *Client) postTAIRJSON(ctx context.Context, endpoint string, requestBody any, out any) error {

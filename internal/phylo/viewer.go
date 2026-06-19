@@ -22,17 +22,16 @@ import (
 var viewerAssets embed.FS
 
 type ViewerState struct {
-	mu          sync.RWMutex
-	payloads    map[string]ViewerPayload
-	msaPayloads map[string]ViewerPayload
-	previews    map[string]map[string]any
-	states      map[string]json.RawMessage
-	statuses    map[string]ViewerSessionStatus
-	msaRows     map[string]map[string]string
-	msaStates   map[string]MSAState
-	seq         uint64
-	sessions    map[string]uint64
-	notify      chan struct{}
+	mu        sync.RWMutex
+	payloads  map[string]ViewerPayload
+	previews  map[string]map[string]any
+	states    map[string]json.RawMessage
+	statuses  map[string]ViewerSessionStatus
+	msaRows   map[string]map[string]string
+	msaStates map[string]MSAState
+	seq       uint64
+	sessions  map[string]uint64
+	notify    chan struct{}
 }
 
 type ViewerServer struct {
@@ -70,15 +69,14 @@ func NewViewerServer(addr string) *ViewerServer {
 	return &ViewerServer{
 		addr: addr,
 		state: ViewerState{
-			payloads:    map[string]ViewerPayload{},
-			msaPayloads: map[string]ViewerPayload{},
-			previews:    map[string]map[string]any{},
-			states:      map[string]json.RawMessage{},
-			statuses:    map[string]ViewerSessionStatus{},
-			msaRows:     map[string]map[string]string{},
-			msaStates:   map[string]MSAState{},
-			sessions:    map[string]uint64{},
-			notify:      make(chan struct{}),
+			payloads:  map[string]ViewerPayload{},
+			previews:  map[string]map[string]any{},
+			states:    map[string]json.RawMessage{},
+			statuses:  map[string]ViewerSessionStatus{},
+			msaRows:   map[string]map[string]string{},
+			msaStates: map[string]MSAState{},
+			sessions:  map[string]uint64{},
+			notify:    make(chan struct{}),
 		},
 	}
 }
@@ -127,11 +125,15 @@ func (v *ViewerServer) SetMSAPayload(sessionID string, payload ViewerPayload) {
 		payload.UpdatedAt = time.Now()
 	}
 	v.state.mu.Lock()
-	if v.state.msaPayloads == nil {
-		v.state.msaPayloads = map[string]ViewerPayload{}
+	if v.state.payloads == nil {
+		v.state.payloads = map[string]ViewerPayload{}
 	}
-	v.state.msaPayloads[sessionID] = payload
-	v.normalizeMSAStateLocked(sessionID, payload)
+	sharedPayload, ok := v.state.payloads[sessionID]
+	if !ok {
+		v.state.payloads[sessionID] = payload
+		sharedPayload = payload
+	}
+	v.normalizeMSAStateLocked(sessionID, sharedPayload)
 	v.state.seq++
 	v.state.sessions[sessionID] = v.state.seq
 	v.state.broadcastLocked()
@@ -438,6 +440,7 @@ func (v *ViewerServer) handlePayloadPut(w http.ResponseWriter, r *http.Request, 
 	}
 	v.state.mu.Lock()
 	v.state.payloads[sessionID] = payload
+	v.normalizeMSAStateLocked(sessionID, payload)
 	v.state.seq++
 	v.state.sessions[sessionID] = v.state.seq
 	v.state.broadcastLocked()
@@ -771,9 +774,6 @@ func (v *ViewerServer) msaPayloadLocked(sessionID string) (ViewerPayload, bool) 
 	if v == nil {
 		return ViewerPayload{}, false
 	}
-	if payload, ok := v.state.msaPayloads[sessionID]; ok {
-		return payload, true
-	}
 	payload, ok := v.state.payloads[sessionID]
 	return payload, ok
 }
@@ -921,6 +921,7 @@ func msaJalviewInitialState(sessionID string, payload ViewerPayload) map[string]
 		"conversionTarget": string(payload.Metadata.ConversionTarget),
 		"alignmentMethod":  string(payload.Metadata.AlignmentMethod),
 		"treeMethod":       string(payload.Metadata.TreeMethod),
+		"payloadUpdatedAt": payload.UpdatedAt.Format(time.RFC3339Nano),
 	}
 }
 

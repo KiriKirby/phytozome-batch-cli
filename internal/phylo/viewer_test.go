@@ -13,6 +13,15 @@ import (
 	"time"
 )
 
+func mustJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal JSON: %v", err)
+	}
+	return data
+}
+
 func TestViewerServerStartsEmptyAndAcceptsPayload(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -119,6 +128,8 @@ func TestViewerAssetsIncludeJalviewBootstrapPage(t *testing.T) {
 		!strings.Contains(html, `#jalview-desktop-div.phgo-window-manager`) ||
 		!strings.Contains(html, `.phgo-root-desktop-frame`) ||
 		!strings.Contains(html, `[id*="_DesktopPaneUI"]`) ||
+		!strings.Contains(html, `scrollbar-color: rgba(96, 94, 92, 0.62) rgba(243, 242, 241, 0.9)`) ||
+		!strings.Contains(html, `*::-webkit-scrollbar-thumb`) ||
 		!strings.Contains(html, `display: block !important`) ||
 		!strings.Contains(html, `pointer-events: none`) ||
 		strings.Contains(html, `aria-hidden="true"`) ||
@@ -154,6 +165,9 @@ func TestViewerAssetsIncludePHgoJalviewBridge(t *testing.T) {
 		!strings.Contains(js, `collectMSAState`) ||
 		!strings.Contains(js, `saveMSAStateNow`) ||
 		!strings.Contains(js, `/msa/state`) ||
+		!strings.Contains(js, `payloadUpdatedAt`) ||
+		!strings.Contains(js, `currentPayloadUpdatedAt`) ||
+		!strings.Contains(js, `Reloading MSA...`) ||
 		!strings.Contains(js, `checkboxColumnWidth`) ||
 		strings.Contains(js, `installApplyMenuFallback`) ||
 		strings.Contains(js, `window.setInterval(updateMSACheckboxLayer`) ||
@@ -190,6 +204,10 @@ func TestVendoredJalviewCoreHasPHgoSourcePatches(t *testing.T) {
 		`toggleSelectionForSequence`,
 		`var phgoApply=Clazz_new_($I$(2).c$$S,["Apply"])`,
 		`bridge.applyMSASelection`,
+		`applyPHgoFluentScrollBarStyle$`,
+		`__phgoFluentScrollBarStyle`,
+		`#8a8886`,
+		`#f3f2f1`,
 	} {
 		if !strings.Contains(js, want) {
 			t.Fatalf("vendored JalviewJS core is missing PHgo patch %q", want)
@@ -280,7 +298,7 @@ func TestViewerMSAApplyKeepsPayloadOrderAndState(t *testing.T) {
 	}
 	nextPayload := payload
 	nextPayload.Metadata.Records = []InputRecord{{TaxonID: "a", DisplayName: "A", CanvasItem: "group", CanvasRow: 0}}
-	server.SetMSAPayload("canvas", nextPayload)
+	putViewerPayload(t, server.URL()+"/sessions/canvas/payload", mustJSON(t, nextPayload))
 	state = server.GetMSAState("canvas")
 	if len(state.Rows) != 1 || state.Rows[0].TaxonID != "a" || state.Rows[0].State != "yellow" {
 		t.Fatalf("MSA state should follow new payload while preserving matching row state: %#v", state)
@@ -537,7 +555,32 @@ func TestViewerServerMSASelectionDefaultsAndApply(t *testing.T) {
 	}
 }
 
-func TestViewerServerUsesSeparateMSAPayloadForAlignmentAndSelection(t *testing.T) {
+func TestViewerMSAPageIncludesPayloadVersionForLiveReload(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := NewViewerServer("127.0.0.1:0")
+	if err := server.Start(ctx); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	updatedAt := time.Now().UTC().Truncate(time.Nanosecond)
+	putViewerPayload(t, server.URL()+"/sessions/test/payload", mustJSON(t, ViewerPayload{
+		SchemaVersion: 1,
+		SessionID:     "test",
+		UpdatedAt:     updatedAt,
+		AlignedFASTA:  ">PHGOT000001\nAAAA\n",
+		Metadata: Metadata{Records: []InputRecord{
+			{TaxonID: "PHGOT000001", DisplayName: "A"},
+		}},
+	}))
+
+	html := getViewerPayload(t, server.URL()+"/sessions/test/msa")
+	state := decodeInlineJalviewBootstrapState(t, html)
+	if got, want := state["payloadUpdatedAt"], updatedAt.Format(time.RFC3339Nano); got != want {
+		t.Fatalf("payloadUpdatedAt = %q, want %q", got, want)
+	}
+}
+
+func TestViewerServerUsesSharedTreePayloadForMSAAlignmentAndSelection(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	server := NewViewerServer("127.0.0.1:0")
@@ -569,12 +612,12 @@ func TestViewerServerUsesSeparateMSAPayloadForAlignmentAndSelection(t *testing.T
 		t.Fatalf("tree payload should remain the tree-only payload: %s", treePayload)
 	}
 	msaFasta := getViewerPayload(t, server.URL()+"/sessions/test/aligned.fasta")
-	if !strings.Contains(msaFasta, "TVNBX09OTFk") || strings.Contains(msaFasta, "VFJFRV9PTkxZ") {
-		t.Fatalf("MSA aligned FASTA should use separate MSA payload: %s", msaFasta)
+	if !strings.Contains(msaFasta, "VFJFRV9PTkxZ") || strings.Contains(msaFasta, "TVNBX09OTFk") {
+		t.Fatalf("MSA aligned FASTA should use the shared tree payload: %s", msaFasta)
 	}
 	selection := getViewerPayload(t, server.URL()+"/sessions/test/msa/selection")
-	if !strings.Contains(selection, `"taxon_id":"MSA_ONLY"`) || strings.Contains(selection, "TREE_ONLY") {
-		t.Fatalf("MSA selection should use separate MSA payload: %s", selection)
+	if !strings.Contains(selection, `"taxon_id":"TREE_ONLY"`) || strings.Contains(selection, "MSA_ONLY") {
+		t.Fatalf("MSA selection should use the shared tree payload: %s", selection)
 	}
 }
 

@@ -450,6 +450,30 @@ func TestBuildCanvasTreePanelFiltersCodonMethodsByConversionTarget(t *testing.T)
 	}
 }
 
+func TestBuildCanvasTreePanelPreviewAvailabilityIsExplicit(t *testing.T) {
+	item := model.CanvasItem{
+		Title:    "protein",
+		Kind:     model.CanvasKindFasta,
+		Selected: []bool{true},
+		Rows: []model.CanvasRow{{
+			Kind:  model.CanvasKindFasta,
+			FASTA: &model.QuerySequenceSource{Sequence: "MPEPTIDE"},
+		}},
+	}
+	columns, rows := buildCanvasSelectionTable(item)
+	viewItems := []tui.BlastRunItem{{
+		Columns:  columns,
+		Rows:     rows,
+		Selected: []bool{true},
+	}}
+	if panel := buildCanvasTreePanel(viewItems, []model.CanvasItem{item}, phylo.DefaultTreeSettings(), tui.CanvasTreePanelState{}); panel.PreviewAvailable {
+		t.Fatal("preview should be unavailable before a shared tree/MSA payload exists")
+	}
+	if panel := buildCanvasTreePanel(viewItems, []model.CanvasItem{item}, phylo.DefaultTreeSettings(), tui.CanvasTreePanelState{}, true); !panel.PreviewAvailable {
+		t.Fatal("preview should be available after the workflow reports a complete shared payload")
+	}
+}
+
 func TestBuildCanvasTreePanelIncludesFormattedDisplayNameSources(t *testing.T) {
 	item := model.CanvasItem{
 		Title:    "protein",
@@ -714,6 +738,29 @@ func TestKeywordWideSearchContextSupportsPhytozomeAndLemna(t *testing.T) {
 		if got := p.keywordWideSearchContext(); got != tt.want {
 			t.Fatalf("%s context = %v, want %v", tt.name, got, tt.want)
 		}
+	}
+}
+
+func TestUpdateOpenCanvasRefreshStatusUsesRegisteredCallback(t *testing.T) {
+	p := New(nil, io.Discard)
+	type call struct {
+		refreshing bool
+		message    string
+	}
+	var calls []call
+	p.canvasExternalRefresh = func(refreshing bool, message string) {
+		calls = append(calls, call{refreshing: refreshing, message: message})
+	}
+
+	p.UpdateOpenCanvasRefreshStatus(true, "  Refreshing tree and MSA...  ")
+	p.UpdateOpenCanvasRefreshStatus(false, "")
+
+	want := []call{
+		{refreshing: true, message: "Refreshing tree and MSA..."},
+		{refreshing: false, message: ""},
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("refresh status calls = %#v, want %#v", calls, want)
 	}
 }
 

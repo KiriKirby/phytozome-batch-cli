@@ -153,14 +153,15 @@ A Canvas snapshot must preserve:
 - `run.manifest.json`
 - runtime logs when present
 - MSA row states (`green`, `yellow`, `red`)
-- last MSA payload/aligned FASTA
+- last shared tree/MSA payload and aligned FASTA
 - durable Jalview MSA state such as groups, annotations, markers, and settings when available
 
 A Canvas snapshot must not preserve pure UI-open state such as expanded/focused
 tool panels, current settings page, scroll offsets, browser viewport metadata,
-transient search text, or open menu/ribbon state. The yellow MSA row state means
-the row is unchecked for PHgo and tree computation, but remains present and
-unchecked in the MSA payload because the exclusion came from MSA.
+transient search text, or open menu/ribbon state. PHgo uses one selected-row set
+for tree and MSA. The yellow MSA row state means the row is unchecked for both
+tree and MSA, and PHgo shows a yellow checkbox only because the exclusion came
+from MSA Apply.
 
 Opening a snapshot restores enough in-memory state to reopen the tree panel,
 reopen the MSA view, save the snapshot again, and update preview metadata

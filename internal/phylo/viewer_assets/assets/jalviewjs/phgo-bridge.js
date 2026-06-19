@@ -167,7 +167,8 @@
       sequenceKind,
       conversionTarget,
       alignmentMethod: String(state.alignmentMethod || ""),
-      treeMethod: String(state.treeMethod || "")
+      treeMethod: String(state.treeMethod || ""),
+      payloadUpdatedAt: String(state.payloadUpdatedAt || "")
     };
     return window.__PHGOJalviewState;
   }
@@ -296,6 +297,11 @@
       body: JSON.stringify(value)
     }, options || {}));
     if (!response.ok) throw new Error(`${path} failed: ${response.status}`);
+  }
+
+  async function currentPayloadUpdatedAt(session) {
+    const payload = await fetchJSON(`/sessions/${encodeURIComponent(session)}/payload`);
+    return String(payload && payload.updated_at || "");
   }
 
   function currentSession() {
@@ -643,6 +649,7 @@
   function installMSAEvents() {
     const session = currentSession();
     if (session) {
+      let reloadScheduled = false;
       try {
         const events = new EventSource(`/events/${encodeURIComponent(session)}`);
         events.addEventListener("update", async () => {
@@ -655,6 +662,20 @@
             }
           } catch (error) {
             debug("msa-status-failed", { message: formatValue(error) });
+          }
+          if (reloadScheduled) return;
+          try {
+            const currentUpdatedAt = await currentPayloadUpdatedAt(session);
+            const loadedUpdatedAt = String((window.__PHGOJalviewState || {}).payloadUpdatedAt || "");
+            if (currentUpdatedAt && loadedUpdatedAt && currentUpdatedAt !== loadedUpdatedAt) {
+              reloadScheduled = true;
+              showToast("Reloading MSA...", true);
+              window.setTimeout(() => {
+                window.location.replace(`/sessions/${encodeURIComponent(session)}/msa`);
+              }, 100);
+            }
+          } catch (error) {
+            debug("msa-payload-version-check-failed", { message: formatValue(error) });
           }
         });
       } catch (error) {

@@ -2107,10 +2107,10 @@ type sraRunSet struct {
 }
 
 type clinVarSet struct {
-	Title string `xml:"Title"`
+	Title                     string `xml:"Title"`
 	ReferenceClinVarAssertion struct {
 		ClinicalSignificance struct {
-			Description string `xml:"Description"`
+			Description  string `xml:"Description"`
 			ReviewStatus string `xml:"ReviewStatus"`
 		} `xml:"ClinicalSignificance"`
 		TraitSet struct {
@@ -2130,7 +2130,7 @@ type clinVarSet struct {
 
 type gtrTestReport struct {
 	Test struct {
-		Name string `xml:"Name"`
+		Name           string `xml:"Name"`
 		ClinicalDomain struct {
 			Diseases []struct {
 				Name string `xml:"Name"`

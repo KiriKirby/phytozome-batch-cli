@@ -1,4 +1,4 @@
-﻿package cachex
+package cachex
 
 import (
 	"context"
@@ -438,4 +438,3 @@ func IsUnavailable(err error) bool {
 	}
 	return errors.Is(err, os.ErrPermission) || strings.Contains(strings.ToLower(err.Error()), "cache root unavailable")
 }
-
