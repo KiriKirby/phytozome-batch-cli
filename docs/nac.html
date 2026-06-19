@@ -7,6 +7,23 @@
 
 <body bgcolor="#FFFFFF">
 
+<p>phytozome GO v20260619T005906Z</p>
+<p>Release v20260619T005906Z</p>
+<p>Highlights:</p>
+<p>- Hardened Canvas PHgo, Tree, and native JalviewJS MSA synchronization.</p>
+<p>- Added native MSA Apply flow support for green/yellow/red row states: green is selected for Tree/MSA, yellow is PHgo/Tree-unchecked but retained unchecked in MSA, and red is excluded from both.</p>
+<p>- Added shared refresh status reporting so Tree and MSA pages show refresh-in-progress while PHgo recomputes.</p>
+<p>- Added durable MSA state synchronization for row states, Jalview groups, annotations, markers, and settings through the local viewer service.</p>
+<p>- Updated .pgo snapshot format to preserve durable Canvas Tree and MSA state while dropping transient UI-open state.</p>
+<p>- Vendored local JalviewJS assets for offline MSA preview and fixed the visible MSA route to use /sessions/&lt;id&gt;/msa.</p>
+<p>- Rebuilt Reactree viewer assets and hardened release packaging scripts around retries, icons, and bundled PHgo runtime validation.</p>
+<p>Validation:</p>
+<p>- go test ./...</p>
+<p>- go vet ./...</p>
+<p>- go build ./...</p>
+<p>- scripts\build-tree-viewer.ps1</p>
+<p>- scripts\build-release.ps1 -Publish</p>
+<p>&nbsp;</p>
 <p>phytozome GO v20260617T130247Z</p>
 <p>Release v20260617T130247Z</p>
 <p>Validation:</p>
