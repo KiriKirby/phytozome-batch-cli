@@ -52,6 +52,8 @@ type BlastWizard struct {
 	httpClient              *http.Client
 	source                  source.DataSource
 	sourceFactory           func(string) source.DataSource
+	chooseBlastTargetDB     func() (string, error)
+	selectSpeciesHook       func([]model.SpeciesCandidate) (model.SpeciesCandidate, error)
 	prompt                  *prompt.Prompter
 	out                     io.Writer
 	tuiInfo                 tui.StartupInfo
@@ -1218,33 +1220,146 @@ func (w *BlastWizard) runTransferEntry(ctx context.Context) error {
 		})
 	}
 
-	targetDatabase := strings.ToLower(strings.TrimSpace(w.transferTargetDatabase))
-	if targetDatabase == "" {
-		chosenDatabase, err := w.prompt.ChooseBlastTargetDatabase()
-		if err != nil {
-			return err
+	err := w.runAgainstBlastTargetDatabase(ctx, w.transferTargetDatabase, func(database string) {
+		w.transferTargetDatabase = strings.ToLower(strings.TrimSpace(database))
+	}, func(targetSpecies model.SpeciesCandidate) error {
+		return w.runTransferredBlastMode(ctx, targetSpecies)
+	})
+	if err == nil {
+		w.clearTransferBlastState()
+	}
+	return err
+}
+
+func (w *BlastWizard) chooseBlastTargetDatabase() (string, error) {
+	if w.chooseBlastTargetDB != nil {
+		return w.chooseBlastTargetDB()
+	}
+	return w.prompt.ChooseBlastTargetDatabase()
+}
+
+func (w *BlastWizard) clearTransferBlastState() {
+	w.transferKind = ""
+	w.transferTargetDatabase = ""
+	w.transferKeywordRows = nil
+	w.transferBlastRows = nil
+	w.transferSourceSpecies = model.SpeciesCandidate{}
+}
+
+func (w *BlastWizard) runAgainstBlastTargetDatabase(ctx context.Context, initialDatabase string, rememberDatabase func(string), run func(model.SpeciesCandidate) error) error {
+	if run == nil {
+		return fmt.Errorf("missing BLAST target runner")
+	}
+
+	previousSource := w.source
+	previousBlastProgram := w.blastProgramPath
+	previousDB := ""
+	if previousSource != nil {
+		previousDB = databaseDisplayName(previousSource.Name())
+	}
+	defer func() {
+		w.source = previousSource
+		w.prompt.SetDatabaseContext(previousDB)
+		w.setBlastProgramContext(previousBlastProgram)
+	}()
+
+	targetDatabase := strings.ToLower(strings.TrimSpace(initialDatabase))
+	var candidates []model.SpeciesCandidate
+	var selected model.SpeciesCandidate
+
+targetDatabaseLoop:
+	for {
+		if targetDatabase == "" {
+			chosenDatabase, err := w.chooseBlastTargetDatabase()
+			if err != nil {
+				return err
+			}
+			targetDatabase = strings.ToLower(strings.TrimSpace(chosenDatabase))
+			if rememberDatabase != nil {
+				rememberDatabase(targetDatabase)
+			}
 		}
-		targetDatabase = strings.ToLower(strings.TrimSpace(chosenDatabase))
-		w.transferTargetDatabase = targetDatabase
-	}
 
-	dataSource, err := w.dataSourceForDatabase(targetDatabase)
-	if err != nil {
-		return fmt.Errorf("resolve transfer target database: %w", err)
-	}
-	w.source = dataSource
-	w.prompt.SetDatabaseContext(databaseDisplayName(w.source.Name()))
-	w.setBlastProgramContext("")
+		dataSource, err := w.dataSourceForDatabase(targetDatabase)
+		if err != nil {
+			return fmt.Errorf("resolve BLAST target database: %w", err)
+		}
+		w.source = dataSource
+		w.prompt.SetDatabaseContext(databaseDisplayName(w.source.Name()))
+		w.setBlastProgramContext("")
 
-	candidates, err := w.loadSpeciesCandidates(ctx)
-	if err != nil {
-		return err
+		candidates, err = w.loadSpeciesCandidates(ctx)
+		if err != nil {
+			switch transferTargetBackAction(err) {
+			case wizardBackExit:
+				return err
+			case wizardBackDatabase:
+				targetDatabase = ""
+				if rememberDatabase != nil {
+					rememberDatabase("")
+				}
+				selected = model.SpeciesCandidate{}
+				continue targetDatabaseLoop
+			default:
+				return err
+			}
+		}
+
+		selected = model.SpeciesCandidate{}
+	targetSpeciesLoop:
+		for {
+			if selected.JBrowseName == "" {
+				var err error
+				selected, err = w.selectSpecies(candidates)
+				switch transferTargetBackAction(err) {
+				case wizardBackNone:
+				case wizardBackExit:
+					return err
+				case wizardBackDatabase:
+					targetDatabase = ""
+					if rememberDatabase != nil {
+						rememberDatabase("")
+					}
+					selected = model.SpeciesCandidate{}
+					continue targetDatabaseLoop
+				default:
+					if err != nil {
+						return err
+					}
+				}
+			}
+
+			err := run(selected)
+			switch transferTargetBackAction(err) {
+			case wizardBackNone:
+				return nil
+			case wizardBackExit:
+				return err
+			case wizardBackDatabase:
+				targetDatabase = ""
+				if rememberDatabase != nil {
+					rememberDatabase("")
+				}
+				selected = model.SpeciesCandidate{}
+				continue targetDatabaseLoop
+			case wizardBackSpecies:
+				selected = model.SpeciesCandidate{}
+				continue targetSpeciesLoop
+			default:
+				return err
+			}
+		}
 	}
-	selected, err := w.selectSpecies(candidates)
-	if err != nil {
-		return err
+}
+
+func transferTargetBackAction(err error) wizardBackAction {
+	action := classifyWizardBack(err)
+	switch action {
+	case wizardBackMode:
+		return wizardBackDatabase
+	default:
+		return action
 	}
-	return w.runTransferredBlastMode(ctx, selected)
 }
 
 func (w *BlastWizard) shouldSpawnChildTab() bool {
@@ -1789,17 +1904,28 @@ func (w *BlastWizard) blastLabelLookupKey(src source.DataSource, species model.S
 
 func (w *BlastWizard) cachedBlastLabelLookup(src source.DataSource, species model.SpeciesCandidate, item blastQueryItem) (blastAutoLabelResult, bool) {
 	key := w.blastLabelLookupKey(src, species, item)
+	return w.cachedBlastLabelLookupByKey(key)
+}
+
+func (w *BlastWizard) cachedBlastLabelLookupByKey(key string) (blastAutoLabelResult, bool) {
+	if strings.TrimSpace(key) == "" {
+		return blastAutoLabelResult{}, false
+	}
 	w.blastLabelLookupMu.Lock()
 	defer w.blastLabelLookupMu.Unlock()
-	if w.blastLabelLookupCache == nil {
-		w.blastLabelLookupCache = make(map[string]blastAutoLabelResult)
-	}
 	result, ok := w.blastLabelLookupCache[key]
 	return result, ok
 }
 
 func (w *BlastWizard) storeBlastLabelLookup(src source.DataSource, species model.SpeciesCandidate, item blastQueryItem, result blastAutoLabelResult) {
 	key := w.blastLabelLookupKey(src, species, item)
+	w.storeBlastLabelLookupByKey(key, result)
+}
+
+func (w *BlastWizard) storeBlastLabelLookupByKey(key string, result blastAutoLabelResult) {
+	if strings.TrimSpace(key) == "" {
+		return
+	}
 	w.blastLabelLookupMu.Lock()
 	defer w.blastLabelLookupMu.Unlock()
 	if w.blastLabelLookupCache == nil {
@@ -1901,6 +2027,9 @@ func (w *BlastWizard) speciesCandidatesForSource(ctx context.Context, src source
 }
 
 func (w *BlastWizard) selectSpecies(candidates []model.SpeciesCandidate) (model.SpeciesCandidate, error) {
+	if w.selectSpeciesHook != nil {
+		return w.selectSpeciesHook(candidates)
+	}
 	// If lemna source and the candidate list is small, present the full list directly.
 	const smallListThreshold = 16
 
@@ -2432,10 +2561,6 @@ func (w *BlastWizard) runKeywordBlastMode(ctx context.Context, selected model.Sp
 		handoff.BlastContext.RewindKeywordToInput = false
 		return w.spawnChildTab(ctx, "", ModeBlast, handoff)
 	}
-	databaseName, err := w.prompt.ChooseBlastTargetDatabase()
-	if err != nil {
-		return err
-	}
 
 	prepared, err := w.resolveKeywordRowsToBlastItems(ctx, selected, rows)
 	if err != nil {
@@ -2451,32 +2576,6 @@ func (w *BlastWizard) runKeywordBlastMode(ctx context.Context, selected model.Sp
 	if len(prepared) == 0 {
 		return w.showInfo("Keyword BLAST", "No selected keyword rows remained after BLAST label handling.", prompt.ErrBackToRowSelection)
 	}
-	targetSource, err := w.dataSourceForDatabase(databaseName)
-	if err != nil {
-		return err
-	}
-
-	previousSource := w.source
-	previousBlastProgram := w.blastProgramPath
-	previousDB := databaseDisplayName(previousSource.Name())
-	defer func() {
-		w.source = previousSource
-		w.prompt.SetDatabaseContext(previousDB)
-		w.setBlastProgramContext(previousBlastProgram)
-	}()
-
-	w.source = targetSource
-	w.prompt.SetDatabaseContext(databaseDisplayName(targetSource.Name()))
-	w.setBlastProgramContext("")
-
-	candidates, err := w.loadSpeciesCandidates(ctx)
-	if err != nil {
-		return err
-	}
-	targetSpecies, err := w.selectSpecies(candidates)
-	if err != nil {
-		return err
-	}
 
 	w.lastKeywordGroups = cloneKeywordSearchGroups(groups)
 	w.lastKeywordSpecies = selected
@@ -2484,7 +2583,9 @@ func (w *BlastWizard) runKeywordBlastMode(ctx context.Context, selected model.Sp
 		copied := *reportCtx
 		w.lastKeywordReport = &copied
 	}
-	return w.executePreparedBlast(ctx, targetSpecies, prepared, blastRequestConfig{})
+	return w.runAgainstBlastTargetDatabase(ctx, "", nil, func(targetSpecies model.SpeciesCandidate) error {
+		return w.executePreparedBlast(ctx, targetSpecies, prepared, blastRequestConfig{})
+	})
 }
 
 func (w *BlastWizard) runBlastRowsBlastMode(ctx context.Context, selected model.SpeciesCandidate, rows []model.BlastResultRow) error {
@@ -2499,10 +2600,6 @@ func (w *BlastWizard) runBlastRowsBlastMode(ctx context.Context, selected model.
 		handoff.BlastContext.TransferBlastRows = append([]model.BlastResultRow(nil), rows...)
 		handoff.BlastContext.RewindBlastToInput = false
 		return w.spawnChildTab(ctx, "", ModeBlast, handoff)
-	}
-	databaseName, err := w.prompt.ChooseBlastTargetDatabase()
-	if err != nil {
-		return err
 	}
 
 	prepared, err := w.resolveBlastRowsToBlastItems(ctx, selected, rows)
@@ -2519,34 +2616,10 @@ func (w *BlastWizard) runBlastRowsBlastMode(ctx context.Context, selected model.
 	if len(prepared) == 0 {
 		return w.showInfo("BLAST", "No selected BLAST result rows remained after BLAST label handling.", prompt.ErrBackToRowSelection)
 	}
-	targetSource, err := w.dataSourceForDatabase(databaseName)
-	if err != nil {
-		return err
-	}
 
-	previousSource := w.source
-	previousBlastProgram := w.blastProgramPath
-	previousDB := databaseDisplayName(previousSource.Name())
-	defer func() {
-		w.source = previousSource
-		w.prompt.SetDatabaseContext(previousDB)
-		w.setBlastProgramContext(previousBlastProgram)
-	}()
-
-	w.source = targetSource
-	w.prompt.SetDatabaseContext(databaseDisplayName(targetSource.Name()))
-	w.setBlastProgramContext("")
-
-	candidates, err := w.loadSpeciesCandidates(ctx)
-	if err != nil {
-		return err
-	}
-	targetSpecies, err := w.selectSpecies(candidates)
-	if err != nil {
-		return err
-	}
-
-	return w.executePreparedBlast(ctx, targetSpecies, prepared, blastRequestConfig{})
+	return w.runAgainstBlastTargetDatabase(ctx, "", nil, func(targetSpecies model.SpeciesCandidate) error {
+		return w.executePreparedBlast(ctx, targetSpecies, prepared, blastRequestConfig{})
+	})
 }
 
 func (w *BlastWizard) resolveBlastRowsToBlastItems(ctx context.Context, selected model.SpeciesCandidate, rows []model.BlastResultRow) ([]blastQueryItem, error) {
@@ -2895,6 +2968,7 @@ func (w *BlastWizard) cachedKeywordBlastItem(cacheKey string, sequence string) (
 	cached.Sequence = sequence
 	sourceCopy := *cached.QuerySource
 	sourceCopy.Sequence = sequence
+	sanitizeTransferredKeywordQuerySource(&sourceCopy)
 	cached.QuerySource = &sourceCopy
 	return cached, true
 }
@@ -2905,6 +2979,7 @@ func (w *BlastWizard) storeKeywordBlastItem(cacheKey string, item blastQueryItem
 	}
 	copyItem := item
 	sourceCopy := *item.QuerySource
+	sanitizeTransferredKeywordQuerySource(&sourceCopy)
 	copyItem.QuerySource = &sourceCopy
 	w.keywordBlastItemMu.Lock()
 	if w.keywordBlastItemCache == nil {
@@ -2950,8 +3025,6 @@ func keywordBlastItemFromRow(selected model.SpeciesCandidate, row model.KeywordR
 		NormalizedURL:       strings.TrimSpace(row.GeneReportURL),
 		LabelName:           strings.TrimSpace(row.LabelName),
 		PhgoAliases:         strings.TrimSpace(row.PhgoAliases),
-		Symbols:             strings.TrimSpace(row.Symbols),
-		Synonyms:            strings.TrimSpace(row.Synonyms),
 		UniProtAccession:    strings.TrimSpace(row.UniProt),
 		GeneID:              stripTranscriptDecorations(strings.TrimSpace(row.GeneIdentifier)),
 		TranscriptID:        strings.TrimSpace(row.TranscriptID),
@@ -2968,6 +3041,16 @@ func keywordBlastItemFromRow(selected model.SpeciesCandidate, row model.KeywordR
 		QuerySource:     querySource,
 		FromKeyword:     true,
 	}
+}
+
+func sanitizeTransferredKeywordQuerySource(source *model.QuerySequenceSource) {
+	if source == nil {
+		return
+	}
+	source.Aliases = ""
+	source.Symbols = ""
+	source.Synonyms = ""
+	source.AutoDefine = ""
 }
 
 func keywordBlastPreferredSequenceID(row model.KeywordResultRow) string {
@@ -3205,19 +3288,15 @@ blastInputLoop:
 func (w *BlastWizard) runTransferredBlastMode(ctx context.Context, targetSpecies model.SpeciesCandidate) error {
 	transferKind := strings.TrimSpace(w.transferKind)
 	sourceSpecies := w.transferSourceSpecies
-	w.transferKind = ""
-	w.transferTargetDatabase = ""
 	switch transferKind {
 	case "keyword_rows":
 		rows := append([]model.KeywordResultRow(nil), w.transferKeywordRows...)
-		w.transferKeywordRows = nil
 		if len(rows) == 0 {
 			return w.showInfo("Keyword BLAST", "No transferred keyword rows were available for BLAST.", prompt.ErrBackToDatabaseSelection)
 		}
 		return w.runTransferredKeywordBlastAgainstDatabase(ctx, sourceSpecies, cloneKeywordSearchGroups(w.lastKeywordGroups), rows, w.lastKeywordReport, targetSpecies)
 	case "blast_rows":
 		rows := append([]model.BlastResultRow(nil), w.transferBlastRows...)
-		w.transferBlastRows = nil
 		if len(rows) == 0 {
 			return w.showInfo("BLAST", "No transferred BLAST result rows were available for BLAST.", prompt.ErrBackToDatabaseSelection)
 		}
@@ -7208,7 +7287,21 @@ func (w *BlastWizard) autoIdentifyBlastLabelsWithProgress(ctx context.Context, s
 		out := cloneBlastQueryItems(items)
 		taskTimestamp := time.Now().UTC().Format(time.RFC3339Nano)
 		lockedLabels := blastAutoIdentifyLockedLabels(out)
-		workerCount := blastLabelWorkerCount(len(autoIndexes))
+		pendingIndexes := make([]int, 0, len(autoIndexes))
+		cacheKeys := make(map[int]string, len(autoIndexes))
+		for _, idx := range autoIndexes {
+			if idx < 0 || idx >= len(out) {
+				continue
+			}
+			cacheKey := w.blastLabelLookupKey(w.source, selected, out[idx])
+			cacheKeys[idx] = cacheKey
+			if cached, ok := w.cachedBlastLabelLookupByKey(cacheKey); ok {
+				applyBlastAutoLabelResultToItem(&out[idx], cached, true)
+				continue
+			}
+			pendingIndexes = append(pendingIndexes, idx)
+		}
+		workerCount := blastLabelWorkerCount(len(pendingIndexes))
 		type labelResult struct {
 			index   int
 			request labelname.AliasRankRequest
@@ -7221,16 +7314,15 @@ func (w *BlastWizard) autoIdentifyBlastLabelsWithProgress(ctx context.Context, s
 			go func() {
 				defer workers.Done()
 				for idx := range jobs {
-					result := w.autoIdentifyBlastLabelResultForTask(labelCtx, nil, selected, out[idx], taskTimestamp, idx)
 					results <- labelResult{
 						index:   idx,
-						request: result.Request,
+						request: w.blastLabelAliasRankRequestForTask(out[idx], taskTimestamp, idx),
 					}
 				}
 			}()
 		}
 		go func() {
-			for _, i := range autoIndexes {
+			for _, i := range pendingIndexes {
 				select {
 				case <-labelCtx.Done():
 					close(jobs)
@@ -7241,9 +7333,9 @@ func (w *BlastWizard) autoIdentifyBlastLabelsWithProgress(ctx context.Context, s
 			close(jobs)
 		}()
 		completed := 0
-		requests := make([]labelname.AliasRankRequest, 0, len(autoIndexes))
-		order := make([]int, 0, len(autoIndexes))
-		for completed < len(autoIndexes) {
+		requests := make([]labelname.AliasRankRequest, 0, len(pendingIndexes))
+		order := make([]int, 0, len(pendingIndexes))
+		for completed < len(pendingIndexes) {
 			select {
 			case <-labelCtx.Done():
 				workers.Wait()
@@ -7254,7 +7346,7 @@ func (w *BlastWizard) autoIdentifyBlastLabelsWithProgress(ctx context.Context, s
 					order = append(order, result.index)
 				}
 				completed++
-				taskUpdate(fmt.Sprintf("Collecting BLAST source label candidates... %d/%d", completed, len(autoIndexes)))
+				taskUpdate(fmt.Sprintf("Collecting BLAST source label candidates... %d/%d", completed, len(pendingIndexes)))
 			}
 		}
 		workers.Wait()
@@ -7263,8 +7355,15 @@ func (w *BlastWizard) autoIdentifyBlastLabelsWithProgress(ctx context.Context, s
 		for i, index := range order {
 			aliases := ranked[i].RankedAliases
 			if index >= 0 && index < len(out) {
-				setBlastQueryItemLabel(&out[index], firstNonEmpty(out[index].LabelName, firstAliasOrEmpty(aliases)))
-				mergeBlastQueryItemAliases(&out[index], aliases)
+				result := blastAutoLabelResult{
+					Label:         firstAliasOrEmpty(aliases),
+					Aliases:       aliases,
+					Request:       requests[i],
+					TaskTimestamp: ranked[i].TaskTimestamp,
+					ItemIndex:     ranked[i].ItemIndex,
+				}
+				applyBlastAutoLabelResultToItem(&out[index], result, true)
+				w.storeBlastLabelLookupByKey(cacheKeys[index], result)
 			}
 		}
 		out = harmonizeAutoIdentifiedBlastLabelsWithLocks(out, lockedLabels)
@@ -7336,8 +7435,29 @@ func (w *BlastWizard) supplementBlastAliases(ctx context.Context, taskCtx contex
 	if len(aliasIndexes) == 0 {
 		return out, nil
 	}
+	cacheSource := w.source
+	if phytozomeSource != nil {
+		cacheSource = phytozomeSource
+	}
+	pendingIndexes := make([]int, 0, len(aliasIndexes))
+	cacheKeys := make(map[int]string, len(aliasIndexes))
+	for _, idx := range aliasIndexes {
+		if idx < 0 || idx >= len(out) {
+			continue
+		}
+		cacheKey := w.blastLabelLookupKey(cacheSource, selected, out[idx])
+		cacheKeys[idx] = cacheKey
+		if cached, ok := w.cachedBlastLabelLookupByKey(cacheKey); ok {
+			applyBlastAutoLabelResultToItem(&out[idx], cached, false)
+			continue
+		}
+		pendingIndexes = append(pendingIndexes, idx)
+	}
+	if len(pendingIndexes) == 0 {
+		return out, nil
+	}
 	taskTimestamp := time.Now().UTC().Format(time.RFC3339Nano)
-	workerCount := blastLabelWorkerCount(len(aliasIndexes))
+	workerCount := blastLabelWorkerCount(len(pendingIndexes))
 	type aliasResult struct {
 		index   int
 		request labelname.AliasRankRequest
@@ -7350,16 +7470,15 @@ func (w *BlastWizard) supplementBlastAliases(ctx context.Context, taskCtx contex
 		go func() {
 			defer workers.Done()
 			for idx := range jobs {
-				result := w.autoIdentifyBlastLabelResultForTask(labelCtx, nil, selected, out[idx], taskTimestamp, idx)
 				results <- aliasResult{
 					index:   idx,
-					request: result.Request,
+					request: w.blastLabelAliasRankRequestForTask(out[idx], taskTimestamp, idx),
 				}
 			}
 		}()
 	}
 	go func() {
-		for _, i := range aliasIndexes {
+		for _, i := range pendingIndexes {
 			select {
 			case <-labelCtx.Done():
 				close(jobs)
@@ -7370,9 +7489,9 @@ func (w *BlastWizard) supplementBlastAliases(ctx context.Context, taskCtx contex
 		close(jobs)
 	}()
 	completed := 0
-	requests := make([]labelname.AliasRankRequest, 0, len(aliasIndexes))
-	order := make([]int, 0, len(aliasIndexes))
-	for completed < len(aliasIndexes) {
+	requests := make([]labelname.AliasRankRequest, 0, len(pendingIndexes))
+	order := make([]int, 0, len(pendingIndexes))
+	for completed < len(pendingIndexes) {
 		select {
 		case <-labelCtx.Done():
 			workers.Wait()
@@ -7384,7 +7503,7 @@ func (w *BlastWizard) supplementBlastAliases(ctx context.Context, taskCtx contex
 			}
 			completed++
 			if update != nil {
-				update(fmt.Sprintf("Collecting BLAST aliases... %d/%d", completed, len(aliasIndexes)))
+				update(fmt.Sprintf("Collecting BLAST aliases... %d/%d", completed, len(pendingIndexes)))
 			}
 		}
 	}
@@ -7395,7 +7514,17 @@ func (w *BlastWizard) supplementBlastAliases(ctx context.Context, taskCtx contex
 	ranked := labelname.RankAliasBatch(requests)
 	for i, index := range order {
 		if index >= 0 && index < len(out) {
-			mergeBlastQueryItemAliases(&out[index], ranked[i].RankedAliases)
+			result := blastAutoLabelResult{
+				Label:         firstAliasOrEmpty(ranked[i].RankedAliases),
+				Aliases:       ranked[i].RankedAliases,
+				Request:       requests[i],
+				TaskTimestamp: ranked[i].TaskTimestamp,
+				ItemIndex:     ranked[i].ItemIndex,
+			}
+			applyBlastAutoLabelResultToItem(&out[index], result, false)
+			if strings.TrimSpace(items[index].LabelName) == "" {
+				w.storeBlastLabelLookupByKey(cacheKeys[index], result)
+			}
 		}
 	}
 	return out, nil
@@ -7407,6 +7536,17 @@ type blastAutoLabelResult struct {
 	Request       labelname.AliasRankRequest
 	TaskTimestamp string
 	ItemIndex     int
+}
+
+func applyBlastAutoLabelResultToItem(item *blastQueryItem, result blastAutoLabelResult, setLabel bool) {
+	if item == nil {
+		return
+	}
+	aliases := uniqueStrings(result.Aliases)
+	if setLabel {
+		setBlastQueryItemLabel(item, firstNonEmpty(item.LabelName, result.Label, firstAliasOrEmpty(aliases)))
+	}
+	mergeBlastQueryItemAliases(item, aliases)
 }
 
 func harmonizeAutoIdentifiedBlastLabels(items []blastQueryItem) []blastQueryItem {
@@ -7531,13 +7671,16 @@ func (w *BlastWizard) autoIdentifyBlastLabelResult(ctx context.Context, phytozom
 }
 
 func (w *BlastWizard) autoIdentifyBlastLabelResultForTask(ctx context.Context, phytozomeSource source.DataSource, selected model.SpeciesCandidate, item blastQueryItem, taskTimestamp string, itemIndex int) blastAutoLabelResult {
-	aliases := make([]string, 0, 16)
+	cacheKey := w.blastLabelLookupKey(phytozomeSource, selected, item)
 	pinnedLabel := strings.TrimSpace(item.LabelName)
-	aliases = append(aliases, pinnedLabel)
-	aliases = append(aliases, collectBlastItemAliasCandidates(item)...)
-	aliases = uniqueStrings(aliases)
-	request := aliasRankRequestFromBlastItem(taskTimestamp, itemIndex, item, aliases)
-	excludeBlastItemHeaderLabelsFromAliasRankRequest(item, &request)
+	if cached, ok := w.cachedBlastLabelLookupByKey(cacheKey); ok {
+		if pinnedLabel != "" {
+			cached.Label = pinnedLabel
+			cached.Aliases = uniqueStrings(append([]string{pinnedLabel}, cached.Aliases...))
+		}
+		return cached
+	}
+	request := w.blastLabelAliasRankRequestForTask(item, taskTimestamp, itemIndex)
 	ranked := labelname.RankAliases(request)
 	label := ""
 	if pinnedLabel != "" {
@@ -7547,13 +7690,28 @@ func (w *BlastWizard) autoIdentifyBlastLabelResultForTask(ctx context.Context, p
 		label = ranked.RankedAliases[0]
 	}
 	request.Aliases = ranked.RankedAliases
-	return blastAutoLabelResult{
+	result := blastAutoLabelResult{
 		Label:         label,
 		Aliases:       ranked.RankedAliases,
 		Request:       request,
 		TaskTimestamp: ranked.TaskTimestamp,
 		ItemIndex:     ranked.ItemIndex,
 	}
+	if pinnedLabel == "" {
+		w.storeBlastLabelLookupByKey(cacheKey, result)
+	}
+	return result
+}
+
+func (w *BlastWizard) blastLabelAliasRankRequestForTask(item blastQueryItem, taskTimestamp string, itemIndex int) labelname.AliasRankRequest {
+	aliases := make([]string, 0, 16)
+	pinnedLabel := strings.TrimSpace(item.LabelName)
+	aliases = append(aliases, pinnedLabel)
+	aliases = append(aliases, collectBlastItemAliasCandidates(item)...)
+	aliases = uniqueStrings(aliases)
+	request := aliasRankRequestFromBlastItem(taskTimestamp, itemIndex, item, aliases)
+	excludeBlastItemHeaderLabelsFromAliasRankRequest(item, &request)
+	return request
 }
 
 func excludeBlastItemHeaderLabelsFromAliasRankRequest(item blastQueryItem, request *labelname.AliasRankRequest) {
@@ -9933,13 +10091,44 @@ func autoIdentifyKeywordLabelIdentifications(groups []model.KeywordSearchGroup) 
 
 func autoIdentifyKeywordLabelIdentificationsWithSourceType(groups []model.KeywordSearchGroup, sourceType string) []keywordLabelIdentification {
 	taskTimestamp := keywordLabelTaskTimestamp(groups)
-	requests := make([]labelname.AliasRankRequest, len(groups))
+	directRequests := make([]labelname.AliasRankRequest, 0, len(groups))
+	directIndexes := make([]int, 0, len(groups))
 	for i, group := range groups {
-		requests[i] = aliasRankRequestFromKeywordRows(taskTimestamp, collectKeywordGroupAliasCandidates(group), group.Rows)
-		requests[i].ItemIndex = i
-		requests[i].SearchTerm = firstNonEmpty(requests[i].SearchTerm, group.SearchTerm)
+		request := aliasRankRequestFromKeywordSearchTerm(taskTimestamp, i, group)
+		if aliasRankRequestHasLocalTerms(request) {
+			directIndexes = append(directIndexes, i)
+			directRequests = append(directRequests, request)
+		}
 	}
-	results := labelname.RankAliasBatch(requests)
+	results := make([]labelname.AliasRankResult, len(groups))
+	for i := range results {
+		results[i] = labelname.AliasRankResult{
+			TaskTimestamp: taskTimestamp,
+			ItemIndex:     i,
+		}
+	}
+	for directResultIndex, result := range labelname.RankAliasBatch(directRequests) {
+		results[directIndexes[directResultIndex]] = result
+	}
+	fallbackIndexes := make([]int, 0)
+	fallbackRequests := make([]labelname.AliasRankRequest, 0)
+	for i, result := range results {
+		if len(result.RankedAliases) > 0 {
+			continue
+		}
+		group := groups[i]
+		request := aliasRankRequestFromKeywordRows(taskTimestamp, collectKeywordGroupAliasCandidates(group), group.Rows)
+		request.ItemIndex = i
+		request.SearchTerm = firstNonEmpty(request.SearchTerm, group.SearchTerm)
+		fallbackIndexes = append(fallbackIndexes, i)
+		fallbackRequests = append(fallbackRequests, request)
+	}
+	if len(fallbackRequests) > 0 {
+		fallbackResults := labelname.RankAliasBatch(fallbackRequests)
+		for i, result := range fallbackResults {
+			results[fallbackIndexes[i]] = result
+		}
+	}
 	identifications := make([]keywordLabelIdentification, len(results))
 	for i, result := range results {
 		identifications[i] = keywordLabelIdentification{
@@ -9950,6 +10139,37 @@ func autoIdentifyKeywordLabelIdentificationsWithSourceType(groups []model.Keywor
 		}
 	}
 	return identifications
+}
+
+func aliasRankRequestHasLocalTerms(request labelname.AliasRankRequest) bool {
+	return strings.TrimSpace(request.SearchTerm) != "" ||
+		strings.TrimSpace(request.Symbol) != "" ||
+		strings.TrimSpace(request.ProteinID) != "" ||
+		strings.TrimSpace(request.GeneID) != "" ||
+		strings.TrimSpace(request.TranscriptID) != "" ||
+		strings.TrimSpace(request.SequenceID) != "" ||
+		strings.TrimSpace(request.LocusTag) != "" ||
+		strings.TrimSpace(request.Description) != "" ||
+		len(request.Aliases) != 0 ||
+		len(request.Synonyms) != 0 ||
+		len(request.DBXrefs) != 0 ||
+		len(request.OtherDesignations) != 0
+}
+
+func aliasRankRequestFromKeywordSearchTerm(taskTimestamp string, itemIndex int, group model.KeywordSearchGroup) labelname.AliasRankRequest {
+	searchTerm := firstNonEmpty(group.SearchTerm, group.LabelName)
+	request := labelname.AliasRankRequest{
+		TaskTimestamp: taskTimestamp,
+		ItemIndex:     itemIndex,
+		SearchTerm:    searchTerm,
+		Aliases:       uniqueStrings(compactStrings(searchTerm, group.LabelName)),
+	}
+	for _, row := range group.Rows {
+		if taxID := symbolNameTaxIDForSourceDatabase(row.SourceDatabase, row.Genome, row.SequenceHeaderLabel); taxID != "" {
+			request.TaxID = firstNonEmpty(request.TaxID, taxID)
+		}
+	}
+	return request
 }
 
 func (w *BlastWizard) autoIdentifyKeywordLabelsWithProgress(ctx context.Context, selected model.SpeciesCandidate, groups []model.KeywordSearchGroup) ([]keywordLabelIdentification, error) {
@@ -10573,11 +10793,17 @@ func (w *BlastWizard) autoIdentifyNCBIKeywordGeneLoci(ctx context.Context, group
 	lookupSource := phytozome.NewClient(w.httpClient)
 	candidates, err := w.speciesCandidatesForSource(ctx, lookupSource, nil)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return groups, ctxErr
+		}
 		applyExistingNCBIGeneLoci(groups)
 		progress(len(groups), "NCBI Gene locus values are ready.")
 		return groups, nil
 	}
 	for i := range groups {
+		if err := ctx.Err(); err != nil {
+			return groups, err
+		}
 		progress(i, fmt.Sprintf("Finding Gene locus %d/%d (%s)...", i+1, len(groups), oneLinePreview(firstNonEmpty(groups[i].SearchTerm, groups[i].LabelName))))
 		locus, sourceType := ncbiKeywordGroupGeneLocus(groups[i], lookupSource, candidates, w, ctx)
 		if strings.TrimSpace(locus) == "" {
@@ -12860,6 +13086,11 @@ func (w *BlastWizard) searchKeywordResultsWithProgress(ctx context.Context, spec
 	}
 
 	var progressMu sync.Mutex
+	currentProgress := func() int {
+		progressMu.Lock()
+		defer progressMu.Unlock()
+		return completedCount
+	}
 	advanceProgress := func() {
 		progressMu.Lock()
 		completedCount++
@@ -12885,9 +13116,13 @@ func (w *BlastWizard) searchKeywordResultsWithProgress(ctx context.Context, spec
 			go func(batchPosition int, resultIndex int) {
 				defer wg.Done()
 				started := time.Now()
+				progress(currentProgress(), fmt.Sprintf("Searching keyword term %d/%d: %s", resultIndex+1, len(keywords), strings.TrimSpace(keywords[resultIndex])))
 				rows, err := w.searchKeywordRowsWithTimeout(ctx, species, keywords[resultIndex], forceWideSearch)
 				if err == nil && len(rows) == 0 {
 					err = keywordNoRowsError{Keyword: keywords[resultIndex]}
+				}
+				if err == nil {
+					w.storeKeywordRowsForCurrentSource(species, keywords[resultIndex], rows)
 				}
 				result := keywordSearchResult{
 					index:   resultIndex,
@@ -12926,12 +13161,29 @@ func (w *BlastWizard) searchKeywordResultsWithProgress(ctx context.Context, spec
 }
 
 func (w *BlastWizard) searchKeywordRowsWithTimeout(ctx context.Context, species model.SpeciesCandidate, keyword string, forceWideSearch bool) ([]model.KeywordResultRow, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	searchCtx, cancel := context.WithCancel(ctx)
+	timeout := configuredDurationSeconds("PHGO_KEYWORD_SEARCH_TERM_TIMEOUT_SECONDS", 0)
+	if timeout > 0 {
+		searchCtx, cancel = context.WithTimeout(ctx, timeout)
+	}
+	defer cancel()
 	if forceWideSearch {
 		if wideSource, ok := w.source.(wideKeywordSearcher); ok {
-			return wideSource.SearchKeywordRowsWide(ctx, species, keyword)
+			return wideSource.SearchKeywordRowsWide(searchCtx, species, keyword)
 		}
 	}
-	return w.source.SearchKeywordRows(ctx, species, keyword)
+	return w.source.SearchKeywordRows(searchCtx, species, keyword)
+}
+
+func (w *BlastWizard) storeKeywordRowsForCurrentSource(species model.SpeciesCandidate, term string, rows []model.KeywordResultRow) {
+	if w == nil || w.source == nil {
+		return
+	}
+	cacheKey := w.keywordTermRowsCacheKey(w.source, species, term)
+	w.storeKeywordTermRows(cacheKey, rows)
 }
 
 func buildKeywordSearchGroups(keywords []string, identifications []string, results []keywordSearchResult, forceWideSearch bool) []model.KeywordSearchGroup {

@@ -141,3 +141,19 @@ and fixes applied.
   writing and during runtime execution is tested, viewer sessions are isolated
   by session ID, Windows runtime packaging rules are source-checked, and
   real-runtime freeze probes passed for all exposed alignment and tree methods.
+- 2026-06-20: Re-ran the production MEGA PHgo path against
+  `C:\Users\wangsychn\Desktop\4CLtree.pgo` with the source-built Windows
+  runtime executable. The root cause is now a surfaced MEGA/runtime data error,
+  not a PHgo crash: `Unsupported protein residue "*" at sequence 85, site 213`,
+  mapped to `PHGOT000085` / `AT1G51680.1[4CL]`. PHgo must not auto-switch
+  ClustalW to MUSCLE or otherwise choose a replacement aligner/tree method for
+  the user.
+- 2026-06-20: Fixed Windows bundled-runtime probing so
+  `mega-phgo-runtime.bin` is treated as a package asset and prepared as a
+  temporary `.exe` with runtime-owned `muscleWin64.bin` before probing or
+  execution. Packaging scripts now probe the same way instead of trying to open
+  the `.bin` directly.
+- 2026-06-20: Tightened PHgo task-modal cancellation: Cancel/Esc cancels the
+  task context and waits for the task goroutine to exit; the legacy task modal
+  no longer queues a synchronous redraw from inside the input-event cancel path.
+  Added regression coverage for the wait-on-cancel behavior.

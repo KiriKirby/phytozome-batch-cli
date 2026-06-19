@@ -18,6 +18,7 @@ $repoRoot = Split-Path -Parent $scriptDir
 if ([string]::IsNullOrWhiteSpace($MegaSourceRoot)) {
     $MegaSourceRoot = Join-Path $repoRoot "_mega_source\MEGA12.1-source"
 }
+$MegaSourceRoot = (Resolve-Path -LiteralPath $MegaSourceRoot).Path
 if ([string]::IsNullOrWhiteSpace($Platform)) {
     if ($IsWindows -or $env:OS -eq "Windows_NT") {
         $Platform = "windows-amd64"
@@ -53,26 +54,48 @@ if ($Platform -ne (Resolve-HostPlatform)) {
 }
 
 function Invoke-RuntimeProbe {
-    param([string]$Executable)
+    param(
+        [string]$Executable,
+        [string]$MuscleExecutable = ""
+    )
 
+    $probeExecutable = $Executable
+    $tempDir = $null
+    if ($IsWindows -or $env:OS -eq "Windows_NT") {
+        if ([IO.Path]::GetExtension($Executable).ToLowerInvariant() -eq ".bin") {
+            $tempDir = Join-Path ([IO.Path]::GetTempPath()) ("phytozome-go-megaphgo-probe-" + [guid]::NewGuid().ToString("N"))
+            New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
+            $probeExecutable = Join-Path $tempDir "mega-phgo-runtime.exe"
+            Copy-Item -LiteralPath $Executable -Destination $probeExecutable -Force
+            if (-not [string]::IsNullOrWhiteSpace($MuscleExecutable)) {
+                Copy-Item -LiteralPath $MuscleExecutable -Destination (Join-Path $tempDir (Split-Path -Leaf $MuscleExecutable)) -Force
+            }
+        }
+    }
     $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $Executable
+    $psi.FileName = $probeExecutable
     $psi.Arguments = "--phgo-runtime-probe"
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
 
-    $proc = New-Object System.Diagnostics.Process
-    $proc.StartInfo = $psi
-    $proc.Start() | Out-Null
-    $stdout = $proc.StandardOutput.ReadToEnd()
-    $stderr = $proc.StandardError.ReadToEnd()
-    $proc.WaitForExit()
+    try {
+        $proc = New-Object System.Diagnostics.Process
+        $proc.StartInfo = $psi
+        $proc.Start() | Out-Null
+        $stdout = $proc.StandardOutput.ReadToEnd()
+        $stderr = $proc.StandardError.ReadToEnd()
+        $proc.WaitForExit()
 
-    return [pscustomobject]@{
-        ExitCode = $proc.ExitCode
-        Output = (($stdout + "`n" + $stderr).Trim())
+        return [pscustomobject]@{
+            ExitCode = $proc.ExitCode
+            Output = (($stdout + "`n" + $stderr).Trim())
+        }
+    } finally {
+        if ($tempDir -and (Test-Path -LiteralPath $tempDir)) {
+            Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
@@ -141,7 +164,7 @@ $musclePath = Join-Path $runtimeDir (RuntimeOwnedMuscleName $Platform)
 if (-not (Test-Path -LiteralPath $musclePath -PathType Leaf)) {
     throw "Missing runtime-owned MUSCLE executable in $runtimeDir. Restore the platform MUSCLE binary before packaging: $musclePath"
 }
-$probe = Invoke-RuntimeProbe $targetPath
+$probe = Invoke-RuntimeProbe -Executable $targetPath -MuscleExecutable $musclePath
 if ($probe.ExitCode -ne 0 -or $probe.Output -notmatch "mega-phgo-runtime") {
     throw "Built runtime did not pass PHgo probe: $targetPath"
 }

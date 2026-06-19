@@ -66,6 +66,8 @@ var BlastFilterSuggest func(BlastFilterRequest) (BlastFilterSuggestion, error)
 var invalidFileNameChars = regexp.MustCompile(`[<>:"/\\|?*\x00-\x1F]`)
 var numericValuePattern = regexp.MustCompile(`[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?`)
 
+const tableAliasDisplayLimit = 5
+
 func columnHelp(en string, cn string, jp string) string {
 	return "EN: " + strings.TrimSpace(en) + "\n中文：" + strings.TrimSpace(cn) + "\n日本語：" + strings.TrimSpace(jp)
 }
@@ -4717,7 +4719,7 @@ func buildKeywordSelectionTable(rows []model.KeywordResultRow) ([]tui.TableColum
 	for _, row := range rows {
 		cells := make([]string, 0, len(defs))
 		for _, def := range defs {
-			cells = append(cells, def.Value(row))
+			cells = append(cells, tableDisplayValueForColumn(def.ID, def.Value(row)))
 		}
 		tableRows = append(tableRows, tui.TableRow{
 			Cells:       cells,
@@ -5262,6 +5264,34 @@ func splitPromptAliasText(value string) []string {
 	}))
 }
 
+func tableDisplayValueForColumn(columnID string, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || !tableColumnIsAliasLike(columnID) {
+		return value
+	}
+	return compactAliasTableValue(value, tableAliasDisplayLimit)
+}
+
+func tableColumnIsAliasLike(columnID string) bool {
+	id := strings.ToLower(strings.TrimSpace(columnID))
+	if id == "" {
+		return false
+	}
+	switch id {
+	case "alias", "aliases", "phgo_alias", "symbols", "synonyms", "uniprot_gene_names", "family_member_labels", "family_semantic_alias_tokens":
+		return true
+	}
+	return strings.Contains(id, "alias")
+}
+
+func compactAliasTableValue(value string, limit int) string {
+	aliases := splitPromptAliasText(value)
+	if limit <= 0 || len(aliases) <= limit {
+		return strings.TrimSpace(value)
+	}
+	return strings.Join(aliases[:limit], "; ") + "; ..."
+}
+
 func uniquePromptStrings(values []string) []string {
 	seen := map[string]struct{}{}
 	out := make([]string, 0, len(values))
@@ -5296,7 +5326,7 @@ func buildBlastSelectionTable(rows []model.BlastResultRow) ([]tui.TableColumn, [
 	for _, row := range rows {
 		cells := make([]string, 0, len(defs))
 		for _, def := range defs {
-			cells = append(cells, def.Value(row))
+			cells = append(cells, tableDisplayValueForColumn(def.ID, def.Value(row)))
 		}
 		tableRows = append(tableRows, tui.TableRow{
 			Cells:       cells,
@@ -5347,7 +5377,7 @@ func buildCanvasSelectionTable(item model.CanvasItem) ([]tui.TableColumn, []tui.
 		view := canvasSelectionRowView(row, item.Title)
 		cells := make([]string, 0, len(canvasColumns))
 		for _, column := range canvasColumns {
-			cells = append(cells, canvasSelectionColumnValue(view, row, column.ID, item.Title))
+			cells = append(cells, tableDisplayValueForColumn(column.ID, canvasSelectionColumnValue(view, row, column.ID, item.Title)))
 		}
 		rows = append(rows, tui.TableRow{
 			Cells:         cells,

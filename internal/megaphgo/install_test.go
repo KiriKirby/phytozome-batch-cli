@@ -3,6 +3,7 @@ package megaphgo
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -199,6 +200,37 @@ func TestPrepareExecutionCopiesRuntimeOwnedMuscleNameExpectedByRuntime(t *testin
 	}
 }
 
+func TestProbeExecutableUsesTemporaryExeForBundledWindowsBin(t *testing.T) {
+	requireBundledRuntimePlatform(t)
+	t.Cleanup(withTempApplicationDir(t))
+	toolsDir, err := ToolsDir()
+	if err != nil {
+		t.Fatalf("ToolsDir returned error: %v", err)
+	}
+	runtimePath := filepath.Join(toolsDir, executableName(RuntimeExecutable))
+	markerPath := filepath.Join(toolsDir, "probe-argv0.txt")
+	if err := writeProbeRuntimeThatRecordsArgv0(t, runtimePath, markerPath); err != nil {
+		t.Fatalf("write probe runtime: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(toolsDir, executableName(MuscleExecutable)), []byte("fake muscle"), 0o755); err != nil {
+		t.Fatalf("write muscle: %v", err)
+	}
+	if err := probeExecutable(runtimePath); err != nil {
+		t.Fatalf("probeExecutable returned error: %v", err)
+	}
+	data, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatalf("read probe marker: %v", err)
+	}
+	argv0 := strings.TrimSpace(string(data))
+	if !strings.HasSuffix(strings.ToLower(argv0), RuntimeExecutable+".exe") {
+		t.Fatalf("probe ran %q, want temporary .exe runtime instead of bundled .bin", argv0)
+	}
+	if strings.EqualFold(filepath.Clean(argv0), filepath.Clean(runtimePath)) {
+		t.Fatalf("probe directly executed bundled .bin path %q", runtimePath)
+	}
+}
+
 func TestManagedExecutableRejectsRenamedNonPHGORuntime(t *testing.T) {
 	requireBundledRuntimePlatform(t)
 	t.Cleanup(withTempApplicationDir(t))
@@ -267,6 +299,44 @@ func writeProbeRuntime(path string) error {
 		return err
 	}
 	return os.WriteFile(path, []byte(probeRuntimeScript()), 0o755)
+}
+
+func writeProbeRuntimeThatRecordsArgv0(t *testing.T, path string, markerPath string) error {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		return writeProbeRuntime(path)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	source := filepath.Join(filepath.Dir(path), "probe-argv0-stub.go")
+	code := `package main
+
+import (
+	"fmt"
+	"os"
+)
+
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--phgo-runtime-probe" {
+		_ = os.WriteFile(os.Getenv("PHGO_PROBE_ARGV0_MARKER"), []byte(os.Args[0]), 0644)
+		fmt.Println("mega-phgo-runtime probe ok")
+		return
+	}
+}
+`
+	if err := os.WriteFile(source, []byte(code), 0o644); err != nil {
+		return err
+	}
+	cmd := exec.Command("go", "build", "-o", path, source)
+	cmd.Env = append(os.Environ(), "PHGO_PROBE_ARGV0_MARKER="+markerPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return err
+	}
+	_ = out
+	t.Setenv("PHGO_PROBE_ARGV0_MARKER", markerPath)
+	return nil
 }
 
 func probeRuntimeScript() string {

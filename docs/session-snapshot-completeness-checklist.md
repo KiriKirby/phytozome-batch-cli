@@ -359,12 +359,25 @@ Must preserve:
 - source `label_name`
 - source `phgo_alias`
 - source identifiers and metadata required for later BLAST export/report continuity
-- all query-source fields prepared during transfer
+- reusable query-source fields prepared during transfer, including sequence,
+  source URLs, source database/species IDs, UniProt accession, and
+  gene/transcript/protein identifiers
+
+Must not preserve as fresh BLAST label candidates:
+
+- raw keyword source `Aliases`
+- raw keyword source `Symbols`
+- raw keyword source `Synonyms`
+- keyword `AutoDefine` state
 
 Must not rebuild on open:
 
 - sequence resolution already done for transferred rows
 - query-source labels already resolved for transferred rows
+- target BLAST database choice while the user is still navigating inside the
+  transferred BLAST target flow; Back from target species or BLAST execution
+  must return to the transfer database choice instead of discarding transfer
+  rows
 
 ## BLAST-Row-to-BLAST Transfer
 

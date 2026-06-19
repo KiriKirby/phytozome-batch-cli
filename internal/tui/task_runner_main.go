@@ -5,7 +5,6 @@ import (
 	"errors"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -179,11 +178,7 @@ func runTaskModal[T any](page TaskPage, task func(ctx context.Context, update fu
 	cancelled := cancelRequested
 	mu.Unlock()
 	if cancelled {
-		select {
-		case <-done:
-		case <-time.After(400 * time.Millisecond):
-			return zero, taskCancelError(page)
-		}
+		<-done
 	} else {
 		<-done
 	}

@@ -82,6 +82,18 @@ func TestResolveCacheTargetsFromDeduplicatesSameDirectory(t *testing.T) {
 	}
 }
 
+func TestLockedCacheCleanupErrorIsNonFatal(t *testing.T) {
+	if !isLockedCacheCleanupError(&os.PathError{Op: "remove", Path: "server.err.log", Err: windowsErrorSharingViolation}) {
+		t.Fatal("sharing violation should be treated as a non-fatal cache cleanup lock")
+	}
+	if !isLockedCacheCleanupError(&os.PathError{Op: "remove", Path: ".cache", Err: windowsErrorAccessDenied}) {
+		t.Fatal("access denied should be treated as a non-fatal cache cleanup lock")
+	}
+	if isLockedCacheCleanupError(os.ErrNotExist) {
+		t.Fatal("not-exist errors should not be classified as locked cache cleanup")
+	}
+}
+
 func TestResolveWezTermCLIPathFromFindsSiblingCLI(t *testing.T) {
 	tmp := t.TempDir()
 	cleanerPath := filepath.Join(tmp, "phgohelper.bin")

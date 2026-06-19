@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -2123,6 +2124,101 @@ func TestMegaPHGORuntimeCanvasSnapshot123Probe(t *testing.T) {
 	}
 }
 
+func TestMegaPHGORuntimeDesktop4CLSnapshotSourceExeProbe(t *testing.T) {
+	if strings.TrimSpace(os.Getenv("PHYTOZOME_RUN_MEGAPHGO_RUNTIME")) == "" || strings.TrimSpace(os.Getenv("PHYTOZOME_MEGAPHGO_4CL_PGO")) == "" {
+		t.Skip("set PHYTOZOME_RUN_MEGAPHGO_RUNTIME=1 and PHYTOZOME_MEGAPHGO_4CL_PGO=1 to run the desktop 4CL .pgo source-runtime probe")
+	}
+	path := strings.TrimSpace(os.Getenv("PHYTOZOME_MEGAPHGO_PGO"))
+	if path == "" {
+		path = `C:\Users\wangsychn\Desktop\4CLtree.pgo`
+	}
+	sourceExe := strings.TrimSpace(os.Getenv("PHYTOZOME_MEGAPHGO_SOURCE_EXE"))
+	appRoot := repoRootForWorkflowRuntimeProbeTest(t)
+	if sourceExe == "" {
+		sourceExe = filepath.Join(appRoot, `_mega_source\MEGA12.1-source\PHgoRuntime\lib\x86_64-win64\mega-phgo-runtime.exe`)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("desktop Canvas snapshot %s is not available: %v", path, err)
+	}
+	if _, err := os.Stat(sourceExe); err != nil {
+		t.Fatalf("MEGA PHgo source runtime exe %s is not available: %v", sourceExe, err)
+	}
+
+	snapshot, err := sessionsnapshot.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) returned error: %v", path, err)
+	}
+	if snapshot.Canvas == nil || len(snapshot.Canvas.Items) == 0 {
+		t.Fatalf("snapshot %s does not contain Canvas items", path)
+	}
+	w := NewBlastWizard(nil)
+	w.instanceID = "desktop-4cl-pgo-source-runtime-probe"
+	w.hydrateSnapshotSequenceCache(snapshot.SequenceCache)
+	items := w.hydrateCanvasRowSequenceData(canvasItemsFromSnapshot(snapshot.Canvas.Items))
+	state := canvasLaunchState{Items: items}
+	selected := selectedCanvasRowsInOrder(state.Items)
+	if len(selected) < 2 {
+		t.Fatalf("snapshot %s selected rows = %d, want at least two sequence-ready rows", path, len(selected))
+	}
+
+	now := time.Now()
+	settings := phylo.DefaultTreeSettings()
+	settings.ConversionTarget = phylo.ConversionTargetProtein
+	settings.AlignmentMethod = phylo.AlignmentClustalW
+	settings.TreeMethod = phylo.TreeNeighborJoining
+	rowSources, err := w.canvasTreeRowSourcesWithSkippedForSettings(context.Background(), state, selected, settings)
+	if err != nil {
+		t.Fatalf("canvas row source hydration failed: %v", err)
+	}
+	records, meta, err := phylo.BuildInput(rowSources, settings.DisplayNameSource, w.canvasTreeSessionID(), now)
+	if err != nil {
+		t.Fatalf("BuildInput returned error: %v", err)
+	}
+	artifactDir := filepath.Join(os.TempDir(), "phgo-megaphgo-4cl-pgo-"+now.Format("20060102-150405.000000000"))
+	plan, err := phylo.BuildRunPlan(w.canvasTreeSessionID(), "source-exe-probe", artifactDir, settings, phylo.SequenceProtein, records, meta, "", "", now)
+	if err != nil {
+		t.Fatalf("BuildRunPlan returned error: %v", err)
+	}
+	if err := plan.ToArtifactSet().Write(); err != nil {
+		t.Fatalf("write plan artifacts: %v", err)
+	}
+	requestPath, err := phylo.WriteMegaPHGORuntimeRequest(plan)
+	if err != nil {
+		t.Fatalf("WriteMegaPHGORuntimeRequest returned error: %v", err)
+	}
+	cmd := exec.CommandContext(context.Background(), sourceExe, requestPath)
+	cmd.Dir = artifactDir
+	output, runErr := cmd.CombinedOutput()
+	t.Logf("snapshot=%s", path)
+	t.Logf("source_exe=%s", sourceExe)
+	t.Logf("artifact_dir=%s", artifactDir)
+	if len(output) > 0 {
+		t.Logf("runtime_output=%s", strings.TrimSpace(string(output)))
+	}
+
+	response, responseErr := readMegaPHGORuntimeResponseForWorkflowProbe(filepath.Join(artifactDir, phylo.RuntimeResponseFile))
+	if responseErr != nil {
+		t.Fatalf("runtime did not write a readable response: %v\nrunErr=%v\n%s", responseErr, runErr, string(output))
+	}
+	logText := readRuntimeLogForWorkflowProbe(t, artifactDir)
+	if runErr == nil && strings.TrimSpace(response.ErrorText) == "" {
+		if !strings.Contains(logText, "clustalw.complete canceled=false") {
+			t.Fatalf("ClustalW did not complete normally; runtime log:\n%s", logText)
+		}
+		if strings.TrimSpace(response.Artifacts.Newick) == "" {
+			t.Fatalf("successful runtime response should include Newick artifact: %#v", response.Artifacts)
+		}
+		return
+	}
+	if len(response.SkippedRecords) == 0 {
+		t.Fatalf("runtime failed without mapping MEGA skipped records; runErr=%v error_text=%q\nlog:\n%s", runErr, response.ErrorText, logText)
+	}
+	t.Logf("runtime_error=%s", response.ErrorText)
+	for _, skipped := range response.SkippedRecords {
+		t.Logf("skipped taxon_id=%s item=%s row=%d reason=%s", skipped.TaxonID, skipped.ItemTitle, skipped.RowIndex, skipped.Reason)
+	}
+}
+
 func canvasSnapshotDNAOnlyState(items []model.CanvasItem) canvasLaunchState {
 	out := cloneCanvasItems(items)
 	for itemIndex := range out {
@@ -2186,6 +2282,18 @@ func readRuntimeLogForWorkflowProbe(t *testing.T, dir string) string {
 		t.Fatalf("read runtime log: %v", err)
 	}
 	return string(data)
+}
+
+func readMegaPHGORuntimeResponseForWorkflowProbe(path string) (phylo.MegaPHGORuntimeResponse, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return phylo.MegaPHGORuntimeResponse{}, err
+	}
+	var response phylo.MegaPHGORuntimeResponse
+	if err := json.Unmarshal(data, &response); err != nil {
+		return phylo.MegaPHGORuntimeResponse{}, err
+	}
+	return response, nil
 }
 
 func alignedSequencesForWorkflowTest(t *testing.T, fasta string) []string {

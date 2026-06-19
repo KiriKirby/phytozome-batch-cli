@@ -103,7 +103,6 @@ func TestGeneInfoDatabaseRanksToSymbolName(t *testing.T) {
 	if len(got.RankedAliases) == 0 || got.RankedAliases[0] != "VND6" {
 		t.Fatalf("RankAliases() = %#v, want VND6 from gene_info Synonyms", got.RankedAliases)
 	}
-	assertBeforeAlias(t, got.RankedAliases, "VND6", "NAC-domain protein 101")
 	assertBeforeAlias(t, got.RankedAliases, "ANAC101", "MMI9.6")
 }
 
@@ -119,8 +118,26 @@ func TestGeneInfoDatabaseRanksLocusToAuthoritySymbol(t *testing.T) {
 	if len(got.RankedAliases) == 0 || got.RankedAliases[0] != "PAL1" {
 		t.Fatalf("RankAliases() = %#v, want PAL1 first", got.RankedAliases)
 	}
-	assertBeforeAlias(t, got.RankedAliases, "PAL1", "PHE ammonia lyase 1")
 	assertBeforeAlias(t, got.RankedAliases, "ATPAL1", "T1J8.22")
+}
+
+func TestGeneInfoDatabaseFiltersNoisyDescriptionAliases(t *testing.T) {
+	path := buildTestGeneInfoDB(t, stringsJoinLines(
+		"#tax_id\tGeneID\tSymbol\tLocusTag\tSynonyms\tdbXrefs\tchromosome\tmap_location\tdescription\ttype_of_gene\tSymbol_from_nomenclature_authority\tFull_name_from_nomenclature_authority\tNomenclature_status\tOther_designations\tModification_date\tFeature_type",
+		"3702\t818280\tPAL1\tAT2G37040\tATPAL1|CI0004|PHE ammonia lyase 1|T1J8.22|T1J8_22\tAraport:AT2G37040|TAIR:AT2G37040\t2\t-\tPHE ammonia lyase 1\tprotein-coding\tPAL1\tPHE ammonia lyase 1\tO\tPHE ammonia lyase 1\t20260610\t-",
+	))
+	SetDefaultGeneInfoDatabasePath(path)
+	t.Cleanup(func() { SetDefaultGeneInfoDatabasePath("") })
+
+	got := RankAliases(AliasRankRequest{Description: "PHE ammonia lyase 1", DBXrefs: []string{"TAIR:AT2G37040"}})
+	if len(got.RankedAliases) == 0 || got.RankedAliases[0] != "PAL1" {
+		t.Fatalf("RankAliases() = %#v, want PAL1 first", got.RankedAliases)
+	}
+	for _, alias := range got.RankedAliases {
+		if strings.Contains(alias, " ") {
+			t.Fatalf("RankAliases() included noisy long-form alias %q in %#v", alias, got.RankedAliases)
+		}
+	}
 }
 
 func TestSortRankedAliasesAppendsNonPrimarySymbolNamesAlphabetically(t *testing.T) {
@@ -149,6 +166,30 @@ func TestGeneInfoDatabaseMissReturnsEmpty(t *testing.T) {
 	got := RankAliases(AliasRankRequest{Aliases: []string{"NO_SUCH_SYMBOL"}})
 	if len(got.RankedAliases) != 0 {
 		t.Fatalf("RankAliases() = %#v, want empty when local gene_info has no match", got.RankedAliases)
+	}
+}
+
+func TestGeneInfoDatabaseCachesMisses(t *testing.T) {
+	path := buildTestGeneInfoDB(t, stringsJoinLines(
+		"#tax_id\tGeneID\tSymbol\tLocusTag\tSynonyms\tdbXrefs\tchromosome\tmap_location\tdescription\ttype_of_gene\tSymbol_from_nomenclature_authority\tFull_name_from_nomenclature_authority\tNomenclature_status\tOther_designations\tModification_date\tFeature_type",
+		"3702\t838863\tVND6\t-\tANAC101\tTAIR:AT5G62380\t5\t-\tvascular NAC domain protein\tprotein-coding\tVND6\tvascular-related NAC-domain 6\tO\tNAC domain protein 101\t20260610\t-",
+	))
+	SetDefaultGeneInfoDatabasePath(path)
+	t.Cleanup(func() { SetDefaultGeneInfoDatabasePath("") })
+
+	request := AliasRankRequest{SearchTerm: "NO_SUCH_SYMBOL", Aliases: []string{"NO_SUCH_SYMBOL"}}
+	if got := RankAliases(request); len(got.RankedAliases) != 0 {
+		t.Fatalf("first RankAliases() = %#v, want miss", got.RankedAliases)
+	}
+	db, ok := openDefaultGeneDB()
+	if !ok || db == nil {
+		t.Fatal("default gene DB was not opened")
+	}
+	if _, ok := db.rankCacheGet(aliasRankCacheKey(request)); !ok {
+		t.Fatal("expected gene DB rank cache to store empty miss")
+	}
+	if got := RankAliases(request); len(got.RankedAliases) != 0 {
+		t.Fatalf("cached RankAliases() = %#v, want miss", got.RankedAliases)
 	}
 }
 

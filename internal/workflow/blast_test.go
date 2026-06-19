@@ -2562,7 +2562,7 @@ func TestAutoIdentifyLemnaKeywordLabelsUseSymbolNameDatabaseOnly(t *testing.T) {
 	}
 }
 
-func TestAutoIdentifyLemnaKeywordLabelsFallsBackToLocalAliases(t *testing.T) {
+func TestAutoIdentifyLemnaKeywordLabelsPrefersDirectSearchTerm(t *testing.T) {
 	w := &BlastWizard{source: lemna.NewClient(nil)}
 	groups := []model.KeywordSearchGroup{{
 		SearchTerm: "Sp9509d020g000340_T001",
@@ -2575,11 +2575,46 @@ func TestAutoIdentifyLemnaKeywordLabelsFallsBackToLocalAliases(t *testing.T) {
 	}}
 
 	got := w.autoIdentifyLemnaKeywordLabels(context.Background(), model.SpeciesCandidate{GenomeLabel: "Spirodela polyrhiza 9509 REF-OXFORD-3.0"}, groups, nil)
-	if len(got) != 1 || len(got[0].Aliases) == 0 || got[0].Aliases[0] != "C4H" {
-		t.Fatalf("expected lemna local alias resolved through gene_info: %#v", got)
+	if len(got) != 1 || len(got[0].Aliases) == 0 || got[0].Aliases[0] != "CYP73A5" {
+		t.Fatalf("expected lemna search term resolved first through gene_info: %#v", got)
 	}
 	if got[0].SourceType != "symbolname database" {
 		t.Fatalf("SourceType = %q, want symbolname database", got[0].SourceType)
+	}
+}
+
+func TestAutoIdentifyKeywordLabelsFallsBackToRowAliasesWhenSearchTermMisses(t *testing.T) {
+	groups := []model.KeywordSearchGroup{{
+		SearchTerm: "NO_SUCH_SYMBOL",
+		Rows: []model.KeywordResultRow{{
+			SourceDatabase: "phytozome",
+			LabelName:      "C4H",
+			Synonyms:       "C4H; CYP73A5",
+		}},
+	}}
+
+	got := autoIdentifyKeywordLabelIdentifications(groups)
+	if len(got) != 1 || len(got[0].Aliases) == 0 || got[0].Aliases[0] != "CYP73A5" {
+		t.Fatalf("expected row aliases after direct search term miss: %#v", got)
+	}
+	if got[0].SourceType != "symbolname database" {
+		t.Fatalf("SourceType = %q, want symbolname database", got[0].SourceType)
+	}
+}
+
+func TestSearchKeywordRowsWithTimeoutDoesNotSetDefaultDeadline(t *testing.T) {
+	source := &deadlineInspectingKeywordSource{}
+	w := &BlastWizard{source: source}
+
+	rows, err := w.searchKeywordRowsWithTimeout(context.Background(), model.SpeciesCandidate{}, "AT1G51680", false)
+	if err != nil {
+		t.Fatalf("searchKeywordRowsWithTimeout returned error: %v", err)
+	}
+	if len(rows) != 1 || rows[0].GeneIdentifier != "AT1G51680" {
+		t.Fatalf("unexpected rows: %#v", rows)
+	}
+	if source.lastHadDeadline {
+		t.Fatal("keyword searches should not set a default hard deadline")
 	}
 }
 
@@ -2782,6 +2817,45 @@ func TestFetchKeywordRowsByTermsCachesAcrossCalls(t *testing.T) {
 	defer lookupSource.mu.Unlock()
 	if lookupSource.fetchCount["AT2G30490.1"] != 1 {
 		t.Fatalf("phytozome lookup count across repeated fetchKeywordRowsByTerms calls = %d, want 1", lookupSource.fetchCount["AT2G30490.1"])
+	}
+}
+
+func TestKeywordSearchRowsAreReusedByTermLookupCache(t *testing.T) {
+	lookupSource := &countingKeywordMapSource{
+		keywordMapSource: keywordMapSource{
+			name: "phytozome",
+			rowsByKeyword: map[string][]model.KeywordResultRow{
+				"AT2G30490.1": {{SourceDatabase: "phytozome", TranscriptID: "AT2G30490.1", Synonyms: "C4H; CYP73A5"}},
+			},
+		},
+	}
+	w := &BlastWizard{
+		source:               lookupSource,
+		keywordTermRowsCache: make(map[string][]model.KeywordResultRow),
+	}
+	species := model.SpeciesCandidate{ProteomeID: 167, JBrowseName: "Athaliana_TAIR10", GenomeLabel: "Arabidopsis thaliana TAIR10"}
+
+	results, err := w.searchKeywordResultsWithProgress(context.Background(), species, []string{"AT2G30490.1"}, make([]keywordSearchResult, 1), 0, false, nil)
+	if err != nil {
+		t.Fatalf("searchKeywordResultsWithProgress returned error: %v", err)
+	}
+	if len(results) != 1 || len(results[0].rows) == 0 {
+		t.Fatalf("expected search rows, got %#v", results)
+	}
+	lookupSource.mu.Lock()
+	if lookupSource.fetchCount["AT2G30490.1"] != 1 {
+		t.Fatalf("initial keyword search count = %d, want 1", lookupSource.fetchCount["AT2G30490.1"])
+	}
+	lookupSource.mu.Unlock()
+
+	reused := w.fetchKeywordRowsByTerms(context.Background(), lookupSource, species, []string{"AT2G30490.1"})
+	if len(reused["at2g30490.1"]) == 0 {
+		t.Fatalf("expected term lookup to reuse cached keyword rows, got %#v", reused)
+	}
+	lookupSource.mu.Lock()
+	defer lookupSource.mu.Unlock()
+	if lookupSource.fetchCount["AT2G30490.1"] != 1 {
+		t.Fatalf("term lookup performed another source search, count = %d, want 1", lookupSource.fetchCount["AT2G30490.1"])
 	}
 }
 
@@ -3523,6 +3597,31 @@ func (f keywordMapSource) FetchGeneQuerySequence(ctx context.Context, species mo
 	return nil, nil
 }
 
+type deadlineInspectingKeywordSource struct {
+	lastHadDeadline bool
+}
+
+func (f *deadlineInspectingKeywordSource) Name() string { return "deadline-inspecting" }
+func (f *deadlineInspectingKeywordSource) FetchSpeciesCandidates(ctx context.Context) ([]model.SpeciesCandidate, error) {
+	return nil, nil
+}
+func (f *deadlineInspectingKeywordSource) SubmitBlast(ctx context.Context, req model.BlastRequest) (model.BlastJob, error) {
+	return model.BlastJob{}, nil
+}
+func (f *deadlineInspectingKeywordSource) WaitForBlastResults(ctx context.Context, jobID string, pollInterval time.Duration, timeout time.Duration) (model.BlastResult, error) {
+	return model.BlastResult{}, nil
+}
+func (f *deadlineInspectingKeywordSource) SearchKeywordRows(ctx context.Context, species model.SpeciesCandidate, keyword string) ([]model.KeywordResultRow, error) {
+	_, f.lastHadDeadline = ctx.Deadline()
+	return []model.KeywordResultRow{{GeneIdentifier: keyword}}, nil
+}
+func (f *deadlineInspectingKeywordSource) FetchProteinSequence(ctx context.Context, targetID int, sequenceID string) (model.ProteinSequenceData, error) {
+	return model.ProteinSequenceData{}, nil
+}
+func (f *deadlineInspectingKeywordSource) FetchGeneQuerySequence(ctx context.Context, species model.SpeciesCandidate, reportType string, identifier string) (*model.QuerySequenceSource, error) {
+	return nil, nil
+}
+
 type countingKeywordMapSource struct {
 	keywordMapSource
 	mu         sync.Mutex
@@ -4136,6 +4235,95 @@ func TestResolveTransferredBlastRowsToBlastItemsUsesRowSourceDatabase(t *testing
 	}
 	if w.source == nil || !strings.EqualFold(w.source.Name(), "lemna") {
 		t.Fatalf("wizard source restored to %v, want lemna", w.source)
+	}
+}
+
+func TestRunTransferredBlastModeKeepsTransferStateForBackNavigation(t *testing.T) {
+	w := &BlastWizard{
+		source:                 fakeSource{name: "lemna"},
+		prompt:                 prompt.New(strings.NewReader(""), io.Discard),
+		transferKind:           "unsupported_transfer_kind",
+		transferTargetDatabase: "lemna",
+		transferKeywordRows: []model.KeywordResultRow{{
+			SourceDatabase: "phytozome",
+			SequenceID:     "seq1",
+			LabelName:      "PAL1",
+		}},
+	}
+
+	err := w.runTransferredBlastMode(context.Background(), model.SpeciesCandidate{JBrowseName: "target"})
+	if err == nil {
+		t.Fatalf("runTransferredBlastMode returned nil, want unsupported transfer error")
+	}
+	if w.transferKind != "unsupported_transfer_kind" {
+		t.Fatalf("transferKind = %q, want unsupported_transfer_kind", w.transferKind)
+	}
+	if w.transferTargetDatabase != "lemna" {
+		t.Fatalf("transferTargetDatabase = %q, want lemna", w.transferTargetDatabase)
+	}
+	if len(w.transferKeywordRows) != 1 {
+		t.Fatalf("transferKeywordRows length = %d, want 1", len(w.transferKeywordRows))
+	}
+}
+
+func TestRunAgainstBlastTargetDatabaseBackReturnsToTransferDatabaseChoice(t *testing.T) {
+	choices := []string{"lemna", "phytozome"}
+	choiceIndex := 0
+	runCount := 0
+	selectedDatabases := make([]string, 0, len(choices))
+	w := &BlastWizard{
+		source: fakeSource{name: "source"},
+		prompt: prompt.New(strings.NewReader(""), io.Discard),
+		sourceFactory: func(name string) source.DataSource {
+			return fakeSource{
+				name: name,
+				species: []model.SpeciesCandidate{{
+					JBrowseName: name + "_species",
+					GenomeLabel: name,
+				}},
+			}
+		},
+		chooseBlastTargetDB: func() (string, error) {
+			if choiceIndex >= len(choices) {
+				t.Fatalf("unexpected extra BLAST target database prompt")
+			}
+			choice := choices[choiceIndex]
+			choiceIndex++
+			selectedDatabases = append(selectedDatabases, choice)
+			return choice, nil
+		},
+		selectSpeciesHook: func(candidates []model.SpeciesCandidate) (model.SpeciesCandidate, error) {
+			if len(candidates) != 1 {
+				t.Fatalf("candidate count = %d, want 1", len(candidates))
+			}
+			return candidates[0], nil
+		},
+	}
+
+	err := w.runAgainstBlastTargetDatabase(context.Background(), "", nil, func(targetSpecies model.SpeciesCandidate) error {
+		runCount++
+		if runCount == 1 {
+			if targetSpecies.JBrowseName != "lemna_species" {
+				t.Fatalf("first target species = %q, want lemna_species", targetSpecies.JBrowseName)
+			}
+			return prompt.ErrBackToDatabaseSelection
+		}
+		if targetSpecies.JBrowseName != "phytozome_species" {
+			t.Fatalf("second target species = %q, want phytozome_species", targetSpecies.JBrowseName)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("runAgainstBlastTargetDatabase returned error: %v", err)
+	}
+	if runCount != 2 {
+		t.Fatalf("run count = %d, want 2", runCount)
+	}
+	if !reflect.DeepEqual(selectedDatabases, []string{"lemna", "phytozome"}) {
+		t.Fatalf("database choices = %#v, want lemna then phytozome", selectedDatabases)
+	}
+	if w.source == nil || w.source.Name() != "source" {
+		t.Fatalf("source was not restored: %#v", w.source)
 	}
 }
 
@@ -5032,6 +5220,40 @@ func TestKeywordRowsToBlastItemsDoesNotMergePhytozomeSymbolsOrSynonyms(t *testin
 	}
 }
 
+func TestCachedKeywordBlastItemDropsLegacySourceAliases(t *testing.T) {
+	w := &BlastWizard{
+		keywordBlastItemCache: make(map[string]blastQueryItem),
+	}
+	cacheKey := "legacy"
+	w.keywordBlastItemCache[cacheKey] = blastQueryItem{
+		Sequence: "OLD",
+		QuerySource: &model.QuerySequenceSource{
+			Sequence:    "OLD",
+			LabelName:   "PAL1",
+			PhgoAliases: "PAL1; ATPAL1",
+			Aliases:     "RAW_ALIAS",
+			Symbols:     "RAW_SYMBOL",
+			Synonyms:    "RAW_SYNONYM",
+			AutoDefine:  "raw auto define",
+		},
+	}
+
+	item, ok := w.cachedKeywordBlastItem(cacheKey, "MPEPTIDE")
+	if !ok || item.QuerySource == nil {
+		t.Fatalf("cachedKeywordBlastItem returned %#v, %v", item, ok)
+	}
+	source := item.QuerySource
+	if source.Sequence != "MPEPTIDE" || item.Sequence != "MPEPTIDE" {
+		t.Fatalf("cached sequence was not refreshed: item=%q source=%q", item.Sequence, source.Sequence)
+	}
+	if source.PhgoAliases != "PAL1; ATPAL1" {
+		t.Fatalf("PhgoAliases = %q, want preserved symbol-name aliases", source.PhgoAliases)
+	}
+	if source.Aliases != "" || source.Symbols != "" || source.Synonyms != "" || source.AutoDefine != "" {
+		t.Fatalf("legacy source aliases were not cleaned: %#v", source)
+	}
+}
+
 func TestSupplementBlastAliasesPreservesKeywordQueryLabels(t *testing.T) {
 	w := &BlastWizard{
 		blastLabelLookupCache: make(map[string]blastAutoLabelResult),
@@ -5161,6 +5383,75 @@ func TestAutoIdentifyBlastLabelResultDoesNotQueryPhytozomeRows(t *testing.T) {
 	defer lookupSource.mu.Unlock()
 	if lookupSource.fetchCount["AT2G30490.1"] != 0 {
 		t.Fatalf("symbolname auto-identify should not query Phytozome, got %d", lookupSource.fetchCount["AT2G30490.1"])
+	}
+}
+
+func TestAutoIdentifyBlastLabelsStoresStableSourceLabelCacheKey(t *testing.T) {
+	w := &BlastWizard{
+		source:                keywordMapSource{name: "tair"},
+		suppressTaskModals:    true,
+		blastLabelLookupCache: make(map[string]blastAutoLabelResult),
+	}
+	species := model.SpeciesCandidate{ProteomeID: 167, JBrowseName: "Athaliana_TAIR10", GenomeLabel: "Arabidopsis thaliana TAIR10"}
+	item := blastQueryItem{
+		QuerySource: &model.QuerySequenceSource{
+			SourceDatabase: "tair",
+			ProteinID:      "AT2G37040.1",
+			TranscriptID:   "AT2G37040.1",
+			GeneID:         "AT2G37040",
+		},
+	}
+	stableKey := w.blastLabelLookupKey(w.source, species, item)
+	out, err := w.autoIdentifyBlastLabelsWithProgress(context.Background(), species, []blastQueryItem{item})
+	if err != nil {
+		t.Fatalf("autoIdentifyBlastLabelsWithProgress returned error: %v", err)
+	}
+	if len(out) != 1 || out[0].LabelName != "PAL1" {
+		t.Fatalf("auto-identified items = %#v, want PAL1", out)
+	}
+	if _, ok := w.cachedBlastLabelLookupByKey(stableKey); !ok {
+		t.Fatalf("stable pre-mutation cache key was not stored")
+	}
+	mutatedKey := w.blastLabelLookupKey(w.source, species, out[0])
+	if mutatedKey != stableKey {
+		t.Fatalf("blast source label key changed after applying label/aliases: before=%q after=%q", stableKey, mutatedKey)
+	}
+}
+
+func TestSupplementBlastAliasesReusesBlastSourceLabelCache(t *testing.T) {
+	w := &BlastWizard{
+		source:                keywordMapSource{name: "tair"},
+		suppressTaskModals:    true,
+		blastLabelLookupCache: make(map[string]blastAutoLabelResult),
+	}
+	species := model.SpeciesCandidate{ProteomeID: 167, JBrowseName: "Athaliana_TAIR10", GenomeLabel: "Arabidopsis thaliana TAIR10"}
+	item := blastQueryItem{
+		LabelName: "manual-label",
+		QuerySource: &model.QuerySequenceSource{
+			SourceDatabase: "tair",
+			ProteinID:      "AT2G37040.1",
+			TranscriptID:   "AT2G37040.1",
+			GeneID:         "AT2G37040",
+		},
+	}
+	key := w.blastLabelLookupKey(w.source, species, item)
+	w.storeBlastLabelLookupByKey(key, blastAutoLabelResult{
+		Label:   "PAL1",
+		Aliases: []string{"PAL1", "ATPAL1"},
+	})
+	out, err := w.supplementBlastAliases(context.Background(), context.Background(), nil, species, []blastQueryItem{item}, nil)
+	if err != nil {
+		t.Fatalf("supplementBlastAliases returned error: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("supplemented item count = %d, want 1", len(out))
+	}
+	if out[0].LabelName != "manual-label" {
+		t.Fatalf("supplement aliases changed existing label to %q", out[0].LabelName)
+	}
+	aliases := labelname.SplitAliases(out[0].QuerySource.PhgoAliases)
+	if !containsString(aliases, "PAL1") || !containsString(aliases, "ATPAL1") {
+		t.Fatalf("PhgoAliases = %#v, want cached symbol-name aliases", aliases)
 	}
 }
 
@@ -7383,6 +7674,20 @@ func TestAutoIdentifyBlastLabelsWithProgressSkipsTaskModalWhenSuppressed(t *test
 	}
 	if len(out) != 1 || out[0].LabelName != "PAL1" {
 		t.Fatalf("unexpected output: %#v", out)
+	}
+}
+
+func TestAutoIdentifyNCBIKeywordGeneLociStopsOnCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	groups := []model.KeywordSearchGroup{
+		{SearchTerm: "XP_1", Rows: []model.KeywordResultRow{{SequenceID: "XP_1"}}},
+	}
+	w := &BlastWizard{httpClient: defaultHTTPClient()}
+	_, err := w.autoIdentifyNCBIKeywordGeneLoci(ctx, groups, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("autoIdentifyNCBIKeywordGeneLoci error = %v, want context.Canceled", err)
 	}
 }
 

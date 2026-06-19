@@ -34,6 +34,7 @@ const (
 	geneDBBucketRecords             = "records"
 	geneDBBucketIndex               = "index"
 	geneDBMaxTokenHits              = 2048
+	geneDBMaxRankedAliases          = 24
 	prebuiltCopyBufferSize          = 4 * 1024 * 1024
 )
 
@@ -972,6 +973,7 @@ func (g *geneDB) rank(request AliasRankRequest) ([]rankedAlias, bool) {
 	}
 	queryTerms := request.geneInfoTerms()
 	if len(queryTerms) == 0 {
+		g.rankCachePut(cacheKey, nil)
 		return nil, true
 	}
 	scores := make(map[string]rankedAlias, 32)
@@ -1012,6 +1014,9 @@ func (g *geneDB) rank(request AliasRankRequest) ([]rankedAlias, bool) {
 				continue
 			}
 			for _, candidate := range record.symbolNameCandidates() {
+				if !isUsableRankedAliasText(candidate) {
+					continue
+				}
 				key := normalizeAliasKey(candidate)
 				if key == "" {
 					continue
@@ -1050,11 +1055,24 @@ func (g *geneDB) rank(request AliasRankRequest) ([]rankedAlias, bool) {
 		return nil
 	})
 	if len(scores) == 0 {
+		g.rankCachePut(cacheKey, nil)
 		return nil, true
 	}
 	out := make([]rankedAlias, 0, len(scores))
 	for _, item := range scores {
 		out = append(out, item)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Score != out[j].Score {
+			return out[i].Score > out[j].Score
+		}
+		if len(out[i].Text) != len(out[j].Text) {
+			return len(out[i].Text) < len(out[j].Text)
+		}
+		return strings.ToLower(out[i].Text) < strings.ToLower(out[j].Text)
+	})
+	if len(out) > geneDBMaxRankedAliases {
+		out = out[:geneDBMaxRankedAliases]
 	}
 	g.rankCachePut(cacheKey, out)
 	return out, true
@@ -1077,7 +1095,7 @@ func (g *geneDB) rankCacheGet(key string) ([]rankedAlias, bool) {
 }
 
 func (g *geneDB) rankCachePut(key string, items []rankedAlias) {
-	if g == nil || strings.TrimSpace(key) == "" || len(items) == 0 || geneDBRankCacheSize <= 0 {
+	if g == nil || strings.TrimSpace(key) == "" || geneDBRankCacheSize <= 0 {
 		return
 	}
 	g.rankMu.Lock()

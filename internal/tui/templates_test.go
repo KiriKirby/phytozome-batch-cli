@@ -8,6 +8,8 @@
 package tui
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -2118,6 +2121,75 @@ func withTestApp(t *testing.T, width int, height int, beforeStop func(*tview.App
 		newApp = oldNewApp
 		runApp = oldRunApp
 	})
+}
+
+func TestRunTaskValueContextCancelWaitsForTaskExit(t *testing.T) {
+	oldNewApp := newApp
+	oldRunApp := runApp
+	defer func() {
+		newApp = oldNewApp
+		runApp = oldRunApp
+	}()
+
+	var screenRef tcell.SimulationScreen
+	newApp = func() *tview.Application {
+		configStyles()
+		app := tview.NewApplication()
+		screen := tcell.NewSimulationScreen("UTF-8")
+		if err := screen.Init(); err != nil {
+			t.Fatalf("screen init failed: %v", err)
+		}
+		screen.SetSize(90, 14)
+		app.SetScreen(screen)
+		screenRef = screen
+		return app
+	}
+	taskStarted := make(chan struct{})
+	taskMayExit := make(chan struct{})
+	taskExited := make(chan struct{})
+	runApp = func(app *tview.Application) error {
+		go func() {
+			select {
+			case <-taskStarted:
+			case <-time.After(2 * time.Second):
+				t.Error("task did not start")
+				app.Stop()
+				return
+			}
+			if screenRef == nil {
+				t.Error("simulation screen was not created")
+				app.Stop()
+				return
+			}
+			screenRef.InjectKey(tcell.KeyEscape, 0, tcell.ModNone)
+			select {
+			case <-taskExited:
+				t.Error("task exited before test released it")
+				app.Stop()
+				return
+			case <-time.After(120 * time.Millisecond):
+			}
+			close(taskMayExit)
+			select {
+			case <-taskExited:
+			case <-time.After(2 * time.Second):
+				t.Error("task modal did not wait for cancelled task to exit")
+				app.Stop()
+			}
+		}()
+		return app.Run()
+	}
+
+	_, err := RunTaskValueContext(TaskPage{Title: "Cancelable task", AllowCancel: true}, func(ctx context.Context, update func(string)) (int, error) {
+		close(taskStarted)
+		<-ctx.Done()
+		<-taskMayExit
+		close(taskExited)
+		return 0, ctx.Err()
+	})
+	if !errors.Is(err, ErrTaskCancelled) {
+		t.Fatalf("RunTaskValueContext error = %v, want ErrTaskCancelled", err)
+	}
 }
 
 func TestRunActionModalPageHandlesButtonShortcuts(t *testing.T) {

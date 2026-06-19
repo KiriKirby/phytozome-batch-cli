@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/KiriKirby/phytozome-go/internal/appfs"
 )
@@ -204,10 +205,15 @@ func runWezTermCLI(subcommand string, value string) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(launcher, "cli", subcommand, value)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, launcher, "cli", subcommand, value)
 	cmd.Dir = filepath.Dir(launcher)
 	cmd.Env = os.Environ()
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("wezterm cli %s timed out: %w", subcommand, ctx.Err())
+		}
 		return fmt.Errorf("wezterm cli %s: %w", subcommand, err)
 	}
 	return nil

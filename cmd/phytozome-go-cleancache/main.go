@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/KiriKirby/phytozome-go/internal/labelname"
@@ -29,6 +30,9 @@ const skipBundlePreflightEnv = "PHGO_SKIP_BUNDLE_PREFLIGHT"
 const autoAcceptUpdateEnv = "PHGO_AUTO_ACCEPT_UPDATE"
 const updateDebugLogEnv = "PHGO_UPDATE_DEBUG_LOG"
 const lastUpdateErrorEnv = "PHGO_LAST_UPDATE_ERROR"
+const windowsErrorSharingViolation syscall.Errno = 32
+const windowsErrorLockViolation syscall.Errno = 33
+const windowsErrorAccessDenied syscall.Errno = 5
 const startupASCIIArt = `          _____                    _____                    _____                   _______
          /\    \                  /\    \                  /\    \                 /::\    \
         /::\    \                /::\____\                /::\    \               /::::\    \
@@ -327,10 +331,20 @@ func detectDevRepoRootFromBundleDir(bundleDir string) (string, bool) {
 func removeCacheTargets(targets []string) error {
 	for _, target := range targets {
 		if err := os.RemoveAll(target); err != nil && !os.IsNotExist(err) {
+			if isLockedCacheCleanupError(err) {
+				_, _ = fmt.Fprintf(os.Stdout, "\nWarning: cache directory %s is still in use; leaving locked files in place and continuing startup.\n", target)
+				continue
+			}
 			return fmt.Errorf("delete cache directory %s: %w", target, err)
 		}
 	}
 	return nil
+}
+
+func isLockedCacheCleanupError(err error) bool {
+	return errors.Is(err, windowsErrorSharingViolation) ||
+		errors.Is(err, windowsErrorLockViolation) ||
+		errors.Is(err, windowsErrorAccessDenied)
 }
 
 func maybeEnsureSymbolNameDatabase(appDir string, args []string) (bool, error) {

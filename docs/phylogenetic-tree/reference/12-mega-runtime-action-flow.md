@@ -21,6 +21,13 @@ cleanup, sequence-kind guessing, reverse translation, or tree-method emulation.
 
 Runtime executable: `mega-phgo-runtime`.
 
+Windows packaging note: the release bundle stores the runtime process image as
+`mega-phgo-runtime.bin` beside `muscleWin64.bin`, but PHgo does not execute that
+asset path directly. `megaphgo.PrepareExecution` creates a temporary
+`mega-phgo-runtime.exe` and copies the runtime-owned MUSCLE binary into the same
+temporary directory before probe or request execution. Source-level debugging may
+run the built `_mega_source/.../mega-phgo-runtime.exe` directly.
+
 Entry behavior:
 
 1. With exactly one argument equal to `--phgo-runtime-probe`, write
@@ -457,6 +464,13 @@ On any exception after request parsing:
 
 1. Write `runtime-response.json` with `error_text=<exception message>`.
 2. Re-raise so CLI exits nonzero and stderr contains the runtime error.
+
+Unsupported residues are runtime errors. The regression probe
+`C:\Users\wangsychn\Desktop\4CLtree.pgo` currently exercises this with
+`Unsupported protein residue "*" at sequence 85, site 213`, corresponding to
+`PHGOT000085` / `AT1G51680.1[4CL]`. PHgo surfaces the error text and preserves
+runtime artifacts; it does not trim `*`, skip the row locally, or retry with a
+different alignment method.
 
 `runtime-response.json` fields:
 

@@ -670,6 +670,76 @@ func TestBuildCanvasSelectionTableReturnsTableRows(t *testing.T) {
 	}
 }
 
+func TestAliasLikeTableColumnsShowFirstFiveAliasesOnly(t *testing.T) {
+	full := "A1; A2; A3; A4; A5; A6; A7"
+	want := "A1; A2; A3; A4; A5; ..."
+
+	_, keywordRows := buildKeywordSelectionTable([]model.KeywordResultRow{{
+		SourceDatabase: "phytozome",
+		SearchTerm:     "PAL",
+		LabelName:      "PAL1",
+		PhgoAliases:    full,
+	}})
+	if got := tableCellByColumn(t, keywordDisplayColumns([]model.KeywordResultRow{{SourceDatabase: "phytozome", LabelName: "PAL1", PhgoAliases: full}}), keywordRows[0], "phgo_alias"); got != want {
+		t.Fatalf("keyword phgo_alias display = %q, want %q", got, want)
+	}
+	if !strings.Contains(keywordRows[0].Detail, full) {
+		t.Fatalf("keyword detail should keep full aliases: %q", keywordRows[0].Detail)
+	}
+
+	_, blastRows := buildBlastSelectionTable([]model.BlastResultRow{{
+		SourceDatabase: "phytozome",
+		BlastProgram:   "BLASTP",
+		LabelName:      "PAL1",
+		PhgoAliases:    full,
+	}})
+	if got := tableCellByColumn(t, blastDisplayColumns([]model.BlastResultRow{{SourceDatabase: "phytozome", BlastProgram: "BLASTP", LabelName: "PAL1", PhgoAliases: full}}), blastRows[0], "phgo_alias"); got != want {
+		t.Fatalf("blast phgo_alias display = %q, want %q", got, want)
+	}
+	if !strings.Contains(blastRows[0].Detail, full) {
+		t.Fatalf("blast detail should keep full aliases: %q", blastRows[0].Detail)
+	}
+
+	item := model.CanvasItem{
+		Title: "PAL",
+		Kind:  model.CanvasKindKeyword,
+		ActiveColumns: []model.CanvasColumn{
+			{ID: "phgo_alias", Header: "phgo_alias"},
+		},
+		Rows: []model.CanvasRow{{
+			Kind:       model.CanvasKindKeyword,
+			KeywordRow: &model.KeywordResultRow{LabelName: "PAL1", PhgoAliases: full},
+		}},
+	}
+	canvasColumns, canvasRows := buildCanvasSelectionTable(item)
+	if got := tableCellByColumnID(t, canvasColumns, canvasRows[0], "phgo_alias"); got != want {
+		t.Fatalf("canvas phgo_alias display = %q, want %q", got, want)
+	}
+}
+
+func tableCellByColumn[T any](t testing.TB, defs []tableColumnValue[T], row tui.TableRow, id string) string {
+	t.Helper()
+	columns := make([]tui.TableColumn, 0, len(defs))
+	for _, def := range defs {
+		columns = append(columns, tui.TableColumn{ID: def.ID})
+	}
+	return tableCellByColumnID(t, columns, row, id)
+}
+
+func tableCellByColumnID(t testing.TB, columns []tui.TableColumn, row tui.TableRow, id string) string {
+	t.Helper()
+	for i, column := range columns {
+		if column.ID == id {
+			if i >= len(row.Cells) {
+				t.Fatalf("row has %d cells, missing column %q at %d", len(row.Cells), id, i)
+			}
+			return row.Cells[i]
+		}
+	}
+	t.Fatalf("missing column %q in %#v", id, columns)
+	return ""
+}
+
 func TestApplySelectionCommandUpDownAndRange(t *testing.T) {
 	selected := []bool{false, false, false, false, false}
 	order := []int{0, 1, 2, 3, 4}

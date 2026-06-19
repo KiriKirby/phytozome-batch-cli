@@ -44,6 +44,15 @@ The executable must come from the application-local folder:
 <application-dir>/mega-phgo-runtime.bin
 ```
 
+On Windows, `mega-phgo-runtime.bin` is a packaged asset name, not the final
+process image PHgo launches. Runtime probing and execution call
+`megaphgo.PrepareExecution`, which copies the bundled asset to a temporary
+`mega-phgo-runtime.exe` beside a temporary copy of `muscleWin64.bin`, launches
+that `.exe`, and cleans the temporary directory afterward. Development probes
+against the MEGA source tree may use the source-built
+`_mega_source/MEGA12.1-source/PHgoRuntime/lib/x86_64-win64/mega-phgo-runtime.exe`
+directly. Do not open or execute the bundled `.bin` directly.
+
 PHgo does not search `PATH`, does not use `C:\Program Files\MEGA12`, does not use `C:\Program Files\MEGA12cc`, and does not reuse any other installed MEGA runtime. The folder itself is the installation contract. Windows `amd64` release bundles must already contain the exact `mega-phgo-runtime` folder at the application root. If that bundled folder is missing or invalid, the package is incomplete or corrupted and the user should reinstall the full bundle instead of downloading runtime pieces separately.
 
 Managed PHgo runtime support currently exists only in the bundled Windows `amd64` release. Linux and macOS builds do not ship the runtime yet, so those platforms should report system-tree unsupported instead of attempting any runtime download.
@@ -106,6 +115,14 @@ In DNA mode, PHgo may use a real nucleotide/CDS sequence only when the selected 
 The maintained real-runtime probe for `C:\Users\wangsychn\Desktop\output\123.pgo` exercises the production path: Protein mode must not show PHgo conversion logs, DNA mode must resolve real row-source metadata such as Lemna BLAST rows before alignment when available, and DNA mode must run ClustalW (DNA), MUSCLE (DNA), ClustalW (Codons), and MUSCLE (Codons) on DNA-capable rows from that snapshot.
 
 `input.fasta` preserves the PHgo-selected sequences for auditability. PHgo does not sanitize, trim, translate, reverse-translate, or repair protein/nucleotide content before runtime execution. The runtime request is the handoff boundary; MEGA-derived alignment/tree components accept the selected data or report the runtime failure.
+
+The maintained desktop probe for `C:\Users\wangsychn\Desktop\4CLtree.pgo`
+currently verifies this boundary with real user data. ClustalW correctly
+returns the runtime error `Unsupported protein residue "*" at sequence 85, site
+213`, which maps through the run metadata to `PHGOT000085` /
+`AT1G51680.1[4CL]`. PHgo must surface this MEGA/runtime error directly. It must
+not clean the stop codon locally and must not switch from ClustalW to MUSCLE or
+change the tree method automatically.
 
 ## Metadata
 
@@ -230,6 +247,12 @@ Implemented Canvas refresh progress uses the existing cancellable TUI task modal
 - 6/6 Reactree viewer updated
 
 The same progress context is passed into runtime request preparation and runtime execution, so cancellation can stop before or during long-running work.
+
+Task/progress modals must not return immediately after cancellation while their
+worker goroutine is still running. The Cancel button/Esc path cancels the task
+context, updates the visible status without re-entering the TUI event queue, and
+waits for the associated runtime, download, export, or table-preparation task to
+exit before the workflow resumes.
 
 ## Error Handling
 

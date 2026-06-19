@@ -147,7 +147,7 @@ func ManagedExecutable() (string, bool, error) {
 	}
 	for _, name := range executableCandidates() {
 		path := filepath.Join(toolsDir, executableName(name))
-		if info, err := os.Stat(path); err == nil && !info.IsDir() && ProbeExecutable(path) == nil && runtimeOwnedMuscleAvailable(toolsDir) {
+		if info, err := os.Stat(path); err == nil && !info.IsDir() && runtimeOwnedMuscleAvailable(toolsDir) && ProbeExecutable(path) == nil {
 			return path, true, nil
 		}
 	}
@@ -211,9 +211,14 @@ func probeExecutable(path string) error {
 	if path == "" {
 		return &MissingToolsError{Tools: []string{RuntimeExecutable}}
 	}
+	exe, cleanup, err := PrepareExecution(path)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 	ctx, cancel := context.WithTimeout(context.Background(), runtimeProbeTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, path, RuntimeProbeArgument)
+	cmd := exec.CommandContext(ctx, exe, RuntimeProbeArgument)
 	out, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(out))
 	if ctx.Err() != nil {

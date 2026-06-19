@@ -92,14 +92,14 @@ func RankAliasBatch(requests []AliasRankRequest) []AliasRankResult {
 		results[i] = AliasRankResult{
 			TaskTimestamp: request.TaskTimestamp,
 			ItemIndex:     request.ItemIndex,
-			RankedAliases: rankedAliasTexts(ranked),
+			RankedAliases: filteredRankedAliasTexts(ranked),
 		}
 	}
 	return results
 }
 
 func rankAliasRequest(request AliasRankRequest) []string {
-	return rankedAliasTexts(sortRankedAliases(rankAliasRequestItems(request), nil))
+	return filteredRankedAliasTexts(sortRankedAliases(rankAliasRequestItems(request), nil))
 }
 
 type rankedAlias struct {
@@ -318,6 +318,26 @@ func rankedAliasTexts(items []rankedAlias) []string {
 		}
 	}
 	return uniqueStrings(out)
+}
+
+func filteredRankedAliasTexts(items []rankedAlias) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		text := strings.TrimSpace(item.Text)
+		if text == "" || !isUsableRankedAliasText(text) {
+			continue
+		}
+		out = append(out, text)
+	}
+	return uniqueStrings(out)
+}
+
+func isUsableRankedAliasText(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	return isPrimarySymbolNameCandidate(value) || IsTrustedCandidate(value)
 }
 
 func isPrimarySymbolNameCandidate(value string) bool {

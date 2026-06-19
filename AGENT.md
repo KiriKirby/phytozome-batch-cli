@@ -40,6 +40,8 @@ This file tracks the intended shape of `phytozome GO` and its release packaging,
   - Tree artifact reuse is allowed only when the runtime artifacts are present and the runtime manifest/fingerprint state indicates the same compute inputs. Do not perform Go-side biological-target validation or kind correction before reuse; rely on the runtime outputs and manifest consistency instead.
   - In DNA mode, FASTA rows may use a real nucleotide/CDS sequence only when it is already embedded or resolved from row metadata/cache. PHgo must never reverse-translate, must not infer sequence kind from letters, and must not pre-skip rows based on biological compatibility; MEGA runtime is the authority for alignment/tree failure.
   - If `mega-phgo-runtime` writes `error_text` in `runtime-response.json`, surface that exact runtime error before looking for aligned/Newick artifacts so users see the real computation failure instead of a secondary missing-file message.
+  - Windows release assets keep the PHgo runtime executable as `mega-phgo-runtime.bin` for packaging, but PHgo must never directly execute/open that `.bin` as the final runnable. Runtime probes and tree runs must pass through `megaphgo.PrepareExecution`, which copies the bundled `.bin` to a temporary `mega-phgo-runtime.exe` next to the runtime-owned `muscleWin64.bin` and then launches that `.exe`. Source/runtime development probes may use `_mega_source/MEGA12.1-source/PHgoRuntime/lib/x86_64-win64/mega-phgo-runtime.exe` directly.
+  - The desktop regression snapshot `C:\Users\wangsychn\Desktop\4CLtree.pgo` must remain a real-runtime probe. Its current ClustalW failure is a valid MEGA/runtime data error, not a PHgo crash and not a reason to switch aligners automatically: `Unsupported protein residue "*" at sequence 85, site 213`, mapping to `PHGOT000085` / `AT1G51680.1[4CL]`. PHgo must surface that runtime error and must not auto-rerun with MUSCLE or another tree method on the user's behalf.
 - Treat tree rendering, preview, styling, and export as a separate browser-based subsystem with its own documentation set:
   - do not attempt to render phylogenetic trees directly inside the terminal UI
   - do not embed or depend on MEGA GUI widgets/components inside the Go TUI application
@@ -117,7 +119,9 @@ This file tracks the intended shape of `phytozome GO` and its release packaging,
   - After matching, batch ranking should promote candidates that form the largest symbol families in the current batch, ordered by mergeable family size descending; non-family candidates come after family-forming candidates.
   - BLAST query/source auto symbol name and BLAST-hit auto symbol name should prefer two-phase execution for performance: parallel data/candidate collection first, then batch symbol-name ranking over de-duplicated requests.
   - All automatic symbol-name paths for every supported database and mode must construct `labelname.AliasRankRequest` values from all known structured local fields, then batch-rank through the local `symbolname.pgd` database. This includes Phytozome, Lemna, TAIR, NCBI keyword rows, BLAST query/source items, and BLAST-hit rows.
+  - Keyword-mode automatic symbol-name identification must first batch-rank each original search term directly against `symbolname.pgd` with only search-term/group-label/tax context. Only groups with no direct database aliases may fall back to already-fetched result-row metadata, aliases, descriptions, and dbxrefs. This keeps TAIR/Lemna/NCBI/Phytozome keyword labels from being dominated by noisy broad search rows.
   - Automatic symbol-name code must not perform workflow-level fallback lookup chains. Do not do secondary Phytozome keyword searches for Lemna/TAIR/NCBI symbol names, do not use source-label or FASTA/header text as an invented fallback label, and do not synthesize gene/transcript/protein identifiers as labels when the symbol-name database returns no aliases.
+  - Labelname/symbol-name matching must not query online database sources. It may only use the local `symbolname.pgd` plus structured data already present in the current query/source/result rows. Cache and reuse both hits and misses so repeated automatic label paths do not re-scan the local database for equivalent requests.
   - BLAST-hit auto symbol name should cache hit-level identification decisions by a stable hit/source-symbol key across repeated runs so reopening/re-filtering/export chains do not redo the same local ranking work.
   - Auto symbol name stages must expose visible progress states instead of a silent wait; at minimum distinguish candidate prefetch/collection from ranking/application so users do not interpret the phase as a hang.
   - Table selection performance is part of workflow performance, not only UI polish:
@@ -126,6 +130,7 @@ This file tracks the intended shape of `phytozome GO` and its release packaging,
     - grouped row-selection tables should keep a direct original-row -> display-row index cache after each display-row rebuild so selection restore and current-row lookup do not rescan the full visible row slice on every interaction
     - grouped display-row construction must not rescan the sorted order once per group; build ordered/group lookup structures once and reuse them
 - `phgo_alias` is the phytozome GO authoritative alias column produced by the symbol name system. Result table views show `phgo_alias`; the original source `alias` column remains available in row details, exports, and reports immediately after `phgo_alias`.
+- Alias-like table columns, including `phgo_alias`, source `alias`, `symbols`, `synonyms`, `uniprot_gene_names`, and dynamic `*_alias*` fields, should show only the first five aliases in result/Canvas table cells followed by `...` when more are present. Detail panes, exports, reports, snapshots, and alias chooser dialogs must keep the full stored alias list.
 - Phytozome keyword rows keep source `symbols` and `synonyms` as separate fields instead of merging them into `alias`. They are not table-display columns. Automatic symbol-name collection sends all available row fields and metadata to the symbol-name system together; workflow code must not impose a source-field fallback order.
 - BLAST query/source and BLAST-hit symbol-name collection use the same local symbol-name database path as keyword mode. Known source metadata, identifiers, aliases, descriptions, dbxrefs, and tax IDs are structured into the request; if `symbolname.pgd` produces no match, the label stays blank unless the user already supplied or pinned a label.
 - Lemna, TAIR, and NCBI keyword/BLAST symbol-name collection must not route through Phytozome as a secondary symbol source. Their local row/source metadata is structured and submitted directly to `internal/labelname`, which performs the only matching and ranking step.
@@ -614,6 +619,7 @@ This file tracks the intended shape of `phytozome GO` and its release packaging,
     - InterPro should distinguish query-reference resolution from hit-reference resolution
   - BLAST query/source symbol name worker strategy:
     - collect local structured request data in parallel, de-duplicate equivalent `AliasRankRequest` inputs, then rank the batch through the local symbol-name database
+    - do not call single-item `RankAliases` during batch candidate collection; construct requests only, then use one `RankAliasBatch` pass so batch de-duplication and family coordination are preserved
     - progress text should explicitly say `Collecting BLAST source label candidates...` and then `Ranking BLAST source labels...`
   - Keyword-to-BLAST real-flow performance work should be measured separately from BLAST execution:
     - keyword search
@@ -929,8 +935,11 @@ Priority 4 (low / optional)
   - lemna keyword search from GFF3 + AHRD with dynamic export columns.
   - lemna BLAST capability detection from download assets and concrete BLAST selector pages.
   - local BLAST fallback for `blastn`, `blastx`, `tblastn`, and `blastp` using the matching nucleotide/protein FASTA.
-  - Single-query and batch BLAST execution now run behind cancellable task/progress modals; local Lemna BLAST reports FASTA preparation, database build, BLAST execution, result parsing, and release-metadata enrichment instead of silently continuing after BLAST+ exits.
-  - BLAST submission errors support retry, back to BLAST program selection, or exit.
+- Single-query and batch BLAST execution now run behind cancellable task/progress modals; local Lemna BLAST reports FASTA preparation, database build, BLAST execution, result parsing, and release-metadata enrichment instead of silently continuing after BLAST+ exits.
+- BLAST submission errors support retry, back to BLAST program selection, or exit.
+- Keyword/BLAST result transfer into BLAST target selection preserves transfer state across Back navigation: Back from target species or BLAST run returns to the transfer database choice instead of dropping the user into a broken target-source state.
+- Keyword-result-to-BLAST transfer sanitizes legacy raw alias/symbol fields from cached query sources while preserving `label_name`, `phgo_alias`, IDs, sequences, URLs, UniProt accession, and source metadata needed for BLAST.
+- Cancellable task/progress modals must cancel their context and wait for the associated task goroutine to finish before returning control. Cancel handlers must not synchronously queue a UI update from inside the same TUI input event, because that can deadlock the modal.
 - Remaining:
   - Robust server-side lemna result retrieval. Server form probing exists, but local BLAST remains the dependable execution path.
   - Optional integration tests against live lemna.org and local BLAST+ when available.

@@ -10846,9 +10846,7 @@ func runTaskValue[T any](page TaskPage, task func(ctx context.Context, update fu
 	cancelTask := func() {
 		if cancelled.CompareAndSwap(false, true) {
 			cancelTaskContext()
-			app.QueueUpdateDraw(func() {
-				statusView.SetText("Cancelling task...")
-			})
+			statusView.SetText("Cancelling task...")
 		}
 	}
 	if allowCancel {
@@ -10922,7 +10920,9 @@ func runTaskValue[T any](page TaskPage, task func(ctx context.Context, update fu
 		}
 	}()
 
+	taskDone := make(chan struct{})
 	go func() {
+		defer close(taskDone)
 		if !waitForTaskStart(taskCtx, taskReady) {
 			taskErr = taskCtx.Err()
 			app.QueueUpdateDraw(func() {
@@ -10948,13 +10948,18 @@ func runTaskValue[T any](page TaskPage, task func(ctx context.Context, update fu
 		return event
 	})
 	if err := runApp(app); err != nil {
+		cancelTaskContext()
+		<-taskDone
 		stop()
 		return zero, err
 	}
-	stop()
 	if cancelled.Load() {
+		<-taskDone
+		stop()
 		return zero, taskCancelError(page)
 	}
+	<-taskDone
+	stop()
 	if taskErr != nil {
 		return zero, taskErr
 	}
@@ -11030,9 +11035,7 @@ func runProgressTaskValue[T any](page TaskPage, task func(ctx context.Context, u
 	cancelTask := func() {
 		if cancelled.CompareAndSwap(false, true) {
 			cancelTaskContext()
-			app.QueueUpdateDraw(func() {
-				statusView.SetText(render("|") + "\n\nCancelling task...")
-			})
+			statusView.SetText(render("|") + "\n\nCancelling task...")
 		}
 	}
 	if allowCancel {
@@ -11109,7 +11112,9 @@ func runProgressTaskValue[T any](page TaskPage, task func(ctx context.Context, u
 		}
 	}()
 
+	taskDone := make(chan struct{})
 	go func() {
+		defer close(taskDone)
 		if !waitForTaskStart(taskCtx, taskReady) {
 			taskErr = taskCtx.Err()
 			app.QueueUpdateDraw(func() {
@@ -11135,13 +11140,18 @@ func runProgressTaskValue[T any](page TaskPage, task func(ctx context.Context, u
 		return event
 	})
 	if err := runApp(app); err != nil {
+		cancelTaskContext()
+		<-taskDone
 		stop()
 		return zero, err
 	}
-	stop()
 	if cancelled.Load() {
+		<-taskDone
+		stop()
 		return zero, taskCancelError(page)
 	}
+	<-taskDone
+	stop()
 	if taskErr != nil {
 		return zero, taskErr
 	}
