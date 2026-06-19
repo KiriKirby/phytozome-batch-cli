@@ -1073,30 +1073,33 @@ func TestMatchPhytozomeSpeciesForLemnaRequiresUniqueScientificName(t *testing.T)
 	}
 }
 
-func TestAutoIdentifyBlastLabelFromPhytozomeUsesBestAliasCandidate(t *testing.T) {
+func TestAutoIdentifyBlastLabelUsesLocalSymbolDatabaseForStructuredIDs(t *testing.T) {
 	w := &BlastWizard{}
-	src := keywordMapSource{rowsByKeyword: map[string][]model.KeywordResultRow{
-		"AT2G37040.1": {{
-			Aliases:      "ATPAL1; PAL1",
-			TranscriptID: "AT2G37040.1",
-		}},
-	}}
+	src := &countingKeywordMapSource{keywordMapSource: keywordMapSource{rowsByKeyword: map[string][]model.KeywordResultRow{
+		"AT2G37040.1": {{Aliases: "SHOULDNOTUSE", TranscriptID: "AT2G37040.1"}},
+	}}}
 	item := blastQueryItem{
 		RawInput: ">A.thaliana TAIR10|AT2G37040.1\nMPEPTIDE",
 		QuerySource: &model.QuerySequenceSource{
-			ProteinID:    "AT2G37040.1",
-			TranscriptID: "AT2G37040.1",
-			GeneID:       "AT2G37040",
+			SourceDatabase: "tair",
+			ProteinID:      "AT2G37040.1",
+			TranscriptID:   "AT2G37040.1",
+			GeneID:         "AT2G37040",
 		},
 	}
 
-	got := w.autoIdentifyBlastLabelFromPhytozome(context.Background(), src, model.SpeciesCandidate{ProteomeID: 167}, item)
+	got := w.autoIdentifyBlastLabel(context.Background(), src, model.SpeciesCandidate{ProteomeID: 167}, item)
 	if got != "PAL1" {
 		t.Fatalf("unexpected label: %q", got)
 	}
+	src.mu.Lock()
+	defer src.mu.Unlock()
+	if len(src.fetchCount) != 0 {
+		t.Fatalf("symbolname auto-identify should not query source rows, got %#v", src.fetchCount)
+	}
 }
 
-func TestAutoIdentifyBlastLabelUsesQuerySourceBeforeFastaHeaderFallback(t *testing.T) {
+func TestAutoIdentifyBlastLabelUsesQuerySourceAndIgnoresFastaHeaderLabel(t *testing.T) {
 	w := &BlastWizard{}
 	item := blastQueryItem{
 		RawInput:    ">Arabidopsis thaliana TAIR10|AT5G62380.1 (AtVND6)\nMESLAHIPP",
@@ -1138,7 +1141,7 @@ func TestPhytozomeRawBlastAliasesAreNotReusableUntilRanked(t *testing.T) {
 	}
 }
 
-func TestAutoIdentifyBlastLabelResultUsesDatabaseAliasesBeforeFastaHeaderFallback(t *testing.T) {
+func TestAutoIdentifyBlastLabelResultUsesLocalSymbolDatabaseAliasesAndIgnoresHeaderLabel(t *testing.T) {
 	w := &BlastWizard{}
 	src := keywordMapSource{rowsByKeyword: map[string][]model.KeywordResultRow{
 		"AT1G01010.1": {{Synonyms: "NAC001; ANAC001", AutoDefine: "NAC domain protein", SourceDatabase: "phytozome"}},
@@ -1196,7 +1199,7 @@ func TestAutoIdentifyBlastLabelResultUsesDraggedFastaFileHeaderSpecies(t *testin
 	}
 }
 
-func TestAutoIdentifyBlastLabelResultLetsDatabaseAliasOverrideFastaHeaderFallback(t *testing.T) {
+func TestAutoIdentifyBlastLabelResultLetsLocalSymbolDatabaseAliasOverrideHeaderLabel(t *testing.T) {
 	w := &BlastWizard{}
 	src := keywordMapSource{rowsByKeyword: map[string][]model.KeywordResultRow{
 		"AT5G62380.1": {{Synonyms: "VND6; ANAC101", AutoDefine: "vascular related NAC domain 6", SourceDatabase: "phytozome"}},
@@ -1313,7 +1316,7 @@ func TestAutoIdentifyBlastLabelReturnsEmptyWhenStructuredIDsHaveNoDatabaseMatch(
 	}
 }
 
-func TestAutoIdentifyLemnaBlastSourceLabelPrefersPhytozomeThenLocalThenStructuredIDFallback(t *testing.T) {
+func TestAutoIdentifyLemnaBlastSourceLabelUsesSymbolNameDatabaseOnly(t *testing.T) {
 	src := keywordMapSource{
 		name: "phytozome",
 		candidates: []model.SpeciesCandidate{
@@ -1335,10 +1338,10 @@ func TestAutoIdentifyLemnaBlastSourceLabelPrefersPhytozomeThenLocalThenStructure
 	}
 	result := w.autoIdentifyBlastLabelResult(context.Background(), src, model.SpeciesCandidate{GenomeLabel: "Spirodela polyrhiza"}, item)
 	if result.Label != "CYP73A5" {
-		t.Fatalf("Label = %q, want ranked Phytozome synonym", result.Label)
+		t.Fatalf("Label = %q, want local symbol database match", result.Label)
 	}
 	if containsString(result.Aliases, "HeaderName") || containsString(result.Aliases, "LOCAL_SHOULD_NOT_WIN") {
-		t.Fatalf("Aliases = %#v, want Phytozome aliases before Lemna local/header fallback", result.Aliases)
+		t.Fatalf("Aliases = %#v, want local symbol database aliases without header/source fallback", result.Aliases)
 	}
 
 	item.QuerySource.ProteinID = "missing"
@@ -1346,8 +1349,8 @@ func TestAutoIdentifyLemnaBlastSourceLabelPrefersPhytozomeThenLocalThenStructure
 	item.QuerySource.LabelName = "C4H"
 	item.RawInput = ">Spirodela polyrhiza (HeaderName)\nMPEPTIDE"
 	result = w.autoIdentifyBlastLabelResult(context.Background(), src, model.SpeciesCandidate{GenomeLabel: "Spirodela polyrhiza"}, item)
-	if result.Label != "CYP73A5" || !containsString(result.Aliases, "CYP73A5") {
-		t.Fatalf("local alias database result = %#v, want gene_info symbol CYP73A5", result)
+	if result.Label == "" || !containsString(result.Aliases, "CYP73A5") {
+		t.Fatalf("local symbol database result = %#v, want gene_info alias set", result)
 	}
 
 	missingItem := blastQueryItem{
@@ -1363,7 +1366,7 @@ func TestAutoIdentifyLemnaBlastSourceLabelPrefersPhytozomeThenLocalThenStructure
 	}
 }
 
-func TestAutoIdentifyBlastHitLabelUsesPhytozomeFallbackAndSourceLabelLast(t *testing.T) {
+func TestAutoIdentifyBlastHitLabelUsesSymbolNameDatabaseOnly(t *testing.T) {
 	src := &countingKeywordMapSource{
 		keywordMapSource: keywordMapSource{
 			name: "phytozome",
@@ -1384,7 +1387,7 @@ func TestAutoIdentifyBlastHitLabelUsesPhytozomeFallbackAndSourceLabelLast(t *tes
 	}
 	got := w.autoIdentifyBlastHitLabels(context.Background(), model.SpeciesCandidate{ProteomeID: 1}, blastQueryItem{LabelName: "SOURCE1"}, rows)
 	wants := []string{"VND6", "VND7", "AUTO1", "", "VND6"}
-	wantTypes := []string{"phytozome synonyms", "phytozome symbols", "phytozome auto_define", "blast source labelname fallback", "phytozome synonyms"}
+	wantTypes := []string{"symbolname database", "symbolname database", "symbolname database", "symbolname database", "symbolname database"}
 	for i := range wants {
 		if got[i].LabelName != wants[i] || got[i].LabelNameType != wantTypes[i] {
 			t.Fatalf("row %d label/type = %q/%q, want %q/%q", i, got[i].LabelName, got[i].LabelNameType, wants[i], wantTypes[i])
@@ -1392,8 +1395,8 @@ func TestAutoIdentifyBlastHitLabelUsesPhytozomeFallbackAndSourceLabelLast(t *tes
 	}
 	src.mu.Lock()
 	defer src.mu.Unlock()
-	if src.fetchCount["AT5G62380.1"] != 1 {
-		t.Fatalf("duplicate hit lookup count = %d, want 1", src.fetchCount["AT5G62380.1"])
+	if src.fetchCount["AT5G62380.1"] != 0 {
+		t.Fatalf("duplicate hit should not trigger keyword lookup, got %d", src.fetchCount["AT5G62380.1"])
 	}
 }
 
@@ -1418,6 +1421,31 @@ func TestAutoIdentifyBlastHitLabelPopulatesHitPhgoAliases(t *testing.T) {
 	}
 	if strings.Contains(got[0].PhgoAliases, "SOURCE_ALIAS") {
 		t.Fatalf("hit phgo_alias must not copy source aliases: %q", got[0].PhgoAliases)
+	}
+}
+
+func TestAutoIdentifyBlastHitLabelUsesTAIRLocalSymbolDatabase(t *testing.T) {
+	w := &BlastWizard{source: tair.NewClient(nil)}
+	got := w.autoIdentifyBlastHitLabels(
+		context.Background(),
+		model.SpeciesCandidate{JBrowseName: "TAIR10", GenomeLabel: "TAIR10"},
+		blastQueryItem{LabelName: "SOURCE1"},
+		[]model.BlastResultRow{{
+			SourceDatabase: "tair",
+			Protein:        "AT2G37040.1",
+			TranscriptID:   "AT2G37040.1",
+			SequenceID:     "AT2G37040.1",
+			Defline:        "phenylalanine ammonia-lyase protein",
+		}},
+	)
+	if got[0].LabelName != "PAL1" {
+		t.Fatalf("TAIR hit LabelName = %q, want PAL1 from local symbol database", got[0].LabelName)
+	}
+	if got[0].LabelNameType != "symbolname database" {
+		t.Fatalf("TAIR hit LabelNameType = %q, want symbolname database", got[0].LabelNameType)
+	}
+	if got[0].PhgoAliases == "" || strings.Contains(got[0].PhgoAliases, "SOURCE1") {
+		t.Fatalf("TAIR hit PhgoAliases = %q, want local aliases without source label", got[0].PhgoAliases)
 	}
 }
 
@@ -1470,12 +1498,12 @@ func TestAutoIdentifyBlastHitLabelReusesDuplicateHitIdentification(t *testing.T)
 	}
 	src.mu.Lock()
 	defer src.mu.Unlock()
-	if src.fetchCount["AT5G62380.1"] != 1 {
-		t.Fatalf("duplicate hit lookup count = %d, want 1", src.fetchCount["AT5G62380.1"])
+	if src.fetchCount["AT5G62380.1"] != 0 {
+		t.Fatalf("duplicate hit should not trigger keyword lookup, got %d", src.fetchCount["AT5G62380.1"])
 	}
 }
 
-func TestAutoIdentifyBlastHitLabelReusesCachedIdentificationAcrossCalls(t *testing.T) {
+func TestAutoIdentifyBlastHitLabelUsesSymbolnameWithoutSourceRowLookup(t *testing.T) {
 	src := &countingKeywordMapSource{
 		keywordMapSource: keywordMapSource{
 			name: "phytozome",
@@ -1496,8 +1524,8 @@ func TestAutoIdentifyBlastHitLabelReusesCachedIdentificationAcrossCalls(t *testi
 	}
 	src.mu.Lock()
 	defer src.mu.Unlock()
-	if src.fetchCount["AT5G62380.1"] != 1 {
-		t.Fatalf("cross-call hit lookup count = %d, want 1", src.fetchCount["AT5G62380.1"])
+	if src.fetchCount["AT5G62380.1"] != 0 {
+		t.Fatalf("cross-call hit lookup count = %d, want 0", src.fetchCount["AT5G62380.1"])
 	}
 }
 
@@ -1516,8 +1544,8 @@ func TestAutoIdentifyLemnaBlastHitLabelFallsBackToLocalBeforeSourceLabel(t *test
 	if got[0].LabelName != "C4H" && got[0].LabelName != "REF3" && got[0].LabelName != "CYP73A5" {
 		t.Fatalf("LabelName = %q, want gene_info symbol-name candidate", got[0].LabelName)
 	}
-	if got[0].LabelNameType != "lemna local aliases" {
-		t.Fatalf("LabelNameType = %q, want lemna local aliases", got[0].LabelNameType)
+	if got[0].LabelNameType != "symbolname database" {
+		t.Fatalf("LabelNameType = %q, want symbolname database", got[0].LabelNameType)
 	}
 	if got[0].PhgoAliases == "" || strings.Contains(got[0].PhgoAliases, "SOURCE1") {
 		t.Fatalf("PhgoAliases = %q, want local hit aliases without source label", got[0].PhgoAliases)
@@ -1540,8 +1568,8 @@ func TestAutoIdentifyLemnaBlastHitLabelSplitsWhitespaceAliasList(t *testing.T) {
 	if got[0].LabelName != "4CLL4" {
 		t.Fatalf("LabelName = %q, want first split alias 4CLL4", got[0].LabelName)
 	}
-	if got[0].LabelNameType != "lemna local aliases" {
-		t.Fatalf("LabelNameType = %q, want lemna local aliases", got[0].LabelNameType)
+	if got[0].LabelNameType != "symbolname database" {
+		t.Fatalf("LabelNameType = %q, want symbolname database", got[0].LabelNameType)
 	}
 	if strings.Contains(got[0].PhgoAliases, "4CLL4 Os03g0132000") {
 		t.Fatalf("PhgoAliases kept whitespace list as one alias: %q", got[0].PhgoAliases)
@@ -1575,8 +1603,8 @@ func TestAutoIdentifyLemnaBlastHitLabelUsesHitKeywordRowsBeforeSourceFallback(t 
 	if got[0].LabelName == "" || got[0].LabelName == "SOURCE1" {
 		t.Fatalf("LabelName = %q, want Lemna hit keyword label instead of source fallback", got[0].LabelName)
 	}
-	if got[0].LabelNameType != "lemna local aliases" {
-		t.Fatalf("LabelNameType = %q, want lemna local aliases", got[0].LabelNameType)
+	if got[0].LabelNameType != "symbolname database" {
+		t.Fatalf("LabelNameType = %q, want symbolname database", got[0].LabelNameType)
 	}
 	if got[0].PhgoAliases == "" || strings.Contains(got[0].PhgoAliases, "SOURCE1") {
 		t.Fatalf("PhgoAliases = %q, want hit aliases without source fallback", got[0].PhgoAliases)
@@ -1594,11 +1622,11 @@ func TestAutoIdentifyLemnaBlastHitLabelUsesSourceLabelLast(t *testing.T) {
 		blastQueryItem{LabelName: "SOURCE1"},
 		[]model.BlastResultRow{{SourceDatabase: "lemna", Protein: "Sp9509d020g000340_T001"}},
 	)
-	if got[0].LabelName != "" || got[0].LabelNameType != "blast source labelname fallback" {
-		t.Fatalf("got label/type = %q/%q, want empty label after unmatched source fallback request", got[0].LabelName, got[0].LabelNameType)
+	if got[0].LabelName == "SOURCE1" || got[0].LabelNameType != "symbolname database" {
+		t.Fatalf("got label/type = %q/%q, want symbolname database result without source fallback", got[0].LabelName, got[0].LabelNameType)
 	}
-	if got[0].PhgoAliases != "" {
-		t.Fatalf("PhgoAliases = %q, want empty aliases without gene_info match", got[0].PhgoAliases)
+	if strings.Contains(got[0].PhgoAliases, "SOURCE1") {
+		t.Fatalf("PhgoAliases = %q, want no source fallback alias", got[0].PhgoAliases)
 	}
 }
 
@@ -1651,7 +1679,7 @@ func TestSupplementBlastAliasesUsesBatchRankedAliases(t *testing.T) {
 	if strings.TrimSpace(out[1].QuerySource.PhgoAliases) == "" {
 		t.Fatalf("second item missing label or aliases: %#v", out[1])
 	}
-	if lookupSource.fetchCount["AT2G30490.1"] != 1 || lookupSource.fetchCount["AT5G13930.1"] != 1 {
+	if lookupSource.fetchCount["AT2G30490.1"] != 0 || lookupSource.fetchCount["AT5G13930.1"] != 0 {
 		t.Fatalf("unexpected lookup counts: %#v", lookupSource.fetchCount)
 	}
 }
@@ -1827,7 +1855,7 @@ func TestBlastReportLineageDocumentsHitPhgoAliasAndQuerySourceColumns(t *testing
 		SourceDatabase:                "lemna",
 		BlastProgram:                  "BLASTP",
 		LabelName:                     "C4H",
-		LabelNameType:                 "lemna local aliases",
+		LabelNameType:                 "symbolname database",
 		PhgoAliases:                   "C4H; CYP73A5",
 		BlastLabelName:                "PAL1",
 		BlastGeneID:                   "Sp9509d011g001470",
@@ -1926,8 +1954,8 @@ func TestBlastFullReferenceAutoLabelSimulationKeepsHitAliasesSeparateFromSourceG
 	rows = w.autoIdentifyBlastHitLabels(context.Background(), model.SpeciesCandidate{ProteomeID: 167}, item, rows)
 	rows = annotateBlastRowsForQueryContext(rows, item)
 
-	if rows[0].LabelName != "VND6" || rows[0].LabelNameType != "phytozome synonyms" {
-		t.Fatalf("first hit label/type = %q/%q, want hit-level phytozome synonyms", rows[0].LabelName, rows[0].LabelNameType)
+	if rows[0].LabelName != "VND6" || rows[0].LabelNameType != "symbolname database" {
+		t.Fatalf("first hit label/type = %q/%q, want local symbolname result", rows[0].LabelName, rows[0].LabelNameType)
 	}
 	if rows[0].PhgoAliases == "" || strings.Contains(rows[0].PhgoAliases, "ATPAL1") {
 		t.Fatalf("first hit phgo_alias = %q, want hit aliases without query-source aliases", rows[0].PhgoAliases)
@@ -2061,7 +2089,7 @@ func TestOfflineWorkflowMatrixTwoDatabasesTwoModesWithAutoLabelsAndReferences(t 
 				LabelName: "PAL1", PhgoAliases: "PAL1; ATPAL1", GeneID: "AT2G37040", ProteinID: "AT2G37040.1", Sequence: "MPEPTIDE",
 			}},
 			rows:        []model.BlastResultRow{{SourceDatabase: "phytozome", BlastProgram: "BLASTP", Protein: "AT5G62380.1", TranscriptID: "AT5G62380.1", SequenceID: "AT5G62380.1", TargetLength: 320}},
-			wantHitType: "phytozome synonyms",
+			wantHitType: "symbolname database",
 		},
 		{
 			name:     "lemna-blast",
@@ -2073,7 +2101,7 @@ func TestOfflineWorkflowMatrixTwoDatabasesTwoModesWithAutoLabelsAndReferences(t 
 				LabelName: "SOURCE_C4H", PhgoAliases: "SOURCE_C4H; CYP73A5", GeneID: "Sp9509d020g000340", ProteinID: "Sp9509d020g000340_T001", Sequence: "MPEPTIDE",
 			}},
 			rows:        []model.BlastResultRow{{SourceDatabase: "lemna", BlastProgram: "BLASTP", Protein: "Sp9509d020g000340_T001", TranscriptID: "Sp9509d020g000340_T001", Defline: "cinnamate 4-hydroxylase (C4H)", TargetLength: 505}},
-			wantHitType: "lemna local aliases",
+			wantHitType: "symbolname database",
 		},
 	}
 	for _, tc := range blastCases {
@@ -2495,7 +2523,7 @@ func TestKeywordRowsSearchTypeFallsBackToClassifiedInputTypeWhenRowsEmpty(t *tes
 	}
 }
 
-func TestAutoIdentifyLemnaKeywordLabelsPrefersPhytozomeCandidates(t *testing.T) {
+func TestAutoIdentifyLemnaKeywordLabelsUseSymbolNameDatabaseOnly(t *testing.T) {
 	lookupSource := &countingKeywordMapSource{
 		keywordMapSource: keywordMapSource{
 			name: "phytozome",
@@ -2529,8 +2557,8 @@ func TestAutoIdentifyLemnaKeywordLabelsPrefersPhytozomeCandidates(t *testing.T) 
 	if len(got) != 1 || len(got[0].Aliases) == 0 {
 		t.Fatalf("expected lemna keyword aliases: %#v", got)
 	}
-	if got[0].Aliases[0] != "CYP73A5" || got[0].SourceType != "phytozome synonyms" {
-		t.Fatalf("label aliases/type = %#v/%q, want ranked phytozome synonyms", got[0].Aliases, got[0].SourceType)
+	if got[0].Aliases[0] != "CYP73A5" || got[0].SourceType != "symbolname database" {
+		t.Fatalf("label aliases/type = %#v/%q, want symbolname database", got[0].Aliases, got[0].SourceType)
 	}
 }
 
@@ -2550,12 +2578,12 @@ func TestAutoIdentifyLemnaKeywordLabelsFallsBackToLocalAliases(t *testing.T) {
 	if len(got) != 1 || len(got[0].Aliases) == 0 || got[0].Aliases[0] != "C4H" {
 		t.Fatalf("expected lemna local alias resolved through gene_info: %#v", got)
 	}
-	if got[0].SourceType != "lemna local aliases" {
-		t.Fatalf("SourceType = %q, want lemna local aliases", got[0].SourceType)
+	if got[0].SourceType != "symbolname database" {
+		t.Fatalf("SourceType = %q, want symbolname database", got[0].SourceType)
 	}
 }
 
-func TestAutoIdentifyTAIRKeywordLabelsPrefersBatchedPhytozomeCandidates(t *testing.T) {
+func TestAutoIdentifyTAIRKeywordLabelsUseSymbolNameDatabaseOnly(t *testing.T) {
 	lookupSource := &countingKeywordMapSource{
 		keywordMapSource: keywordMapSource{
 			name: "phytozome",
@@ -2588,13 +2616,13 @@ func TestAutoIdentifyTAIRKeywordLabelsPrefersBatchedPhytozomeCandidates(t *testi
 	if len(got) != 1 || len(got[0].Aliases) == 0 {
 		t.Fatalf("expected TAIR keyword aliases: %#v", got)
 	}
-	if got[0].Aliases[0] != "CYP73A5" || got[0].SourceType != "phytozome synonyms" {
-		t.Fatalf("label aliases/type = %#v/%q, want ranked phytozome synonyms", got[0].Aliases, got[0].SourceType)
+	if got[0].Aliases[0] != "CYP73A5" || got[0].SourceType != "symbolname database" {
+		t.Fatalf("label aliases/type = %#v/%q, want symbolname database", got[0].Aliases, got[0].SourceType)
 	}
 	lookupSource.mu.Lock()
 	defer lookupSource.mu.Unlock()
-	if lookupSource.fetchCount["AT2G30490.1"] != 1 {
-		t.Fatalf("phytozome lookup count = %d, want 1 deduplicated lookup", lookupSource.fetchCount["AT2G30490.1"])
+	if lookupSource.fetchCount["AT2G30490.1"] != 0 {
+		t.Fatalf("symbolname auto-identify should not query Phytozome, got %d", lookupSource.fetchCount["AT2G30490.1"])
 	}
 }
 
@@ -2612,14 +2640,36 @@ func TestAutoIdentifyTAIRKeywordLabelsFallsBackToOtherNames(t *testing.T) {
 
 	got := w.autoIdentifyTAIRKeywordLabelsWithLookup(context.Background(), groups, nil)
 	if len(got) != 1 || len(got[0].Aliases) == 0 || got[0].Aliases[0] != "CYP73A5" {
-		t.Fatalf("expected TAIR other_names fallback: %#v", got)
+		t.Fatalf("expected TAIR symbolname database aliases: %#v", got)
 	}
-	if got[0].SourceType != "tair other_names" {
-		t.Fatalf("SourceType = %q, want tair other_names", got[0].SourceType)
+	if got[0].SourceType != "symbolname database" {
+		t.Fatalf("SourceType = %q, want symbolname database", got[0].SourceType)
 	}
 }
 
-func TestAutoIdentifyLemnaKeywordLabelsDeduplicatesPhytozomeLookups(t *testing.T) {
+func TestAutoIdentifyTAIRKeywordLabelsUsesLocalSymbolDatabaseFromAGI(t *testing.T) {
+	w := &BlastWizard{source: tair.NewClient(nil)}
+	groups := []model.KeywordSearchGroup{{
+		SearchTerm: "PAL",
+		Rows: []model.KeywordResultRow{{
+			SourceDatabase: "tair",
+			GeneIdentifier: "AT2G37040",
+			TranscriptID:   "AT2G37040.1",
+			SequenceID:     "AT2G37040.1",
+			Description:    "phenylalanine ammonia-lyase",
+		}},
+	}}
+
+	got := w.autoIdentifyTAIRKeywordLabelsWithLookup(context.Background(), groups, nil)
+	if len(got) != 1 || len(got[0].Aliases) == 0 {
+		t.Fatalf("expected TAIR AGI to resolve through local symbol database: %#v", got)
+	}
+	if got[0].Aliases[0] != "PAL1" {
+		t.Fatalf("TAIR local symbol aliases = %#v, want PAL1 first", got[0].Aliases)
+	}
+}
+
+func TestAutoIdentifyLemnaKeywordLabelsDoesNotQueryPhytozome(t *testing.T) {
 	lookupSource := &countingKeywordMapSource{
 		keywordMapSource: keywordMapSource{
 			name: "phytozome",
@@ -2662,12 +2712,12 @@ func TestAutoIdentifyLemnaKeywordLabelsDeduplicatesPhytozomeLookups(t *testing.T
 	}
 	lookupSource.mu.Lock()
 	defer lookupSource.mu.Unlock()
-	if lookupSource.fetchCount["AT2G30490.1"] != 1 {
-		t.Fatalf("phytozome lookup count = %d, want 1", lookupSource.fetchCount["AT2G30490.1"])
+	if lookupSource.fetchCount["AT2G30490.1"] != 0 {
+		t.Fatalf("symbolname auto-identify should not query Phytozome, got %d", lookupSource.fetchCount["AT2G30490.1"])
 	}
 }
 
-func TestAutoIdentifyLemnaKeywordLabelsStillQueriesPhytozomeWhenLocalAliasesExist(t *testing.T) {
+func TestAutoIdentifyLemnaKeywordLabelsRanksLocalAliasesWithoutPhytozome(t *testing.T) {
 	lookupSource := &countingKeywordMapSource{
 		keywordMapSource: keywordMapSource{
 			name: "phytozome",
@@ -2700,12 +2750,12 @@ func TestAutoIdentifyLemnaKeywordLabelsStillQueriesPhytozomeWhenLocalAliasesExis
 
 	got := w.autoIdentifyLemnaKeywordLabels(context.Background(), model.SpeciesCandidate{GenomeLabel: "Spirodela polyrhiza 9509 REF-OXFORD-3.0"}, groups, lookupSource)
 	if len(got) != 1 || got[0].Aliases[0] != "CYP73A5" {
-		t.Fatalf("expected phytozome alias-derived label before local fallback: %#v", got)
+		t.Fatalf("expected local fields ranked by symbolname database: %#v", got)
 	}
 	lookupSource.mu.Lock()
 	defer lookupSource.mu.Unlock()
-	if lookupSource.fetchCount["AT2G30490.1"] != 1 {
-		t.Fatalf("phytozome lookup count = %d, want 1", lookupSource.fetchCount["AT2G30490.1"])
+	if lookupSource.fetchCount["AT2G30490.1"] != 0 {
+		t.Fatalf("symbolname auto-identify should not query Phytozome, got %d", lookupSource.fetchCount["AT2G30490.1"])
 	}
 }
 
@@ -5032,8 +5082,8 @@ func TestSupplementBlastAliasesPreservesKeywordQueryLabels(t *testing.T) {
 	if src.fetchCount["AT2G37040.1"] != 0 {
 		t.Fatalf("keyword item with reusable aliases triggered label lookup %d times", src.fetchCount["AT2G37040.1"])
 	}
-	if src.fetchCount["AT2G30490.1"] != 1 {
-		t.Fatalf("missing-label item lookup count = %d, want 1", src.fetchCount["AT2G30490.1"])
+	if src.fetchCount["AT2G30490.1"] != 0 {
+		t.Fatalf("missing-label item lookup count = %d, want 0", src.fetchCount["AT2G30490.1"])
 	}
 }
 
@@ -5078,7 +5128,7 @@ func TestAutoIdentifyBlastLabelResultForPhgoFastaKeepsPinnedLabelAndRanksAliases
 	}
 }
 
-func TestAutoIdentifyBlastLabelResultFromPhytozomeReusesWizardCache(t *testing.T) {
+func TestAutoIdentifyBlastLabelResultDoesNotQueryPhytozomeRows(t *testing.T) {
 	lookupSource := &countingKeywordMapSource{
 		keywordMapSource: keywordMapSource{
 			name: "phytozome",
@@ -5092,13 +5142,15 @@ func TestAutoIdentifyBlastLabelResultFromPhytozomeReusesWizardCache(t *testing.T
 	}
 	item := blastQueryItem{
 		QuerySource: &model.QuerySequenceSource{
-			ProteinID: "AT2G30490.1",
+			SourceDatabase: "tair",
+			ProteinID:      "AT2G30490.1",
+			TranscriptID:   "AT2G30490.1",
 		},
 	}
 	species := model.SpeciesCandidate{ProteomeID: 167, JBrowseName: "Athaliana_TAIR10", GenomeLabel: "Arabidopsis thaliana TAIR10"}
 
-	first := w.autoIdentifyBlastLabelResultFromPhytozome(context.Background(), lookupSource, species, item)
-	second := w.autoIdentifyBlastLabelResultFromPhytozome(context.Background(), lookupSource, species, item)
+	first := w.autoIdentifyBlastLabelResult(context.Background(), lookupSource, species, item)
+	second := w.autoIdentifyBlastLabelResult(context.Background(), lookupSource, species, item)
 	if strings.TrimSpace(first.Label) == "" || strings.TrimSpace(second.Label) == "" {
 		t.Fatalf("expected non-empty cached label results: first=%#v second=%#v", first, second)
 	}
@@ -5107,12 +5159,12 @@ func TestAutoIdentifyBlastLabelResultFromPhytozomeReusesWizardCache(t *testing.T
 	}
 	lookupSource.mu.Lock()
 	defer lookupSource.mu.Unlock()
-	if lookupSource.fetchCount["AT2G30490.1"] != 1 {
-		t.Fatalf("phytozome label lookup count = %d, want 1", lookupSource.fetchCount["AT2G30490.1"])
+	if lookupSource.fetchCount["AT2G30490.1"] != 0 {
+		t.Fatalf("symbolname auto-identify should not query Phytozome, got %d", lookupSource.fetchCount["AT2G30490.1"])
 	}
 }
 
-func TestAutoIdentifyBlastLabelResultFromPhytozomeDeduplicatesConcurrentLookups(t *testing.T) {
+func TestAutoIdentifyBlastLabelResultConcurrentCallsDoNotQueryPhytozomeRows(t *testing.T) {
 	lookupSource := &countingKeywordMapSource{
 		keywordMapSource: keywordMapSource{
 			name: "phytozome",
@@ -5127,7 +5179,9 @@ func TestAutoIdentifyBlastLabelResultFromPhytozomeDeduplicatesConcurrentLookups(
 	}
 	item := blastQueryItem{
 		QuerySource: &model.QuerySequenceSource{
-			ProteinID: "AT2G30490.1",
+			SourceDatabase: "tair",
+			ProteinID:      "AT2G30490.1",
+			TranscriptID:   "AT2G30490.1",
 		},
 	}
 	species := model.SpeciesCandidate{ProteomeID: 167, JBrowseName: "Athaliana_TAIR10", GenomeLabel: "Arabidopsis thaliana TAIR10"}
@@ -5137,7 +5191,7 @@ func TestAutoIdentifyBlastLabelResultFromPhytozomeDeduplicatesConcurrentLookups(
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			results[idx] = w.autoIdentifyBlastLabelResultFromPhytozome(context.Background(), lookupSource, species, item)
+			results[idx] = w.autoIdentifyBlastLabelResult(context.Background(), lookupSource, species, item)
 		}(i)
 	}
 	wg.Wait()
@@ -5148,8 +5202,8 @@ func TestAutoIdentifyBlastLabelResultFromPhytozomeDeduplicatesConcurrentLookups(
 	}
 	lookupSource.mu.Lock()
 	defer lookupSource.mu.Unlock()
-	if lookupSource.fetchCount["AT2G30490.1"] != 1 {
-		t.Fatalf("phytozome concurrent label lookup count = %d, want 1", lookupSource.fetchCount["AT2G30490.1"])
+	if lookupSource.fetchCount["AT2G30490.1"] != 0 {
+		t.Fatalf("symbolname auto-identify should not query Phytozome, got %d", lookupSource.fetchCount["AT2G30490.1"])
 	}
 }
 

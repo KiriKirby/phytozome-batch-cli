@@ -616,7 +616,7 @@ func (w *BlastWizard) autoIdentifyMainBlastGeneLocus(ctx context.Context, lookup
 			return locus
 		}
 	}
-	for _, labelSpecies := range w.phytozomeKeywordLabelSpeciesForItem(ctx, lookupSource, selected, item) {
+	for _, labelSpecies := range w.mainBlastGeneLocusLookupSpecies(ctx, lookupSource, selected, item) {
 		rowsByTerm := w.fetchKeywordRowsByTerms(ctx, lookupSource, labelSpecies, blastLabelSearchTerms(item))
 		for _, term := range blastLabelSearchTerms(item) {
 			if locus := bestMainBlastGeneLocusFromKeywordRows(rowsByTerm[strings.ToLower(strings.TrimSpace(term))]); locus != "" {
@@ -625,6 +625,64 @@ func (w *BlastWizard) autoIdentifyMainBlastGeneLocus(ctx context.Context, lookup
 		}
 	}
 	return ""
+}
+
+func (w *BlastWizard) mainBlastGeneLocusLookupSpecies(ctx context.Context, lookupSource source.DataSource, selected model.SpeciesCandidate, item blastQueryItem) []model.SpeciesCandidate {
+	out := make([]model.SpeciesCandidate, 0, 2)
+	add := func(candidate model.SpeciesCandidate) {
+		if candidate == (model.SpeciesCandidate{}) {
+			return
+		}
+		for _, existing := range out {
+			if existing.ProteomeID == candidate.ProteomeID && strings.EqualFold(existing.JBrowseName, candidate.JBrowseName) {
+				return
+			}
+		}
+		out = append(out, candidate)
+	}
+	candidates, err := w.speciesCandidatesForSource(ctx, lookupSource, nil)
+	if err != nil {
+		add(selected)
+		return out
+	}
+	if item.QuerySource != nil {
+		if item.QuerySource.SourceJBrowseName != "" {
+			if species, ok := findSpeciesCandidateByJBrowseName(candidates, item.QuerySource.SourceJBrowseName); ok {
+				add(species)
+				return out
+			}
+		}
+		if item.QuerySource.SourceProteomeID > 0 {
+			for _, candidate := range candidates {
+				if candidate.ProteomeID == item.QuerySource.SourceProteomeID {
+					add(candidate)
+					return out
+				}
+			}
+		}
+		for _, value := range []string{item.QuerySource.SourceGenomeLabel, item.QuerySource.OrganismShort, item.QuerySource.Annotation} {
+			if species, ok := matchPhytozomeSpeciesForFastaHeader(value, candidates); ok {
+				add(species)
+				return out
+			}
+		}
+		if strings.EqualFold(strings.TrimSpace(item.QuerySource.SourceDatabase), "fasta") {
+			if header, _ := splitFastaHeaderAndSequence(item.RawInput); header != "" {
+				if species, ok := matchPhytozomeSpeciesForFastaHeader(header, candidates); ok {
+					add(species)
+					return out
+				}
+			}
+		}
+	}
+	if _, ok := w.source.(*lemna.Client); ok {
+		if species, ok := matchPhytozomeSpeciesForLemna(selected, candidates); ok {
+			add(species)
+			return out
+		}
+	}
+	add(selected)
+	return out
 }
 
 func mainBlastGeneLocusFromQuerySource(source *model.QuerySequenceSource) string {

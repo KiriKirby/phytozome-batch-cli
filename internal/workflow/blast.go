@@ -4986,14 +4986,7 @@ func (w *BlastWizard) autoIdentifyBlastHitLabelsWithProgress(ctx context.Context
 		return out
 	}
 	sourceLabel := blastQueryItemLabelName(item)
-	labelSpecies := selected
-	if species, ok := w.phytozomeKeywordLabelSpecies(ctx, selected); ok {
-		labelSpecies = species
-	}
-	phytozomeSource, _ := w.phytozomeHitLabelSource(labelSpecies)
-	progress(0, fmt.Sprintf("Prefetching BLAST hit label candidates for %d rows...", len(rowsNeedingLabel)))
-	keywordRowsByTerm := w.fetchBlastHitKeywordRows(ctx, phytozomeSource, labelSpecies, rowsNeedingLabel)
-	lemnaKeywordRowsByTerm := w.fetchBlastHitLemnaKeywordRows(ctx, selected, rowsNeedingLabel)
+	progress(0, fmt.Sprintf("Collecting BLAST hit symbol requests for %d rows...", len(rowsNeedingLabel)))
 	taskTimestamp := time.Now().UTC().Format(time.RFC3339Nano)
 	identificationsByKey := make(map[string]blastHitLabelIdentification, len(out))
 	aliasRequests := make([]labelname.AliasRankRequest, 0, len(rowsNeedingLabel))
@@ -5008,7 +5001,7 @@ func (w *BlastWizard) autoIdentifyBlastHitLabelsWithProgress(ctx context.Context
 			identificationsByKey[cacheKey] = cached
 			continue
 		}
-		request, labelType, done := blastHitLabelAliasRankRequest(row, sourceLabel, keywordRowsByTerm, lemnaKeywordRowsByTerm, taskTimestamp)
+		request, labelType, done := blastHitLabelAliasRankRequest(row, sourceLabel, nil, nil, taskTimestamp)
 		if done {
 			identificationsByKey[cacheKey] = blastHitLabelIdentification{
 				LabelType: labelType,
@@ -5050,7 +5043,7 @@ func (w *BlastWizard) autoIdentifyBlastHitLabelsWithProgress(ctx context.Context
 		cacheKey := blastHitLabelIdentificationCacheKey(out[i], sourceLabel)
 		identification, ok := identificationsByKey[cacheKey]
 		if !ok {
-			identification = autoIdentifyBlastHitLabelFromKeywordRows(out[i], sourceLabel, keywordRowsByTerm, lemnaKeywordRowsByTerm, taskTimestamp)
+			identification = autoIdentifyBlastHitLabelFromKeywordRows(out[i], sourceLabel, nil, nil, taskTimestamp)
 			identificationsByKey[cacheKey] = identification
 			w.storeBlastHitLabelIdentification(cacheKey, identification)
 		}
@@ -5066,19 +5059,6 @@ func (w *BlastWizard) autoIdentifyBlastHitLabelsWithProgress(ctx context.Context
 	return out
 }
 
-func (w *BlastWizard) phytozomeHitLabelSource(selected model.SpeciesCandidate) (source.DataSource, bool) {
-	if w == nil || w.source == nil {
-		return nil, false
-	}
-	if strings.EqualFold(strings.TrimSpace(w.source.Name()), "phytozome") {
-		return w.source, true
-	}
-	if selected.ProteomeID == 0 && strings.TrimSpace(selected.JBrowseName) == "" {
-		return nil, false
-	}
-	return phytozome.NewClient(w.httpClient), true
-}
-
 func blastRowsNeedingHitLabel(rows []model.BlastResultRow) []model.BlastResultRow {
 	out := make([]model.BlastResultRow, 0, len(rows))
 	for _, row := range rows {
@@ -5087,32 +5067,6 @@ func blastRowsNeedingHitLabel(rows []model.BlastResultRow) []model.BlastResultRo
 		}
 	}
 	return out
-}
-
-func (w *BlastWizard) fetchBlastHitKeywordRows(ctx context.Context, phytozomeSource source.DataSource, selected model.SpeciesCandidate, rows []model.BlastResultRow) map[string][]model.KeywordResultRow {
-	terms := make([]string, 0, len(rows)*2)
-	for _, row := range rows {
-		terms = append(terms, blastHitLabelSearchTerms(row)...)
-	}
-	return w.fetchKeywordRowsByTerms(ctx, phytozomeSource, selected, terms)
-}
-
-func (w *BlastWizard) fetchBlastHitLemnaKeywordRows(ctx context.Context, selected model.SpeciesCandidate, rows []model.BlastResultRow) map[string][]model.KeywordResultRow {
-	terms := make([]string, 0, len(rows)*2)
-	for _, row := range rows {
-		if strings.EqualFold(strings.TrimSpace(row.SourceDatabase), "lemna") {
-			terms = append(terms, blastHitLabelSearchTerms(row)...)
-		}
-	}
-	terms = uniqueStrings(terms)
-	if len(terms) == 0 {
-		return nil
-	}
-	lookupSource := w.source
-	if lookupSource == nil || !strings.EqualFold(strings.TrimSpace(lookupSource.Name()), "lemna") {
-		lookupSource = lemna.NewClient(w.httpClient)
-	}
-	return w.fetchKeywordRowsByTerms(ctx, lookupSource, selected, terms)
 }
 
 type blastHitLabelIdentification struct {
@@ -5173,54 +5127,7 @@ func blastHitLabelAliasRankRequest(row model.BlastResultRow, sourceLabel string,
 	if taskTimestamp == "" {
 		taskTimestamp = time.Now().UTC().Format(time.RFC3339Nano)
 	}
-	for _, term := range blastHitLabelSearchTerms(row) {
-		rows := keywordRowsByTerm[strings.ToLower(strings.TrimSpace(term))]
-		for _, candidateRows := range [][]model.KeywordResultRow{
-			filterKeywordRowsForBlastHit(rows, row),
-			rows,
-		} {
-			candidates, labelType := blastHitPhytozomeLabelCandidates(candidateRows)
-			if len(candidates) == 0 {
-				continue
-			}
-			return aliasRankRequestFromKeywordRows(taskTimestamp, candidates, candidateRows), labelType, false
-		}
-	}
-	if aliases := lemnaLocalBlastHitKeywordAliasCandidates(row, lemnaKeywordRowsByTerm); len(aliases) > 0 {
-		return aliasRankRequestFromBlastRow(taskTimestamp, row, aliases), "lemna local aliases", false
-	}
-	if aliases := lemnaLocalBlastHitAliasCandidates(row); len(aliases) > 0 {
-		return aliasRankRequestFromBlastRow(taskTimestamp, row, aliases), "lemna local aliases", false
-	}
-	if label := strings.TrimSpace(sourceLabel); label != "" {
-		return labelname.AliasRankRequest{
-			TaskTimestamp: taskTimestamp,
-			Aliases:       []string{label},
-		}, "blast source labelname fallback", false
-	}
-	return labelname.AliasRankRequest{TaskTimestamp: taskTimestamp}, "not available", true
-}
-
-func lemnaLocalBlastHitKeywordAliasCandidates(row model.BlastResultRow, keywordRowsByTerm map[string][]model.KeywordResultRow) []string {
-	if !strings.EqualFold(strings.TrimSpace(row.SourceDatabase), "lemna") || len(keywordRowsByTerm) == 0 {
-		return nil
-	}
-	for _, term := range blastHitLabelSearchTerms(row) {
-		rows := keywordRowsByTerm[strings.ToLower(strings.TrimSpace(term))]
-		for _, candidateRows := range [][]model.KeywordResultRow{
-			filterKeywordRowsForBlastHit(rows, row),
-			rows,
-		} {
-			aliases := make([]string, 0, len(candidateRows)*4)
-			for _, candidate := range candidateRows {
-				aliases = append(aliases, lemnaLocalKeywordRowAliasCandidates(candidate)...)
-			}
-			if aliases = uniqueStrings(aliases); len(aliases) > 0 {
-				return aliases
-			}
-		}
-	}
-	return nil
+	return aliasRankRequestFromBlastRow(taskTimestamp, row, blastHitAliasCandidates(row)), "symbolname database", false
 }
 
 func blastHitLabelIdentificationCacheKey(row model.BlastResultRow, sourceLabel string) string {
@@ -5241,29 +5148,25 @@ func blastHitLabelIdentificationCacheKey(row model.BlastResultRow, sourceLabel s
 	return strings.Join(parts, "\x00")
 }
 
-func blastHitPhytozomeLabelCandidates(rows []model.KeywordResultRow) ([]string, string) {
-	return phytozomeAliasCandidatesFromKeywordRows(rows)
-}
-
-func phytozomeAliasCandidatesFromKeywordRows(rows []model.KeywordResultRow) ([]string, string) {
-	synonyms := make([]string, 0, len(rows)*2)
-	symbols := make([]string, 0, len(rows)*2)
-	autoDefine := make([]string, 0, len(rows)*2)
-	for _, row := range rows {
-		synonyms = append(synonyms, labelname.SplitAliases(row.Synonyms)...)
-		symbols = append(symbols, labelname.SplitAliases(row.Symbols)...)
-		autoDefine = append(autoDefine, labelname.AutoDefineCandidates(row.AutoDefine)...)
+func blastHitAliasCandidates(row model.BlastResultRow) []string {
+	aliases := make([]string, 0, 16)
+	aliases = append(aliases, row.LabelName)
+	aliases = append(aliases, labelname.SplitAliases(row.PhgoAliases)...)
+	aliases = append(aliases, labelname.SplitAliases(row.UniProtGeneNames)...)
+	aliases = append(aliases, labelname.SplitAliases(row.UniProtKeywords)...)
+	aliases = append(aliases, labelname.SplitAliases(row.UniProtDomain)...)
+	aliases = append(aliases, labelname.SplitAliases(row.UniProtRegion)...)
+	aliases = append(aliases, labelname.SplitAliases(row.InterProEntryName)...)
+	aliases = append(aliases, labelname.AutoDefineCandidates(row.Defline)...)
+	aliases = append(aliases, labelname.AutoDefineCandidates(row.UniProtProteinName)...)
+	aliases = append(aliases, labelname.AutoDefineCandidates(row.UniProtFunction)...)
+	if strings.EqualFold(strings.TrimSpace(row.SourceDatabase), "lemna") {
+		aliases = append(aliases, lemnaLocalBlastHitAliasCandidates(row)...)
 	}
-	if synonyms = uniqueStrings(synonyms); len(synonyms) > 0 {
-		return synonyms, "phytozome synonyms"
+	if strings.EqualFold(strings.TrimSpace(row.SourceDatabase), "tair") {
+		aliases = append(aliases, tairBlastHitAliasCandidates(row)...)
 	}
-	if symbols = uniqueStrings(symbols); len(symbols) > 0 {
-		return symbols, "phytozome symbols"
-	}
-	if autoDefine = uniqueStrings(autoDefine); len(autoDefine) > 0 {
-		return autoDefine, "phytozome auto_define"
-	}
-	return nil, ""
+	return uniqueStrings(aliases)
 }
 
 func blastHitLabelSearchTerms(row model.BlastResultRow) []string {
@@ -5300,6 +5203,31 @@ func lemnaLocalBlastHitAliasCandidates(row model.BlastResultRow) []string {
 		Aliases:     row.UniProtGeneNames,
 		AutoDefine:  firstNonEmpty(row.Defline, row.UniProtProteinName),
 	})
+}
+
+func tairBlastHitAliasCandidates(row model.BlastResultRow) []string {
+	aliases := make([]string, 0, 8)
+	aliases = append(aliases, row.LabelName)
+	aliases = append(aliases, labelname.SplitAliases(row.PhgoAliases)...)
+	aliases = append(aliases, labelname.SplitAliases(row.UniProtGeneNames)...)
+	aliases = append(aliases, labelname.AutoDefineCandidates(row.Defline)...)
+	aliases = append(aliases, labelname.AutoDefineCandidates(row.UniProtProteinName)...)
+	return uniqueStrings(aliases)
+}
+
+func tairBlastHitDBXrefs(row model.BlastResultRow) []string {
+	out := make([]string, 0, 8)
+	for _, value := range []string{row.Protein, row.SubjectID, row.TranscriptID, row.SequenceID} {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		out = append(out, "TAIR:"+value)
+		if gene := stripTranscriptSuffix(value); gene != "" && !strings.EqualFold(gene, value) {
+			out = append(out, "TAIR:"+gene)
+		}
+	}
+	return uniqueStrings(out)
 }
 
 func filterKeywordRowsForBlastHit(rows []model.KeywordResultRow, hit model.BlastResultRow) []model.KeywordResultRow {
@@ -7277,11 +7205,9 @@ func (w *BlastWizard) autoIdentifyBlastLabelsWithProgress(ctx context.Context, s
 		if err := w.ensureSymbolNameDatabaseWithUpdate(labelCtx, update, update != nil || !w.suppressTaskModals); err != nil {
 			return nil, err
 		}
-		phytozomeSource := phytozome.NewClient(w.httpClient)
 		out := cloneBlastQueryItems(items)
 		taskTimestamp := time.Now().UTC().Format(time.RFC3339Nano)
 		lockedLabels := blastAutoIdentifyLockedLabels(out)
-		w.prefetchBlastLabelKeywordRows(labelCtx, phytozomeSource, selected, out, autoIndexes)
 		workerCount := blastLabelWorkerCount(len(autoIndexes))
 		type labelResult struct {
 			index   int
@@ -7295,7 +7221,7 @@ func (w *BlastWizard) autoIdentifyBlastLabelsWithProgress(ctx context.Context, s
 			go func() {
 				defer workers.Done()
 				for idx := range jobs {
-					result := w.autoIdentifyBlastLabelResultForTask(labelCtx, phytozomeSource, selected, out[idx], taskTimestamp, idx)
+					result := w.autoIdentifyBlastLabelResultForTask(labelCtx, nil, selected, out[idx], taskTimestamp, idx)
 					results <- labelResult{
 						index:   idx,
 						request: result.Request,
@@ -7350,7 +7276,7 @@ func (w *BlastWizard) autoIdentifyBlastLabelsWithProgress(ctx context.Context, s
 	return tui.RunTaskValueContext(tui.TaskPage{
 		Path:        w.tuiPath("BLAST", "Auto identify"),
 		Title:       "Auto identifying BLAST symbol names",
-		Description: "Reading Phytozome aliases for BLAST query labels.",
+		Description: "Ranking BLAST query labels through the local symbol name database.",
 		Initial:     "Auto identifying BLAST symbol names...",
 		CancelError: prompt.ErrBackToQueryInput,
 	}, run)
@@ -7386,7 +7312,7 @@ func (w *BlastWizard) supplementBlastAliasesWithProgress(ctx context.Context, se
 		if err := w.ensureSymbolNameDatabaseWithUpdate(mergeContexts(ctx, taskCtx), update, update != nil || !w.suppressTaskModals); err != nil {
 			return nil, err
 		}
-		return w.supplementBlastAliases(ctx, taskCtx, phytozome.NewClient(w.httpClient), selected, items, safeTaskUpdate(update))
+		return w.supplementBlastAliases(ctx, taskCtx, nil, selected, items, safeTaskUpdate(update))
 	}
 	if w.suppressTaskModals {
 		return run(ctx, nil)
@@ -7411,7 +7337,6 @@ func (w *BlastWizard) supplementBlastAliases(ctx context.Context, taskCtx contex
 		return out, nil
 	}
 	taskTimestamp := time.Now().UTC().Format(time.RFC3339Nano)
-	w.prefetchBlastLabelKeywordRows(labelCtx, phytozomeSource, selected, out, aliasIndexes)
 	workerCount := blastLabelWorkerCount(len(aliasIndexes))
 	type aliasResult struct {
 		index   int
@@ -7425,7 +7350,7 @@ func (w *BlastWizard) supplementBlastAliases(ctx context.Context, taskCtx contex
 		go func() {
 			defer workers.Done()
 			for idx := range jobs {
-				result := w.autoIdentifyBlastLabelResultForTask(labelCtx, phytozomeSource, selected, out[idx], taskTimestamp, idx)
+				result := w.autoIdentifyBlastLabelResultForTask(labelCtx, nil, selected, out[idx], taskTimestamp, idx)
 				results <- aliasResult{
 					index:   idx,
 					request: result.Request,
@@ -7537,46 +7462,6 @@ func harmonizeAutoIdentifiedBlastLabelsWithLocks(items []blastQueryItem, lockedL
 	return out
 }
 
-func (w *BlastWizard) prefetchBlastLabelKeywordRows(ctx context.Context, phytozomeSource source.DataSource, selected model.SpeciesCandidate, items []blastQueryItem, indexes []int) {
-	if w == nil || phytozomeSource == nil || len(indexes) == 0 {
-		return
-	}
-	type labelPrefetchPlan struct {
-		species []model.SpeciesCandidate
-		terms   []string
-	}
-	plans := make([]labelPrefetchPlan, 0, len(indexes))
-	for _, idx := range indexes {
-		if idx < 0 || idx >= len(items) {
-			continue
-		}
-		itemTerms := blastLabelSearchTerms(items[idx])
-		if len(itemTerms) == 0 {
-			continue
-		}
-		labelSpecies := w.phytozomeKeywordLabelSpeciesForItem(ctx, phytozomeSource, selected, items[idx])
-		if len(labelSpecies) == 0 {
-			continue
-		}
-		plans = append(plans, labelPrefetchPlan{species: labelSpecies, terms: itemTerms})
-	}
-	if len(plans) == 0 {
-		return
-	}
-	speciesTerms := make(map[string][]string, len(plans))
-	speciesByKey := make(map[string]model.SpeciesCandidate)
-	for _, plan := range plans {
-		for _, labelSpecies := range plan.species {
-			key := w.keywordSpeciesKey(labelSpecies)
-			speciesByKey[key] = labelSpecies
-			speciesTerms[key] = append(speciesTerms[key], plan.terms...)
-		}
-	}
-	for key, speciesTermsForKey := range speciesTerms {
-		w.fetchKeywordRowsByTerms(ctx, phytozomeSource, speciesByKey[key], speciesTermsForKey)
-	}
-}
-
 func (w *BlastWizard) keywordSpeciesKey(selected model.SpeciesCandidate) string {
 	return strings.Join([]string{
 		strconv.Itoa(selected.ProteomeID),
@@ -7637,53 +7522,6 @@ func looksLikeFamilyMemberStyleLabel(value string) bool {
 	return hasLetter && hasDigit
 }
 
-func blastLabelFallbackSpecies(selected model.SpeciesCandidate, candidates []model.SpeciesCandidate) (model.SpeciesCandidate, bool) {
-	if species, ok := matchPhytozomeSpeciesForLemna(selected, candidates); ok {
-		return species, true
-	}
-	return model.SpeciesCandidate{}, false
-}
-
-func (w *BlastWizard) autoIdentifyBlastLabelFromPhytozome(ctx context.Context, phytozomeSource source.DataSource, species model.SpeciesCandidate, item blastQueryItem) string {
-	return w.autoIdentifyBlastLabelResultFromPhytozome(ctx, phytozomeSource, species, item).Label
-}
-
-func (w *BlastWizard) autoIdentifyBlastLabelResultFromPhytozome(ctx context.Context, phytozomeSource source.DataSource, species model.SpeciesCandidate, item blastQueryItem) blastAutoLabelResult {
-	if cached, ok := w.cachedBlastLabelLookup(phytozomeSource, species, item); ok {
-		return cached
-	}
-	keywordRowsByTerm := w.fetchKeywordRowsByTerms(ctx, phytozomeSource, species, blastLabelSearchTerms(item))
-	candidates, aliases := blastLabelCandidatesFromKeywordRows(item, keywordRowsByTerm)
-	request := aliasRankRequestFromBlastItem(time.Now().UTC().Format(time.RFC3339Nano), 0, item, append(aliases, candidates...))
-	ranked := labelname.RankAliases(request)
-	label := ""
-	if len(ranked.RankedAliases) > 0 {
-		label = ranked.RankedAliases[0]
-	}
-	request.Aliases = ranked.RankedAliases
-	result := blastAutoLabelResult{
-		Label:         label,
-		Aliases:       ranked.RankedAliases,
-		Request:       request,
-		TaskTimestamp: ranked.TaskTimestamp,
-	}
-	w.storeBlastLabelLookup(phytozomeSource, species, item, result)
-	return result
-}
-
-func blastLabelCandidatesFromKeywordRows(item blastQueryItem, keywordRowsByTerm map[string][]model.KeywordResultRow) ([]string, []string) {
-	candidates := make([]string, 0, 8)
-	aliases := make([]string, 0, 16)
-	for _, term := range blastLabelSearchTerms(item) {
-		rows := keywordRowsByTerm[strings.ToLower(strings.TrimSpace(term))]
-		if label := bestKeywordRowLabel(rows); label != "" {
-			candidates = append(candidates, label)
-		}
-		aliases = append(aliases, keywordAliasesFromRows(rows)...)
-	}
-	return candidates, aliases
-}
-
 func (w *BlastWizard) autoIdentifyBlastLabel(ctx context.Context, phytozomeSource source.DataSource, selected model.SpeciesCandidate, item blastQueryItem) string {
 	return w.autoIdentifyBlastLabelResult(ctx, phytozomeSource, selected, item).Label
 }
@@ -7696,34 +7534,10 @@ func (w *BlastWizard) autoIdentifyBlastLabelResultForTask(ctx context.Context, p
 	aliases := make([]string, 0, 16)
 	pinnedLabel := strings.TrimSpace(item.LabelName)
 	aliases = append(aliases, pinnedLabel)
-	if pinnedLabel == "" && blastQueryItemSourceDatabase(item) == "lemna" {
-		aliases = append(aliases, w.blastQueryPhytozomeAliasCandidates(ctx, phytozomeSource, selected, item)...)
-		if len(uniqueStrings(aliases)) == 0 {
-			aliases = append(aliases, collectBlastItemAliasCandidates(item)...)
-		}
-	} else {
-		aliases = append(aliases, collectBlastItemAliasCandidates(item)...)
-		for _, labelSpecies := range w.phytozomeKeywordLabelSpeciesForItem(ctx, phytozomeSource, selected, item) {
-			result := w.autoIdentifyBlastLabelResultFromPhytozome(ctx, phytozomeSource, labelSpecies, item)
-			aliases = append(aliases, result.Aliases...)
-		}
-	}
+	aliases = append(aliases, collectBlastItemAliasCandidates(item)...)
 	aliases = uniqueStrings(aliases)
-	if len(aliases) == 0 {
-		aliases = append(aliases, fastaHeaderFallbackAliases(item)...)
-	}
 	request := aliasRankRequestFromBlastItem(taskTimestamp, itemIndex, item, aliases)
-	removeBlastItemHeaderFallbackFromAliasRankRequest(item, &request)
-	if pinnedLabel == "" && len(aliases) == 0 {
-		fallback := blastLabelIdentityFallback(item)
-		if item.QuerySource != nil {
-			request.GeneID = item.QuerySource.GeneID
-			request.TranscriptID = item.QuerySource.TranscriptID
-			request.ProteinID = firstNonEmpty(fallback, item.QuerySource.ProteinID)
-		} else {
-			request.ProteinID = fallback
-		}
-	}
+	excludeBlastItemHeaderLabelsFromAliasRankRequest(item, &request)
 	ranked := labelname.RankAliases(request)
 	label := ""
 	if pinnedLabel != "" {
@@ -7742,7 +7556,7 @@ func (w *BlastWizard) autoIdentifyBlastLabelResultForTask(ctx context.Context, p
 	}
 }
 
-func removeBlastItemHeaderFallbackFromAliasRankRequest(item blastQueryItem, request *labelname.AliasRankRequest) {
+func excludeBlastItemHeaderLabelsFromAliasRankRequest(item blastQueryItem, request *labelname.AliasRankRequest) {
 	if request == nil {
 		return
 	}
@@ -7783,6 +7597,9 @@ func aliasRankRequestFromBlastItem(taskTimestamp string, itemIndex int, item bla
 		return request
 	}
 	source := item.QuerySource
+	if taxID := symbolNameTaxIDForSourceDatabase(source.SourceDatabase, source.SourceGenomeLabel, source.OrganismShort); taxID != "" {
+		request.TaxID = taxID
+	}
 	request.Symbol = strings.TrimSpace(source.LabelName)
 	request.ProteinID = strings.TrimSpace(source.ProteinID)
 	request.GeneID = strings.TrimSpace(source.GeneID)
@@ -7790,15 +7607,17 @@ func aliasRankRequestFromBlastItem(taskTimestamp string, itemIndex int, item bla
 	request.SequenceID = strings.TrimSpace(source.PreferredSequenceID)
 	request.Synonyms = labelname.SplitAliases(source.Synonyms)
 	request.DBXrefs = compactStrings(source.UniProtAccession, source.OriginalInputURL, source.NormalizedURL)
+	request.DBXrefs = append(request.DBXrefs, querySourceDBXrefCandidates(source)...)
 	request.Description = strings.TrimSpace(firstNonEmpty(source.Annotation, source.AutoDefine))
 	request.SymbolAuthority = strings.TrimSpace(source.LabelName)
 	request.FullNameAuthority = strings.TrimSpace(source.Annotation)
 	request.OtherDesignations = append(labelname.SplitAliases(source.Aliases), labelname.SplitAliases(source.PhgoAliases)...)
+	request.DBXrefs = uniqueStrings(request.DBXrefs)
 	return request
 }
 
 func aliasRankRequestFromBlastRow(taskTimestamp string, row model.BlastResultRow, aliases []string) labelname.AliasRankRequest {
-	return labelname.AliasRankRequest{
+	request := labelname.AliasRankRequest{
 		TaskTimestamp:     taskTimestamp,
 		SearchTerm:        strings.Join(blastHitLabelSearchTerms(row), "; "),
 		Symbol:            strings.TrimSpace(row.LabelName),
@@ -7814,6 +7633,13 @@ func aliasRankRequestFromBlastRow(taskTimestamp string, row model.BlastResultRow
 		OtherDesignations: labelname.SplitAliases(strings.Join(compactStrings(row.UniProtKeywords, row.UniProtDomain, row.UniProtRegion, row.InterProEntryName), "; ")),
 		FeatureType:       strings.TrimSpace(row.InterProEntryType),
 	}
+	if strings.EqualFold(strings.TrimSpace(row.SourceDatabase), "tair") {
+		request.TaxID = "3702"
+		request.GeneID = firstNonEmpty(stripTranscriptSuffix(firstNonEmpty(row.TranscriptID, row.SequenceID, row.Protein, row.SubjectID)), request.GeneID)
+		request.DBXrefs = append(request.DBXrefs, tairBlastHitDBXrefs(row)...)
+	}
+	request.DBXrefs = uniqueStrings(request.DBXrefs)
+	return request
 }
 
 func aliasRankRequestFromKeywordRows(taskTimestamp string, aliases []string, rows []model.KeywordResultRow) labelname.AliasRankRequest {
@@ -7822,6 +7648,9 @@ func aliasRankRequestFromKeywordRows(taskTimestamp string, aliases []string, row
 		Aliases:       uniqueStrings(aliases),
 	}
 	for _, row := range rows {
+		if taxID := symbolNameTaxIDForSourceDatabase(row.SourceDatabase, row.Genome, row.SequenceHeaderLabel); taxID != "" {
+			request.TaxID = firstNonEmpty(request.TaxID, taxID)
+		}
 		request.SearchTerm = firstNonEmpty(request.SearchTerm, row.SearchTerm)
 		request.Symbol = firstNonEmpty(request.Symbol, row.LabelName, labelname.FirstAlias(row.Symbols))
 		request.ProteinID = firstNonEmpty(request.ProteinID, row.ProteinID)
@@ -7831,14 +7660,67 @@ func aliasRankRequestFromKeywordRows(taskTimestamp string, aliases []string, row
 		request.Synonyms = append(request.Synonyms, labelname.SplitAliases(row.Synonyms)...)
 		request.Synonyms = append(request.Synonyms, labelname.SplitAliases(row.Aliases)...)
 		request.DBXrefs = append(request.DBXrefs, compactStrings(row.UniProt, row.GeneReportURL)...)
+		request.DBXrefs = append(request.DBXrefs, keywordRowDBXrefCandidates(row)...)
 		request.Description = firstNonEmpty(request.Description, row.Description, row.Comments, row.AutoDefine)
 		request.FullNameAuthority = firstNonEmpty(request.FullNameAuthority, row.Description)
 		request.OtherDesignations = append(request.OtherDesignations, labelname.AutoDefineCandidates(row.AutoDefine)...)
+		request.OtherDesignations = append(request.OtherDesignations, labelname.AutoDefineCandidates(row.Description)...)
+		request.OtherDesignations = append(request.OtherDesignations, labelname.AutoDefineCandidates(row.Comments)...)
 	}
 	request.Synonyms = uniqueStrings(request.Synonyms)
 	request.DBXrefs = uniqueStrings(request.DBXrefs)
 	request.OtherDesignations = uniqueStrings(request.OtherDesignations)
 	return request
+}
+
+func keywordRowDBXrefCandidates(row model.KeywordResultRow) []string {
+	out := make([]string, 0, 8)
+	if strings.EqualFold(strings.TrimSpace(row.SourceDatabase), "tair") {
+		for _, value := range []string{row.GeneIdentifier, row.TranscriptID, row.ProteinID, row.SequenceID} {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			out = append(out, "TAIR:"+value)
+			if gene := stripTranscriptSuffix(value); gene != "" && !strings.EqualFold(gene, value) {
+				out = append(out, "TAIR:"+gene)
+			}
+		}
+	}
+	return uniqueStrings(out)
+}
+
+func querySourceDBXrefCandidates(source *model.QuerySequenceSource) []string {
+	if source == nil {
+		return nil
+	}
+	out := make([]string, 0, 8)
+	if strings.EqualFold(strings.TrimSpace(source.SourceDatabase), "tair") {
+		for _, value := range []string{source.GeneID, source.TranscriptID, source.ProteinID, source.PreferredSequenceID} {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			out = append(out, "TAIR:"+value)
+			if gene := stripTranscriptSuffix(value); gene != "" && !strings.EqualFold(gene, value) {
+				out = append(out, "TAIR:"+gene)
+			}
+		}
+	}
+	return uniqueStrings(out)
+}
+
+func symbolNameTaxIDForSourceDatabase(database string, values ...string) string {
+	db := strings.ToLower(strings.TrimSpace(database))
+	text := strings.ToLower(strings.Join(values, " "))
+	switch {
+	case db == "tair":
+		return "3702"
+	case strings.Contains(text, "arabidopsis thaliana") || strings.Contains(text, "athaliana") || strings.Contains(text, "tair"):
+		return "3702"
+	default:
+		return ""
+	}
 }
 
 func compactStrings(values ...string) []string {
@@ -7857,7 +7739,7 @@ func collectBlastItemAliasCandidates(item blastQueryItem) []string {
 	if item.QuerySource != nil {
 		aliases = append(aliases, querySourceLabelnameCandidates(item.QuerySource)...)
 	}
-	aliases = removeBlastItemHeaderFallbackAliases(item, aliases)
+	aliases = excludeBlastItemHeaderLabelsFromAliases(item, aliases)
 	aliases = uniqueStrings(aliases)
 	if len(aliases) == 0 && item.QuerySource != nil {
 		aliases = append(aliases, labelname.SplitAliases(item.QuerySource.PhgoAliases)...)
@@ -7865,7 +7747,7 @@ func collectBlastItemAliasCandidates(item blastQueryItem) []string {
 	return uniqueStrings(aliases)
 }
 
-func removeBlastItemHeaderFallbackAliases(item blastQueryItem, aliases []string) []string {
+func excludeBlastItemHeaderLabelsFromAliases(item blastQueryItem, aliases []string) []string {
 	if len(aliases) == 0 {
 		return nil
 	}
@@ -7926,34 +7808,6 @@ func blastQueryItemSourceDatabase(item blastQueryItem) string {
 	return strings.ToLower(strings.TrimSpace(item.QuerySource.SourceDatabase))
 }
 
-func (w *BlastWizard) blastQueryPhytozomeAliasCandidates(ctx context.Context, phytozomeSource source.DataSource, selected model.SpeciesCandidate, item blastQueryItem) []string {
-	aliases := make([]string, 0, 16)
-	for _, labelSpecies := range w.phytozomeKeywordLabelSpeciesForItem(ctx, phytozomeSource, selected, item) {
-		result := w.autoIdentifyBlastLabelResultFromPhytozome(ctx, phytozomeSource, labelSpecies, item)
-		aliases = append(aliases, result.Aliases...)
-	}
-	return uniqueStrings(aliases)
-}
-
-func fastaHeaderFallbackAliases(item blastQueryItem) []string {
-	if item.QuerySource != nil {
-		if label := strings.TrimSpace(item.QuerySource.LabelName); label != "" {
-			return []string{label}
-		}
-	}
-	if header, _ := splitFastaHeaderAndSequence(item.RawInput); header != "" {
-		if parsed, ok := parsePhgoFastaHeader(header); ok && strings.TrimSpace(parsed.LabelName) != "" {
-			return []string{parsed.LabelName}
-		}
-	}
-	if false {
-		if label := labelname.FastaHeaderLabelNameFromInput(item.RawInput); label != "" {
-			return []string{label}
-		}
-	}
-	return nil
-}
-
 func blastLabelSearchTerms(item blastQueryItem) []string {
 	terms := make([]string, 0, 6)
 	addTerm := func(value string) {
@@ -7989,110 +7843,6 @@ func fastaHeaderKeywordSearchTerm(header string) string {
 		return strings.TrimSpace(parsed.GeneID)
 	}
 	return ""
-}
-
-func blastLabelIdentityFallback(item blastQueryItem) string {
-	if item.QuerySource != nil {
-		if label := firstNonEmpty(
-			strings.TrimSpace(item.QuerySource.ProteinID),
-			strings.TrimSpace(item.QuerySource.TranscriptID),
-			strings.TrimSpace(item.QuerySource.GeneID),
-		); label != "" {
-			return label
-		}
-	}
-	if header, _ := splitFastaHeaderAndSequence(item.RawInput); header != "" {
-		if id := fastaHeaderPrimaryID(header); id != "" {
-			return id
-		}
-	}
-	return ""
-}
-func (w *BlastWizard) phytozomeKeywordLabelSpeciesForItem(ctx context.Context, phytozomeSource source.DataSource, selected model.SpeciesCandidate, item blastQueryItem) []model.SpeciesCandidate {
-	out := make([]model.SpeciesCandidate, 0, 2)
-	add := func(candidate model.SpeciesCandidate) {
-		if candidate == (model.SpeciesCandidate{}) {
-			return
-		}
-		for _, existing := range out {
-			if existing.ProteomeID == candidate.ProteomeID && strings.EqualFold(existing.JBrowseName, candidate.JBrowseName) {
-				return
-			}
-		}
-		out = append(out, candidate)
-	}
-	if species, ok := w.phytozomeKeywordLabelSpeciesFromFastaHeader(ctx, phytozomeSource, item); ok {
-		add(species)
-		return out
-	}
-	if species, ok := w.phytozomeKeywordLabelSpeciesFromQuerySource(ctx, phytozomeSource, item); ok {
-		add(species)
-		return out
-	}
-	if species, ok := w.phytozomeKeywordLabelSpecies(ctx, selected); ok {
-		add(species)
-	}
-	return out
-}
-
-func (w *BlastWizard) phytozomeKeywordLabelSpeciesFromFastaHeader(ctx context.Context, phytozomeSource source.DataSource, item blastQueryItem) (model.SpeciesCandidate, bool) {
-	if item.QuerySource == nil || !strings.EqualFold(strings.TrimSpace(item.QuerySource.SourceDatabase), "fasta") {
-		return model.SpeciesCandidate{}, false
-	}
-	organismText := strings.TrimSpace(item.QuerySource.OrganismShort + " " + item.QuerySource.Annotation)
-	if organismText == "" {
-		if header, _ := splitFastaHeaderAndSequence(item.RawInput); header != "" {
-			organismText = header
-		}
-	}
-	if organismText == "" {
-		return model.SpeciesCandidate{}, false
-	}
-	candidates, err := w.speciesCandidatesForSource(ctx, phytozomeSource, nil)
-	if err != nil {
-		return model.SpeciesCandidate{}, false
-	}
-	return matchPhytozomeSpeciesForFastaHeader(organismText, candidates)
-}
-
-func (w *BlastWizard) phytozomeKeywordLabelSpeciesFromQuerySource(ctx context.Context, phytozomeSource source.DataSource, item blastQueryItem) (model.SpeciesCandidate, bool) {
-	if item.QuerySource == nil {
-		return model.SpeciesCandidate{}, false
-	}
-	candidates, err := w.speciesCandidatesForSource(ctx, phytozomeSource, nil)
-	if err != nil {
-		return model.SpeciesCandidate{}, false
-	}
-	if item.QuerySource.SourceJBrowseName != "" {
-		if species, ok := findSpeciesCandidateByJBrowseName(candidates, item.QuerySource.SourceJBrowseName); ok {
-			return species, true
-		}
-	}
-	if item.QuerySource.SourceProteomeID > 0 {
-		for _, candidate := range candidates {
-			if candidate.ProteomeID == item.QuerySource.SourceProteomeID {
-				return candidate, true
-			}
-		}
-	}
-	for _, value := range []string{item.QuerySource.SourceGenomeLabel, item.QuerySource.OrganismShort, item.QuerySource.Annotation} {
-		if species, ok := matchPhytozomeSpeciesForFastaHeader(value, candidates); ok {
-			return species, true
-		}
-	}
-	return model.SpeciesCandidate{}, false
-}
-
-func (w *BlastWizard) phytozomeKeywordLabelSpecies(ctx context.Context, selected model.SpeciesCandidate) (model.SpeciesCandidate, bool) {
-	if _, ok := w.source.(*lemna.Client); ok {
-		phytozomeSource := phytozome.NewClient(w.httpClient)
-		phytozomeCandidates, err := w.speciesCandidatesForSource(ctx, phytozomeSource, nil)
-		if err != nil {
-			return model.SpeciesCandidate{}, false
-		}
-		return blastLabelFallbackSpecies(selected, phytozomeCandidates)
-	}
-	return selected, true
 }
 
 func (w *BlastWizard) prepareExportSettings(defaultBaseName string, allowFolder bool, allowEmptyFileName bool, mentionBlastHeaderFallback bool) (exportSettings, error) {
@@ -10178,6 +9928,10 @@ func autoIdentifyKeywordLabels(groups []model.KeywordSearchGroup) []string {
 }
 
 func autoIdentifyKeywordLabelIdentifications(groups []model.KeywordSearchGroup) []keywordLabelIdentification {
+	return autoIdentifyKeywordLabelIdentificationsWithSourceType(groups, "symbolname database")
+}
+
+func autoIdentifyKeywordLabelIdentificationsWithSourceType(groups []model.KeywordSearchGroup, sourceType string) []keywordLabelIdentification {
 	taskTimestamp := keywordLabelTaskTimestamp(groups)
 	requests := make([]labelname.AliasRankRequest, len(groups))
 	for i, group := range groups {
@@ -10192,6 +9946,7 @@ func autoIdentifyKeywordLabelIdentifications(groups []model.KeywordSearchGroup) 
 			TaskTimestamp: result.TaskTimestamp,
 			ItemIndex:     result.ItemIndex,
 			Aliases:       result.RankedAliases,
+			SourceType:    sourceType,
 		}
 	}
 	return identifications
@@ -10217,111 +9972,31 @@ func (w *BlastWizard) autoIdentifyKeywordLabelsWithProgress(ctx context.Context,
 		}
 		taskUpdate("Reviewing keyword result rows...")
 		working := cloneKeywordSearchGroups(groups)
-		if strings.EqualFold(strings.TrimSpace(w.source.Name()), "tair") {
-			return w.autoIdentifyTAIRKeywordLabelsWithProgress(labelCtx, working, taskUpdate), nil
-		}
-		if _, ok := w.source.(*lemna.Client); ok {
-			taskUpdate("Searching Phytozome label candidates for Lemna rows...")
-			return w.autoIdentifyLemnaKeywordLabelsWithProgress(labelCtx, selected, working), nil
-		}
-		if _, ok := w.source.(*ncbi.Client); ok {
-			taskUpdate("Selecting NCBI protein label candidates...")
-			return w.autoIdentifyNCBIKeywordLabelsWithProgress(labelCtx, working), nil
-		}
 		taskUpdate("Selecting symbol names...")
-		return autoIdentifyKeywordLabelIdentifications(working), nil
+		return autoIdentifyKeywordLabelIdentificationsWithSourceType(working, "symbolname database"), nil
 	})
 }
 
 func (w *BlastWizard) autoIdentifyLemnaKeywordLabelsWithProgress(ctx context.Context, selected model.SpeciesCandidate, groups []model.KeywordSearchGroup) []keywordLabelIdentification {
-	return w.autoIdentifyLemnaKeywordLabels(ctx, selected, groups, phytozome.NewClient(w.httpClient))
+	return w.autoIdentifyLemnaKeywordLabels(ctx, selected, groups, nil)
 }
 
 func (w *BlastWizard) autoIdentifyTAIRKeywordLabelsWithProgress(ctx context.Context, groups []model.KeywordSearchGroup, update func(string)) []keywordLabelIdentification {
 	taskUpdate := safeTaskUpdate(update)
-	taskUpdate("Collecting TAIR label candidates from Phytozome...")
-	identifications := w.autoIdentifyTAIRKeywordLabelsWithLookup(ctx, groups, phytozome.NewClient(w.httpClient))
-	taskUpdate("Selecting TAIR symbol names...")
-	return identifications
+	taskUpdate("Selecting TAIR symbol names from the local symbol database...")
+	return w.autoIdentifyTAIRKeywordLabelsWithLookup(ctx, groups, nil)
 }
 
 func (w *BlastWizard) autoIdentifyNCBIKeywordLabelsWithProgress(ctx context.Context, groups []model.KeywordSearchGroup) []keywordLabelIdentification {
-	return w.autoIdentifyNCBIKeywordLabels(ctx, groups, phytozome.NewClient(w.httpClient))
+	return w.autoIdentifyNCBIKeywordLabels(ctx, groups, nil)
 }
 
 func (w *BlastWizard) autoIdentifyNCBIKeywordLabels(ctx context.Context, groups []model.KeywordSearchGroup, lookupSource source.DataSource) []keywordLabelIdentification {
-	taskTimestamp := keywordLabelTaskTimestamp(groups)
-	identifications := make([]keywordLabelIdentification, len(groups))
-	for i := range identifications {
-		identifications[i].TaskTimestamp = taskTimestamp
-		identifications[i].ItemIndex = i
-	}
-	phytozomeCandidates := []model.SpeciesCandidate(nil)
-	if lookupSource != nil {
-		if candidates, err := w.speciesCandidatesForSource(ctx, lookupSource, nil); err == nil {
-			phytozomeCandidates = candidates
-		}
-	}
-	requests := make([]labelname.AliasRankRequest, len(groups))
-	sourceTypes := make([]string, len(groups))
-	for i, group := range groups {
-		aliases, sourceType := ncbiKeywordGroupAliasCandidates(group)
-		if len(aliases) == 0 && lookupSource != nil {
-			aliases, sourceType = w.ncbiKeywordGroupPhytozomeAliasCandidates(ctx, group, lookupSource, phytozomeCandidates)
-		}
-		requests[i] = aliasRankRequestFromKeywordRows(taskTimestamp, aliases, group.Rows)
-		requests[i].ItemIndex = i
-		requests[i].SearchTerm = firstNonEmpty(requests[i].SearchTerm, group.SearchTerm)
-		sourceTypes[i] = sourceType
-	}
-	results := labelname.RankAliasBatch(requests)
-	for i, ranked := range results {
-		identifications[i].Aliases = uniqueStrings(ranked.RankedAliases)
-		identifications[i].SourceType = sourceTypes[i]
-	}
-	return identifications
+	return autoIdentifyKeywordLabelIdentificationsWithSourceType(groups, "symbolname database")
 }
 
 func (w *BlastWizard) autoIdentifyLemnaKeywordLabels(ctx context.Context, selected model.SpeciesCandidate, groups []model.KeywordSearchGroup, lookupSource source.DataSource) []keywordLabelIdentification {
-	taskTimestamp := keywordLabelTaskTimestamp(groups)
-	identifications := make([]keywordLabelIdentification, len(groups))
-	for i := range identifications {
-		identifications[i].TaskTimestamp = taskTimestamp
-		identifications[i].ItemIndex = i
-	}
-	if lookupSource == nil {
-		for i, group := range groups {
-			aliases, sourceType := lemnaKeywordGroupAliasCandidates(group, nil)
-			request := aliasRankRequestFromKeywordRows(taskTimestamp, aliases, group.Rows)
-			request.ItemIndex = i
-			request.SearchTerm = firstNonEmpty(request.SearchTerm, group.SearchTerm)
-			ranked := labelname.RankAliases(request)
-			identifications[i].Aliases = ranked.RankedAliases
-			identifications[i].SourceType = sourceType
-		}
-		return identifications
-	}
-	phytozomeSpecies, ok := w.phytozomeSpeciesForLemnaLabels(ctx, selected, lookupSource)
-	keywordRowsByTerm := map[string][]model.KeywordResultRow{}
-	if ok {
-		terms := lemnaKeywordGroupsPhytozomeSearchTerms(groups)
-		keywordRowsByTerm = w.fetchKeywordRowsByTerms(ctx, lookupSource, phytozomeSpecies, terms)
-	}
-	requests := make([]labelname.AliasRankRequest, len(groups))
-	sourceTypes := make([]string, len(groups))
-	for i, group := range groups {
-		aliases, sourceType := lemnaKeywordGroupAliasCandidates(group, keywordRowsByTerm)
-		requests[i] = aliasRankRequestFromKeywordRows(taskTimestamp, aliases, group.Rows)
-		requests[i].ItemIndex = i
-		requests[i].SearchTerm = firstNonEmpty(requests[i].SearchTerm, group.SearchTerm)
-		sourceTypes[i] = sourceType
-	}
-	results := labelname.RankAliasBatch(requests)
-	for i, ranked := range results {
-		identifications[i].Aliases = ranked.RankedAliases
-		identifications[i].SourceType = sourceTypes[i]
-	}
-	return identifications
+	return autoIdentifyKeywordLabelIdentificationsWithSourceType(groups, "symbolname database")
 }
 
 func (w *BlastWizard) phytozomeSpeciesForLemnaLabels(ctx context.Context, selected model.SpeciesCandidate, lookupSource source.DataSource) (model.SpeciesCandidate, bool) {
@@ -10471,103 +10146,11 @@ func cloneKeywordResultRows(rows []model.KeywordResultRow) []model.KeywordResult
 }
 
 func (w *BlastWizard) autoIdentifyTAIRKeywordLabels(ctx context.Context, groups []model.KeywordSearchGroup) []keywordLabelIdentification {
-	return w.autoIdentifyTAIRKeywordLabelsWithLookup(ctx, groups, phytozome.NewClient(w.httpClient))
+	return w.autoIdentifyTAIRKeywordLabelsWithLookup(ctx, groups, nil)
 }
 
 func (w *BlastWizard) autoIdentifyTAIRKeywordLabelsWithLookup(ctx context.Context, groups []model.KeywordSearchGroup, lookupSource source.DataSource) []keywordLabelIdentification {
-	taskTimestamp := keywordLabelTaskTimestamp(groups)
-	identifications := make([]keywordLabelIdentification, len(groups))
-	for i := range identifications {
-		identifications[i].TaskTimestamp = taskTimestamp
-		identifications[i].ItemIndex = i
-	}
-
-	if lookupSource == nil {
-		for i, group := range groups {
-			aliases, sourceType := tairKeywordGroupAliasCandidates(group, nil)
-			request := aliasRankRequestFromKeywordRows(taskTimestamp, aliases, group.Rows)
-			request.ItemIndex = i
-			request.SearchTerm = firstNonEmpty(request.SearchTerm, group.SearchTerm, group.LabelName)
-			ranked := labelname.RankAliases(request)
-			identifications[i].Aliases = uniqueStrings(ranked.RankedAliases)
-			identifications[i].SourceType = sourceType
-		}
-		return identifications
-	}
-
-	phytozomeSpecies, ok := w.phytozomeSpeciesForTAIRLabels(ctx, lookupSource)
-	keywordRowsByTerm := map[string][]model.KeywordResultRow{}
-	if ok {
-		terms := tairKeywordGroupsPhytozomeSearchTerms(groups)
-		keywordRowsByTerm = w.fetchKeywordRowsByTerms(ctx, lookupSource, phytozomeSpecies, terms)
-	}
-	requests := make([]labelname.AliasRankRequest, len(groups))
-	sourceTypes := make([]string, len(groups))
-	for i, group := range groups {
-		aliases, sourceType := tairKeywordGroupAliasCandidates(group, keywordRowsByTerm)
-		requests[i] = aliasRankRequestFromKeywordRows(taskTimestamp, aliases, group.Rows)
-		requests[i].ItemIndex = i
-		requests[i].SearchTerm = firstNonEmpty(requests[i].SearchTerm, group.SearchTerm, group.LabelName)
-		sourceTypes[i] = sourceType
-	}
-	results := labelname.RankAliasBatch(requests)
-	for i, ranked := range results {
-		identifications[i].Aliases = uniqueStrings(ranked.RankedAliases)
-		identifications[i].SourceType = sourceTypes[i]
-	}
-	return identifications
-}
-
-func (w *BlastWizard) phytozomeSpeciesForTAIRLabels(ctx context.Context, lookupSource source.DataSource) (model.SpeciesCandidate, bool) {
-	if lookupSource == nil {
-		return model.SpeciesCandidate{}, false
-	}
-	candidates, err := w.speciesCandidatesForSource(ctx, lookupSource, nil)
-	if err != nil {
-		return model.SpeciesCandidate{}, false
-	}
-	for _, candidate := range candidates {
-		if candidate.ProteomeID == 167 || strings.EqualFold(strings.TrimSpace(candidate.JBrowseName), "Athaliana_TAIR10") {
-			return candidate, true
-		}
-	}
-	return model.SpeciesCandidate{}, false
-}
-
-func tairKeywordGroupsPhytozomeSearchTerms(groups []model.KeywordSearchGroup) []string {
-	terms := make([]string, 0, len(groups)*2)
-	for _, group := range groups {
-		for _, row := range group.Rows {
-			terms = append(terms, tair.PhytozomeSearchTermsForKeywordRow(row)...)
-		}
-	}
-	return uniqueStrings(terms)
-}
-
-func tairKeywordGroupAliasCandidates(group model.KeywordSearchGroup, keywordRowsByTerm map[string][]model.KeywordResultRow) ([]string, string) {
-	aliases := make([]string, 0, len(group.Rows)*4)
-	sourceType := ""
-	for _, row := range group.Rows {
-		rowAliases, rowSource := tairKeywordRowAliasCandidatesWithLookup(row, keywordRowsByTerm)
-		if sourceType == "" && strings.TrimSpace(rowSource) != "" {
-			sourceType = strings.TrimSpace(rowSource)
-		}
-		aliases = append(aliases, rowAliases...)
-	}
-	return uniqueStrings(aliases), sourceType
-}
-
-func tairKeywordRowAliasCandidatesWithLookup(row model.KeywordResultRow, keywordRowsByTerm map[string][]model.KeywordResultRow) ([]string, string) {
-	for _, term := range tair.PhytozomeSearchTermsForKeywordRow(row) {
-		rows := keywordRowsByTerm[strings.ToLower(strings.TrimSpace(term))]
-		if aliases, sourceType := tair.PhytozomeAliasCandidatesFromKeywordRows(rows); len(aliases) > 0 {
-			return aliases, sourceType
-		}
-	}
-	if aliases := tair.OtherNamesFallbackAliases(row); len(aliases) > 0 {
-		return aliases, "tair other_names"
-	}
-	return nil, ""
+	return autoIdentifyKeywordLabelIdentificationsWithSourceType(groups, "symbolname database")
 }
 
 func (w *BlastWizard) cachedKeywordTermRows(cacheKey string) ([]model.KeywordResultRow, bool) {
@@ -10595,71 +10178,6 @@ func (w *BlastWizard) storeKeywordTermRows(cacheKey string, rows []model.Keyword
 	w.keywordTermRowsMu.Unlock()
 }
 
-func lemnaKeywordGroupAliasCandidates(group model.KeywordSearchGroup, keywordRowsByTerm map[string][]model.KeywordResultRow) ([]string, string) {
-	aliases := make([]string, 0, len(group.Rows)*8+1)
-	aliases = append(aliases, group.LabelName)
-	sourceType := ""
-	for _, row := range group.Rows {
-		rowAliases, rowSource := lemnaKeywordRowAliasCandidates(row, keywordRowsByTerm)
-		if sourceType == "" && rowSource != "" {
-			sourceType = rowSource
-		}
-		aliases = append(aliases, rowAliases...)
-	}
-	return uniqueStrings(aliases), sourceType
-}
-
-func lemnaKeywordRowAliasCandidates(row model.KeywordResultRow, keywordRowsByTerm map[string][]model.KeywordResultRow) ([]string, string) {
-	if keywordRowsByTerm != nil {
-		for _, term := range lemnaKeywordRowPhytozomeSearchTerms(row) {
-			rows := keywordRowsByTerm[strings.ToLower(strings.TrimSpace(term))]
-			for _, candidateRows := range [][]model.KeywordResultRow{
-				filterKeywordRowsForLemnaKeyword(rows, row),
-				rows,
-			} {
-				if candidates, labelType := phytozomeAliasCandidatesFromKeywordRows(candidateRows); len(candidates) > 0 {
-					return candidates, labelType
-				}
-			}
-		}
-	}
-	if candidates := lemnaLocalKeywordRowAliasCandidates(row); len(candidates) > 0 {
-		return candidates, "lemna local aliases"
-	}
-	return nil, ""
-}
-
-func filterKeywordRowsForLemnaKeyword(rows []model.KeywordResultRow, row model.KeywordResultRow) []model.KeywordResultRow {
-	if len(rows) == 0 {
-		return nil
-	}
-	targets := make([]string, 0, 6)
-	for _, value := range lemnaKeywordRowPhytozomeSearchTerms(row) {
-		if value = strings.ToLower(strings.TrimSpace(value)); value != "" {
-			targets = append(targets, value)
-		}
-	}
-	if len(targets) == 0 {
-		return rows
-	}
-	matches := make([]model.KeywordResultRow, 0, len(rows))
-	for _, candidate := range rows {
-		haystack := strings.ToLower(strings.Join([]string{
-			candidate.ProteinID,
-			candidate.TranscriptID,
-			candidate.SequenceID,
-			candidate.GeneIdentifier,
-		}, " "))
-		for _, target := range targets {
-			if strings.Contains(haystack, target) {
-				matches = append(matches, candidate)
-				break
-			}
-		}
-	}
-	return matches
-}
-
 func keywordLabelTaskTimestamp(groups []model.KeywordSearchGroup) string {
 	latest := keywordGroupsSearchEndedAt(groups)
 	if latest.IsZero() {
@@ -10678,74 +10196,42 @@ func collectKeywordGroupAliasCandidates(group model.KeywordSearchGroup) []string
 }
 
 func keywordRowLabelnameCandidates(row model.KeywordResultRow) []string {
-	if strings.EqualFold(strings.TrimSpace(row.SourceDatabase), "phytozome") {
-		if candidates, _ := phytozomeAliasCandidatesFromKeywordRows([]model.KeywordResultRow{row}); len(candidates) > 0 {
-			return candidates
-		}
-		return phytozomeKeywordFallbackAliasCandidates(row)
-	}
-	if strings.EqualFold(strings.TrimSpace(row.SourceDatabase), "ncbi") {
-		if candidates, _ := ncbiKeywordRowAliasCandidates(row); len(candidates) > 0 {
-			return candidates
-		}
-	}
-	if strings.EqualFold(strings.TrimSpace(row.SourceDatabase), "tair") {
-		return tairKeywordRowAliasCandidates(row)
-	}
-	return lemnaLocalKeywordRowAliasCandidates(row)
+	return allKeywordRowSymbolCandidates(row)
 }
 
-func ncbiKeywordGroupAliasCandidates(group model.KeywordSearchGroup) ([]string, string) {
-	aliases := make([]string, 0, len(group.Rows)*8+1)
-	aliases = append(aliases, group.LabelName)
-	sourceType := ""
-	for _, row := range group.Rows {
-		rowAliases, rowSource := ncbiKeywordRowAliasCandidates(row)
-		if sourceType == "" && rowSource != "" {
-			sourceType = rowSource
-		}
-		aliases = append(aliases, rowAliases...)
-	}
-	return uniqueStrings(aliases), sourceType
-}
-
-func ncbiKeywordRowAliasCandidates(row model.KeywordResultRow) ([]string, string) {
-	aliases := make([]string, 0, 16)
+func allKeywordRowSymbolCandidates(row model.KeywordResultRow) []string {
+	aliases := make([]string, 0, 24)
+	aliases = append(aliases, row.LabelName)
+	aliases = append(aliases, labelname.SplitAliases(row.PhgoAliases)...)
 	aliases = append(aliases, labelname.SplitAliases(row.Symbols)...)
 	aliases = append(aliases, labelname.SplitAliases(row.Synonyms)...)
 	aliases = append(aliases, labelname.SplitAliases(row.Aliases)...)
+	aliases = append(aliases, labelname.SplitAliases(row.UniProt)...)
+	aliases = append(aliases, labelname.AutoDefineCandidates(row.AutoDefine)...)
+	aliases = append(aliases, labelname.AutoDefineCandidates(row.Description)...)
+	aliases = append(aliases, labelname.AutoDefineCandidates(row.Comments)...)
+	aliases = append(aliases, phytozomeUniProtAliasCandidates(row.UniProt)...)
 	if row.ExtraColumns != nil {
-		for _, key := range []string{"ncbi_other_aliases", "ncbi_gene_name"} {
+		for _, key := range []string{
+			"attr_Alias",
+			"attr_alias",
+			"attr_Name",
+			"attr_name",
+			"attr_gene_name",
+			"attr_gene_symbol",
+			"attr_symbol",
+			"attr_gene",
+			"tair_fasta_symbols",
+			"tair_keyword_synonyms",
+			"tair_keyword_name_exact",
+			"ncbi_other_aliases",
+			"ncbi_gene_name",
+			"ahrd_blast_hit_accession",
+		} {
 			aliases = append(aliases, labelname.SplitAliases(row.ExtraColumns[key])...)
 		}
 	}
-	if aliases = uniqueStrings(aliases); len(aliases) > 0 {
-		return aliases, "ncbi gene aliases"
-	}
-	aliases = append(aliases, labelname.AutoDefineCandidates(row.AutoDefine)...)
-	aliases = append(aliases, labelname.AutoDefineCandidates(row.Description)...)
-	return uniqueStrings(aliases), "ncbi protein description"
-}
-
-func (w *BlastWizard) ncbiKeywordGroupPhytozomeAliasCandidates(ctx context.Context, group model.KeywordSearchGroup, lookupSource source.DataSource, candidates []model.SpeciesCandidate) ([]string, string) {
-	if lookupSource == nil || len(candidates) == 0 {
-		return nil, ""
-	}
-	for _, row := range group.Rows {
-		species, ok := matchPhytozomeSpeciesForFastaHeader(firstNonEmpty(row.SequenceHeaderLabel, row.Genome), candidates)
-		if !ok {
-			continue
-		}
-		terms := ncbiKeywordRowPhytozomeSearchTerms(row)
-		rowsByTerm := w.fetchKeywordRowsByTerms(ctx, lookupSource, species, terms)
-		for _, term := range terms {
-			rows := rowsByTerm[strings.ToLower(strings.TrimSpace(term))]
-			if candidates, labelType := phytozomeAliasCandidatesFromKeywordRows(rows); len(candidates) > 0 {
-				return candidates, labelType
-			}
-		}
-	}
-	return nil, ""
+	return uniqueStrings(aliases)
 }
 
 func ncbiKeywordRowPhytozomeSearchTerms(row model.KeywordResultRow) []string {
@@ -10767,29 +10253,6 @@ func ncbiKeywordRowPhytozomeSearchTerms(row model.KeywordResultRow) []string {
 		}
 	}
 	return uniqueStrings(terms)
-}
-
-func tairKeywordRowAliasCandidates(row model.KeywordResultRow) []string {
-	aliases := make([]string, 0, 8)
-	aliases = append(aliases, labelname.SplitAliases(row.Synonyms)...)
-	return uniqueStrings(aliases)
-}
-
-func phytozomeKeywordFallbackAliasCandidates(row model.KeywordResultRow) []string {
-	aliases := make([]string, 0, 12)
-	aliases = append(aliases, row.LabelName)
-	aliases = append(aliases, labelname.SplitAliases(row.PhgoAliases)...)
-	aliases = append(aliases, labelname.SplitAliases(row.Aliases)...)
-	aliases = append(aliases, labelname.SplitAliases(row.UniProt)...)
-	aliases = append(aliases, phytozomeUniProtAliasCandidates(row.UniProt)...)
-	aliases = append(aliases, labelname.AutoDefineCandidates(row.Description)...)
-	aliases = append(aliases, labelname.AutoDefineCandidates(row.Comments)...)
-	if row.ExtraColumns != nil {
-		for _, key := range []string{"attr_Alias", "attr_Name", "attr_gene_name", "attr_gene_symbol"} {
-			aliases = append(aliases, labelname.SplitAliases(row.ExtraColumns[key])...)
-		}
-	}
-	return uniqueStrings(aliases)
 }
 
 func phytozomeUniProtAliasCandidates(value string) []string {

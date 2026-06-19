@@ -55,7 +55,3 @@ type ProteinReportResolver interface {
 type QueryResolver interface {
 	ResolveQuerySequence(ctx context.Context, species model.SpeciesCandidate, input string) (*model.QuerySequenceSource, bool, error)
 }
-
-type TAIRLabelNameResolver interface {
-	ResolveTAIRKeywordRowLabelCandidates(ctx context.Context, row model.KeywordResultRow) ([]string, string)
-}
