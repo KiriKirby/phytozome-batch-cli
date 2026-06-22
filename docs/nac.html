@@ -7,8 +7,8 @@
 
 <body bgcolor="#FFFFFF">
 
-<p>phytozome GO v20260620-phgo-runtime-fix</p>
-<p>Release v20260620-phgo-runtime-fix</p>
+<p>phytozome GO v20260622T021348Z</p>
+<p>Release v20260622T021348Z</p>
 <p>Validation:</p>
 <p>- go test ./...</p>
 <p>- go vet ./...</p>
@@ -22,6 +22,22 @@
 <p>- SHA256SUMS.txt</p>
 <p>Website:</p>
 <p>- docs/nac.html updated with the latest release log at the top</p>
+<p>&nbsp;</p>
+<p>phytozome GO v20260620-phgo-runtime-fix</p>
+<p>## What changed</p>
+<p>- Fixed MEGA PHgo Windows runtime handling: bundled `mega-phgo-runtime.bin` is prepared as a temporary `.exe` with the runtime-owned `muscleWin64.bin` before probe/execution.</p>
+<p>- Rebuilt and bundled the Windows MEGA PHgo runtime, including source-side runtime fixes and clearer MEGA error reporting.</p>
+<p>- Verified `C:\Users\wangsychn\Desktop\4CLtree.pgo`: ClustalW now reports the true runtime data error (`Unsupported protein residue * at sequence 85, site 213`, `PHGOT000085` / `AT1G51680.1[4CL]`) without auto-switching to MUSCLE.</p>
+<p>- Fixed keyword/BLAST result transfer into BLAST so Back from target species/run returns to target database selection correctly.</p>
+<p>- Hardened task cancellation so Cancel/Esc cancels the underlying context and waits for the associated action to exit.</p>
+<p>- Improved labelname/alias handling and keyword-to-BLAST metadata cleanup, preserving useful labels while avoiding legacy raw alias pollution.</p>
+<p>## Validation</p>
+<p>- `go test ./...`</p>
+<p>- `go vet ./...`</p>
+<p>- `npm.cmd test` and `npm.cmd run build` in `tree-viewer`</p>
+<p>- Real MEGA PHgo runtime probe against `4CLtree.pgo`</p>
+<p>- `scripts\build-release.ps1 -BuildVersion v20260620-phgo-runtime-fix`</p>
+<p>- Windows package content check for `mega-phgo-runtime.bin` + `muscleWin64.bin` and forbidden logo-source exclusion</p>
 <p>&nbsp;</p>
 <p>phytozome GO v20260619T101650Z</p>
 <p>User-visible updates:</p>
