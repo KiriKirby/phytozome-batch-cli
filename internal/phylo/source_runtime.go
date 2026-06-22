@@ -280,28 +280,26 @@ func WriteMegaPHGORuntimeRequest(plan RunPlan) (string, error) {
 }
 
 func runMegaPHGORuntimeCommand(cmd *exec.Cmd, dir string) (stdoutPath string, stderrPath string, exitText string, err error) {
-	var stdout strings.Builder
-	var stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdoutPath = filepath.Join(dir, "runtime.stdout.txt")
+	stderrPath = filepath.Join(dir, "runtime.stderr.txt")
+
+	stdoutFile, openErr := os.OpenFile(stdoutPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if openErr != nil {
+		return "", "", "", openErr
+	}
+	defer stdoutFile.Close()
+
+	stderrFile, openErr := os.OpenFile(stderrPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if openErr != nil {
+		return "", "", "", openErr
+	}
+	defer stderrFile.Close()
+
+	cmd.Stdout = stdoutFile
+	cmd.Stderr = stderrFile
 	err = cmd.Run()
 	if err != nil {
 		exitText = err.Error()
-	}
-	write := func(name string, value string) (string, error) {
-		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte(value), 0o644); err != nil {
-			return "", err
-		}
-		return path, nil
-	}
-	stdoutPath, err2 := write("runtime.stdout.txt", stdout.String())
-	if err2 != nil {
-		return "", "", exitText, err2
-	}
-	stderrPath, err2 = write("runtime.stderr.txt", stderr.String())
-	if err2 != nil {
-		return "", "", exitText, err2
 	}
 	return stdoutPath, stderrPath, exitText, err
 }
