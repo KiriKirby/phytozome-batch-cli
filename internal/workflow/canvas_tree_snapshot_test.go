@@ -216,7 +216,7 @@ func TestSnapshotCanvasTreeStateSyncsCurrentDisplayNamesWithoutRecompute(t *test
 	if err != nil {
 		t.Fatalf("snapshotCanvasTreeState returned error: %v", err)
 	}
-	if tree.LastPayload.Metadata.Records[0].DisplayName != "New PAL" {
+	if tree.LastPayload.Metadata.Records[0].DisplayName != "[1,1] New PAL" {
 		t.Fatalf("snapshot payload did not sync latest display name: %#v", tree.LastPayload.Metadata.Records)
 	}
 	if tree.Fingerprints.Alignment != "align" || tree.Fingerprints.Tree != "tree" {
@@ -224,6 +224,75 @@ func TestSnapshotCanvasTreeStateSyncsCurrentDisplayNamesWithoutRecompute(t *test
 	}
 	if tree.Fingerprints.Preview == "old-preview" || tree.Fingerprints.Preview == "" {
 		t.Fatalf("preview fingerprint should update after display-name sync: %#v", tree.Fingerprints)
+	}
+}
+
+func TestShowCanvasCoordinatesOnlyChangesPreviewFingerprint(t *testing.T) {
+	now := time.Now()
+	records := []phylo.InputRecord{{
+		TaxonID:         "PHGOT000001",
+		DisplayName:     "PAL1",
+		Sequence:        "MPEPTIDE",
+		SequenceKind:    phylo.SequenceProtein,
+		CanvasItemIndex: 0,
+		CanvasRow:       0,
+		RowFingerprint:  "row-1",
+	}}
+	settings := phylo.NormalizeTreeSettingsForKind(phylo.DefaultTreeSettings(), phylo.SequenceProtein)
+	meta := phylo.Metadata{SchemaVersion: 1, GeneratedAt: now, DisplayNameSource: "label_name", Records: records}
+	planWithCoords, err := phylo.BuildRunPlan("canvas", "coords", t.TempDir(), settings, phylo.SequenceProtein, records, meta, "", "", now)
+	if err != nil {
+		t.Fatalf("BuildRunPlan coords: %v", err)
+	}
+	settingsNoCoords := settings
+	settingsNoCoords.ShowCanvasCoordinates = false
+	settingsNoCoords.ShowCanvasCoordinatesSet = true
+	planWithoutCoords, err := phylo.BuildRunPlan("canvas", "no-coords", t.TempDir(), settingsNoCoords, phylo.SequenceProtein, records, meta, "", "", now)
+	if err != nil {
+		t.Fatalf("BuildRunPlan no coords: %v", err)
+	}
+	if planWithCoords.Fingerprints.Alignment != planWithoutCoords.Fingerprints.Alignment || planWithCoords.Fingerprints.Tree != planWithoutCoords.Fingerprints.Tree {
+		t.Fatalf("coordinate display option should not affect compute fingerprints: with=%#v without=%#v", planWithCoords.Fingerprints, planWithoutCoords.Fingerprints)
+	}
+	if planWithCoords.Fingerprints.Preview == planWithoutCoords.Fingerprints.Preview {
+		t.Fatalf("coordinate display option should affect preview fingerprint")
+	}
+}
+
+func TestApplyCanvasCoordinateDisplayNamesDoesNotMutateCanvasDisplayNameColumn(t *testing.T) {
+	item := model.CanvasItem{
+		Title:    "family A",
+		Selected: []bool{true},
+		Rows: []model.CanvasRow{{
+			Kind:        model.CanvasKindFasta,
+			DisplayName: "PAL display",
+			FASTA:       &model.QuerySequenceSource{Sequence: "MPEPTIDE", SequenceKind: model.SequenceProtein},
+		}},
+	}
+	w := NewBlastWizard(nil)
+	state := canvasLaunchState{Items: []model.CanvasItem{item}}
+	selected := selectedCanvasRowsInOrder(state.Items)
+	settings := phylo.DefaultTreeSettings()
+	settings.DisplayNameSource = "display_name"
+	result, err := w.buildCanvasTreeArtifactsWithRuntime(context.Background(), state, selected, settings, workflowStaticRuntime{})
+	if err != nil {
+		t.Fatalf("buildCanvasTreeArtifactsWithRuntime returned error: %v", err)
+	}
+	if state.Items[0].Rows[0].DisplayName != "PAL display" {
+		t.Fatalf("Canvas display_name column was mutated: %#v", state.Items[0].Rows[0])
+	}
+	if got := result.Plan.Metadata.Records[0].DisplayName; got != "[1,1] PAL display" {
+		t.Fatalf("metadata display name = %q, want coordinate-prefixed display name", got)
+	}
+
+	settings.ShowCanvasCoordinates = false
+	settings.ShowCanvasCoordinatesSet = true
+	result, err = w.buildCanvasTreeArtifactsWithRuntime(context.Background(), state, selected, settings, workflowStaticRuntime{})
+	if err != nil {
+		t.Fatalf("buildCanvasTreeArtifactsWithRuntime without coords returned error: %v", err)
+	}
+	if got := result.Plan.Metadata.Records[0].DisplayName; got != "PAL display" {
+		t.Fatalf("metadata display name with coordinates off = %q, want original display name", got)
 	}
 }
 
@@ -299,7 +368,7 @@ func TestSnapshotCanvasTreeStateUsesVisibleCanvasSortOrder(t *testing.T) {
 	if len(tree.LastPayload.Metadata.Records) != 2 {
 		t.Fatalf("snapshot payload records = %#v, want 2", tree.LastPayload.Metadata.Records)
 	}
-	if tree.LastPayload.Metadata.Records[0].DisplayName != "alpha" || tree.LastPayload.Metadata.Records[1].DisplayName != "beta" {
+	if tree.LastPayload.Metadata.Records[0].DisplayName != "[1,2] alpha" || tree.LastPayload.Metadata.Records[1].DisplayName != "[1,1] beta" {
 		t.Fatalf("snapshot payload order should follow visible canvas sort: %#v", tree.LastPayload.Metadata.Records)
 	}
 }
@@ -427,6 +496,21 @@ func TestReuseLastCanvasTreePlanRejectsComputeInputChanges(t *testing.T) {
 		t.Fatalf("reuse renamed returned error: %v", err)
 	} else if !ok {
 		t.Fatalf("display-name-only change should reuse runtime artifacts")
+	}
+
+	noCoordsSettings := settings
+	noCoordsSettings.ShowCanvasCoordinates = false
+	noCoordsSettings.ShowCanvasCoordinatesSet = true
+	noCoordsPlan, err := phylo.BuildRunPlan("canvas", "no-coords", t.TempDir(), noCoordsSettings, phylo.SequenceProtein, records, meta, "", "", now)
+	if err != nil {
+		t.Fatalf("BuildRunPlan no coords: %v", err)
+	}
+	if reused, ok, err := w.reuseLastCanvasTreePlan(noCoordsPlan, records, meta, now); err != nil {
+		t.Fatalf("reuse no-coords returned error: %v", err)
+	} else if !ok {
+		t.Fatalf("coordinate display toggle should reuse runtime artifacts")
+	} else if reused.Plan.Fingerprints.Alignment != last.Fingerprints.Alignment || reused.Plan.Fingerprints.Tree != last.Fingerprints.Tree {
+		t.Fatalf("coordinate display toggle should keep compute fingerprints: %#v", reused.Plan.Fingerprints)
 	}
 
 	paramSettings := settings
@@ -1834,6 +1918,157 @@ func TestRefreshCanvasTreeInteractiveSkipUnchecksRowsAndRetries(t *testing.T) {
 	}
 }
 
+func TestRefreshCanvasTreeInteractiveSkipResolvesRuntimeTaxonIDsAndRetriesRepeatedly(t *testing.T) {
+	w := NewBlastWizard(nil)
+	state := canvasLaunchState{
+		Items: []model.CanvasItem{
+			{
+				Title:    "duplicate",
+				Selected: []bool{true, true},
+				Rows: []model.CanvasRow{
+					{Kind: model.CanvasKindFasta, FASTA: &model.QuerySequenceSource{Sequence: "MAAAA", SequenceKind: model.SequenceProtein}},
+					{Kind: model.CanvasKindFasta, FASTA: &model.QuerySequenceSource{Sequence: "MBBBB", SequenceKind: model.SequenceProtein}},
+				},
+			},
+			{
+				Title:    "duplicate",
+				Selected: []bool{true, true},
+				Rows: []model.CanvasRow{
+					{Kind: model.CanvasKindFasta, FASTA: &model.QuerySequenceSource{Sequence: "MCCCC", SequenceKind: model.SequenceProtein}},
+					{Kind: model.CanvasKindFasta, FASTA: &model.QuerySequenceSource{Sequence: "MDDDD", SequenceKind: model.SequenceProtein}},
+				},
+			},
+		},
+	}
+	callCount := 0
+	w.canvasTreeRefreshRun = func(ctx context.Context, runState canvasLaunchState, settings phylo.TreeSettings) error {
+		callCount++
+		selected := selectedCanvasRowsInOrder(runState.Items)
+		switch callCount {
+		case 1:
+			if len(selected) != 4 {
+				t.Fatalf("first refresh selected rows = %#v, want 4", selected)
+			}
+			return &canvasTreeSkippedRowsError{SkippedRows: []canvasTreeSkippedRow{{
+				ItemTitle: "duplicate",
+				RowIndex:  0,
+				TaxonID:   "PHGOT000003",
+				Reason:    "first runtime pair failure",
+			}}}
+		case 2:
+			if len(selected) != 3 {
+				t.Fatalf("second refresh selected rows = %#v, want 3", selected)
+			}
+			for _, row := range selected {
+				if row.ItemIndex == 1 && row.RowIndex == 0 {
+					t.Fatalf("runtime taxon PHGOT000003 row was not unchecked: %#v", selected)
+				}
+			}
+			return &canvasTreeSkippedRowsError{SkippedRows: []canvasTreeSkippedRow{{
+				ItemTitle: "duplicate",
+				RowIndex:  1,
+				TaxonID:   "PHGOT000002",
+				Reason:    "second runtime pair failure",
+			}}}
+		case 3:
+			if len(selected) != 2 {
+				t.Fatalf("third refresh selected rows = %#v, want 2", selected)
+			}
+			for _, row := range selected {
+				if (row.ItemIndex == 1 && row.RowIndex == 0) || (row.ItemIndex == 0 && row.RowIndex == 1) {
+					t.Fatalf("previous runtime skipped rows should stay unchecked: %#v", selected)
+				}
+			}
+			return nil
+		default:
+			t.Fatalf("unexpected refresh call %d", callCount)
+			return nil
+		}
+	}
+	recoveryCount := 0
+	w.canvasTreeRecover = func(description string, backTarget error, allowSkip bool) (string, error) {
+		recoveryCount++
+		if !strings.Contains(description, "keep automatically unchecking additional rows") {
+			t.Fatalf("recovery description should explain automatic skip retry behavior: %q", description)
+		}
+		return "skip", nil
+	}
+
+	if err := w.refreshCanvasTreeInteractive(context.Background(), &state, phylo.DefaultTreeSettings()); err != nil {
+		t.Fatalf("refreshCanvasTreeInteractive returned error: %v", err)
+	}
+	if callCount != 3 || recoveryCount != 1 {
+		t.Fatalf("callCount=%d recoveryCount=%d, want 3/1", callCount, recoveryCount)
+	}
+	if state.Items[1].Selected[0] || state.Items[0].Selected[1] {
+		t.Fatalf("runtime skipped rows should be unchecked in persistent state: %#v %#v", state.Items[0].Selected, state.Items[1].Selected)
+	}
+	if !state.Items[0].Selected[0] || !state.Items[1].Selected[1] {
+		t.Fatalf("non-skipped rows should remain selected: %#v %#v", state.Items[0].Selected, state.Items[1].Selected)
+	}
+}
+
+func TestRefreshCanvasTreeInteractiveSkipUsesFailedRunSelectedRows(t *testing.T) {
+	w := NewBlastWizard(nil)
+	state := canvasLaunchState{
+		Items: []model.CanvasItem{{
+			Title:    "runtime-order",
+			Selected: []bool{true, true, true},
+			Rows: []model.CanvasRow{
+				{Kind: model.CanvasKindFasta, FASTA: &model.QuerySequenceSource{Sequence: "MAAAA", SequenceKind: model.SequenceProtein}},
+				{Kind: model.CanvasKindFasta, FASTA: &model.QuerySequenceSource{Sequence: "MBBBB", SequenceKind: model.SequenceProtein}},
+				{Kind: model.CanvasKindFasta, FASTA: &model.QuerySequenceSource{Sequence: "MCCCC", SequenceKind: model.SequenceProtein}},
+			},
+		}},
+	}
+	failedRunRows := []canvasSelectedRow{
+		{ItemTitle: "runtime-order", ItemIndex: 0, RowIndex: 1},
+		{ItemTitle: "runtime-order", ItemIndex: 0, RowIndex: 0},
+		{ItemTitle: "runtime-order", ItemIndex: 0, RowIndex: 2},
+	}
+	callCount := 0
+	w.canvasTreeRefreshRun = func(ctx context.Context, runState canvasLaunchState, settings phylo.TreeSettings) error {
+		callCount++
+		selected := selectedCanvasRowsInOrder(runState.Items)
+		if callCount == 1 {
+			return &canvasTreeSkippedRowsError{
+				SkippedRows: []canvasTreeSkippedRow{{
+					ItemTitle: "runtime-order",
+					RowIndex:  0,
+					TaxonID:   "PHGOT000001",
+					Reason:    "runtime failure in failed-run order",
+				}},
+				SelectedRows: failedRunRows,
+			}
+		}
+		if len(selected) != 2 {
+			t.Fatalf("retry selected rows = %#v, want 2 rows after skip", selected)
+		}
+		for _, row := range selected {
+			if row.RowIndex == 1 {
+				t.Fatalf("skip used current UI order instead of failed runtime order: %#v", selected)
+			}
+		}
+		return nil
+	}
+	w.canvasTreeRecover = func(description string, backTarget error, allowSkip bool) (string, error) {
+		return "skip", nil
+	}
+
+	if err := w.refreshCanvasTreeInteractive(context.Background(), &state, phylo.DefaultTreeSettings()); err != nil {
+		t.Fatalf("refreshCanvasTreeInteractive returned error: %v", err)
+	}
+	if callCount != 2 {
+		t.Fatalf("refresh call count = %d, want 2", callCount)
+	}
+	if state.Items[0].Selected[1] {
+		t.Fatalf("failed-run PHGOT000001 row should be unchecked: %#v", state.Items[0].Selected)
+	}
+	if !state.Items[0].Selected[0] || !state.Items[0].Selected[2] {
+		t.Fatalf("non-skipped rows should remain checked: %#v", state.Items[0].Selected)
+	}
+}
+
 func TestApplyMSASelectionToCanvasStateUpdatesCanvasSelection(t *testing.T) {
 	w := NewBlastWizard(nil)
 	w.canvasTreeLastPlan = phylo.RunPlan{
@@ -1871,6 +2106,54 @@ func TestApplyMSASelectionToCanvasStateUpdatesCanvasSelection(t *testing.T) {
 	}
 	if got := state.Items[0].Subtitle; got != "1/3 lines" {
 		t.Fatalf("canvas subtitle = %q, want selection summary updated", got)
+	}
+}
+
+func TestApplyMSASelectionToCanvasStateEditsDisplayNameAndSequence(t *testing.T) {
+	w := NewBlastWizard(nil)
+	w.canvasTreeLastPlan = phylo.RunPlan{
+		Records: []phylo.InputRecord{{
+			TaxonID:      "PHGOT000001",
+			DisplayName:  "old name",
+			SequenceKind: phylo.SequenceProtein,
+			CanvasItem:   "msa rows",
+			CanvasRow:    0,
+		}},
+	}
+	state := canvasLaunchState{Items: []model.CanvasItem{{
+		Title:    "msa rows",
+		Selected: []bool{true},
+		Rows: []model.CanvasRow{{
+			Kind:        model.CanvasKindFasta,
+			DisplayName: "old name",
+			FASTA:       &model.QuerySequenceSource{Sequence: "MPEPTIDE", SequenceKind: model.SequenceProtein},
+		}},
+	}}}
+
+	changed := w.applyMSASelectionToCanvasState(&state, phylo.MSAApplyRequest{Rows: []phylo.MSAApplyRow{{
+		TaxonID:     "PHGOT000001",
+		DisplayName: "new name with spaces",
+		Description: "MSA-only description",
+		Sequence:    "m pep tide",
+		State:       "green",
+	}}})
+	if !changed {
+		t.Fatal("applyMSASelectionToCanvasState reported no change for MSA edits")
+	}
+	row := state.Items[0].Rows[0]
+	if row.DisplayName != "new name with spaces" || !row.DisplayNameLocked {
+		t.Fatalf("MSA name edit should lock Canvas display name, got %#v", row)
+	}
+	if row.SequenceData == nil || row.SequenceData.Sequence != "M PEP TIDE" {
+		t.Fatalf("MSA sequence edit should uppercase and save to Canvas sequence data, got %#v", row.SequenceData)
+	}
+	if row.FASTA == nil || row.FASTA.Sequence != "M PEP TIDE" || row.FASTA.ProteinSequence != "M PEP TIDE" {
+		t.Fatalf("MSA sequence edit should update FASTA row sequence fields, got %#v", row.FASTA)
+	}
+
+	applyCanvasDisplayNameSource(&state.Items[0], "gene_id")
+	if got := state.Items[0].Rows[0].DisplayName; got != "new name with spaces" {
+		t.Fatalf("MSA-locked display name was overwritten by display-name source change: %q", got)
 	}
 }
 
@@ -2128,21 +2411,7 @@ func TestMegaPHGORuntimeDesktop4CLSnapshotSourceExeProbe(t *testing.T) {
 	if strings.TrimSpace(os.Getenv("PHYTOZOME_RUN_MEGAPHGO_RUNTIME")) == "" || strings.TrimSpace(os.Getenv("PHYTOZOME_MEGAPHGO_4CL_PGO")) == "" {
 		t.Skip("set PHYTOZOME_RUN_MEGAPHGO_RUNTIME=1 and PHYTOZOME_MEGAPHGO_4CL_PGO=1 to run the desktop 4CL .pgo source-runtime probe")
 	}
-	path := strings.TrimSpace(os.Getenv("PHYTOZOME_MEGAPHGO_PGO"))
-	if path == "" {
-		path = `C:\Users\wangsychn\Desktop\4CLtree.pgo`
-	}
-	sourceExe := strings.TrimSpace(os.Getenv("PHYTOZOME_MEGAPHGO_SOURCE_EXE"))
-	appRoot := repoRootForWorkflowRuntimeProbeTest(t)
-	if sourceExe == "" {
-		sourceExe = filepath.Join(appRoot, `_mega_source\MEGA12.1-source\PHgoRuntime\lib\x86_64-win64\mega-phgo-runtime.exe`)
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("desktop Canvas snapshot %s is not available: %v", path, err)
-	}
-	if _, err := os.Stat(sourceExe); err != nil {
-		t.Fatalf("MEGA PHgo source runtime exe %s is not available: %v", sourceExe, err)
-	}
+	path, sourceExe := desktop4CLRuntimeProbePaths(t)
 
 	snapshot, err := sessionsnapshot.ReadFile(path)
 	if err != nil {
@@ -2219,6 +2488,98 @@ func TestMegaPHGORuntimeDesktop4CLSnapshotSourceExeProbe(t *testing.T) {
 	}
 }
 
+func TestMegaPHGORuntimeDesktop4CLSkipRetriesWithoutSamePair(t *testing.T) {
+	if strings.TrimSpace(os.Getenv("PHYTOZOME_RUN_MEGAPHGO_RUNTIME")) == "" || strings.TrimSpace(os.Getenv("PHYTOZOME_MEGAPHGO_4CL_PGO")) == "" {
+		t.Skip("set PHYTOZOME_RUN_MEGAPHGO_RUNTIME=1 and PHYTOZOME_MEGAPHGO_4CL_PGO=1 to run the desktop 4CL .pgo source-runtime skip probe")
+	}
+	path, sourceExe := desktop4CLRuntimeProbePaths(t)
+	snapshot, err := sessionsnapshot.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) returned error: %v", path, err)
+	}
+	if snapshot.Canvas == nil || len(snapshot.Canvas.Items) == 0 {
+		t.Fatalf("snapshot %s does not contain Canvas items", path)
+	}
+
+	w := NewBlastWizard(nil)
+	w.instanceID = "desktop-4cl-pgo-source-runtime-skip-probe"
+	w.hydrateSnapshotSequenceCache(snapshot.SequenceCache)
+	state := canvasLaunchState{Items: w.hydrateCanvasRowSequenceData(canvasItemsFromSnapshot(snapshot.Canvas.Items))}
+	settings := phylo.DefaultTreeSettings()
+	settings.ConversionTarget = phylo.ConversionTargetProtein
+	settings.AlignmentMethod = phylo.AlignmentClustalW
+	settings.TreeMethod = phylo.TreeNeighborJoining
+	sourceRuntime := workflowSourceExeRuntime{exe: sourceExe}
+	var firstSkipped []canvasTreeSkippedRow
+	var firstSelected []canvasSelectedRow
+	callCount := 0
+	skipCount := 0
+	const maxRuntimeRefreshes = 8
+	w.canvasTreeRefreshRun = func(ctx context.Context, runState canvasLaunchState, settings phylo.TreeSettings) error {
+		callCount++
+		if callCount > maxRuntimeRefreshes {
+			t.Fatalf("automatic Skip exceeded %d runtime refreshes", maxRuntimeRefreshes)
+		}
+		selected := selectedCanvasRowsInOrder(runState.Items)
+		result, err := w.buildCanvasTreeArtifactsWithRuntime(ctx, runState, selected, settings, sourceRuntime)
+		t.Logf("refresh_call=%d selected=%d artifact_dir=%s", callCount, len(selected), result.ArtifactDir)
+		if err == nil {
+			return nil
+		}
+		var skippedErr *canvasTreeSkippedRowsError
+		if !errors.As(err, &skippedErr) {
+			t.Fatalf("runtime refresh failed without skip mapping on call %d: %v\nartifacts: %s", callCount, err, result.ArtifactDir)
+		}
+		t.Logf("refresh_call=%d skipped=%s", callCount, canvasTreeSkipSummary(skippedErr.SkippedRows))
+		if callCount == 1 {
+			firstSkipped = append([]canvasTreeSkippedRow(nil), skippedErr.SkippedRows...)
+			firstSelected = append([]canvasSelectedRow(nil), selected...)
+			if !canvasTreeSkippedRowsContainTaxa(firstSkipped, "PHGOT000089", "PHGOT000085") {
+				t.Fatalf("first 4CL skip did not expose expected runtime pair: %#v", firstSkipped)
+			}
+			return err
+		}
+		if canvasTreeSkippedRowsContainTaxa(skippedErr.SkippedRows, "PHGOT000089", "PHGOT000085") {
+			t.Fatalf("Skip did not remove the first runtime pair; second skipped rows: %#v", skippedErr.SkippedRows)
+		}
+		return err
+	}
+	w.canvasTreeRecover = func(description string, backTarget error, allowSkip bool) (string, error) {
+		skipCount++
+		if !allowSkip {
+			t.Fatalf("runtime recovery should allow Skip")
+		}
+		if callCount == 1 && (!strings.Contains(description, "PHGOT000089") || !strings.Contains(description, "PHGOT000085")) {
+			t.Fatalf("first recovery dialog did not name expected runtime taxa: %q", description)
+		}
+		return "skip", nil
+	}
+	if err := w.refreshCanvasTreeInteractive(context.Background(), &state, settings); err != nil {
+		t.Fatalf("interactive runtime refresh returned error: %v", err)
+	}
+	if callCount < 2 {
+		t.Fatalf("Skip probe only ran %d refresh call(s), want at least 2", callCount)
+	}
+	if skipCount != 1 {
+		t.Fatalf("automatic Skip should prompt once, got %d prompts", skipCount)
+	}
+	if len(firstSkipped) == 0 {
+		t.Fatal("Skip probe did not capture the first runtime skipped rows")
+	}
+	for _, skipped := range resolveCanvasTreeSkippedRows(firstSelected, firstSkipped) {
+		if skipped.ItemIndex < 0 || skipped.ItemIndex >= len(state.Items) {
+			t.Fatalf("resolved skipped item index is invalid: %#v", skipped)
+		}
+		selected := normalizeCanvasSelection(state.Items[skipped.ItemIndex].Selected, len(state.Items[skipped.ItemIndex].Rows))
+		if skipped.RowIndex < 0 || skipped.RowIndex >= len(selected) {
+			t.Fatalf("resolved skipped row index is invalid: %#v", skipped)
+		}
+		if selected[skipped.RowIndex] {
+			t.Fatalf("4CL Skip should uncheck %s row %d after first runtime failure: %#v", skipped.ItemTitle, skipped.RowIndex+1, selected)
+		}
+	}
+}
+
 func canvasSnapshotDNAOnlyState(items []model.CanvasItem) canvasLaunchState {
 	out := cloneCanvasItems(items)
 	for itemIndex := range out {
@@ -2255,6 +2616,133 @@ func canvasSnapshotSelectedRowsByDatabase(items []model.CanvasItem, kind model.C
 		updateCanvasItemSubtitle(&out[itemIndex])
 	}
 	return canvasLaunchState{Items: out}
+}
+
+func desktop4CLRuntimeProbePaths(t *testing.T) (string, string) {
+	t.Helper()
+	path := strings.TrimSpace(os.Getenv("PHYTOZOME_MEGAPHGO_PGO"))
+	if path == "" {
+		path = `C:\Users\wangsychn\Desktop\4CLtree.pgo`
+	}
+	sourceExe := strings.TrimSpace(os.Getenv("PHYTOZOME_MEGAPHGO_SOURCE_EXE"))
+	appRoot := repoRootForWorkflowRuntimeProbeTest(t)
+	if sourceExe == "" {
+		sourceExe = filepath.Join(appRoot, `_mega_source\MEGA12.1-source\PHgoRuntime\lib\x86_64-win64\mega-phgo-runtime.exe`)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("desktop Canvas snapshot %s is not available: %v", path, err)
+	}
+	if _, err := os.Stat(sourceExe); err != nil {
+		t.Fatalf("MEGA PHgo source runtime exe %s is not available: %v", sourceExe, err)
+	}
+	if !strings.EqualFold(filepath.Ext(sourceExe), ".exe") {
+		t.Fatalf("MEGA PHgo source runtime must be an .exe for this probe, got %s", sourceExe)
+	}
+	return path, sourceExe
+}
+
+type workflowSourceExeRuntime struct {
+	exe string
+}
+
+func (r workflowSourceExeRuntime) Name() string {
+	return "mega-phgo-runtime-source-exe"
+}
+
+func (r workflowSourceExeRuntime) Run(ctx context.Context, plan phylo.RunPlan) (phylo.RunResult, error) {
+	if err := plan.ToArtifactSet().Write(); err != nil {
+		return phylo.RunResult{}, err
+	}
+	requestPath, err := phylo.WriteMegaPHGORuntimeRequest(plan)
+	if err != nil {
+		return phylo.RunResult{}, err
+	}
+	cmd := exec.CommandContext(ctx, r.exe, requestPath)
+	cmd.Dir = plan.BaseDir
+	output, runErr := cmd.CombinedOutput()
+	responsePath := filepath.Join(plan.BaseDir, phylo.RuntimeResponseFile)
+	response, readErr := readMegaPHGORuntimeResponseForWorkflowProbe(responsePath)
+	if readErr != nil {
+		if runErr != nil {
+			return phylo.RunResult{Plan: plan, ArtifactDir: plan.BaseDir, ErrorText: strings.TrimSpace(string(output))}, fmt.Errorf("%v: %w", runErr, readErr)
+		}
+		return phylo.RunResult{Plan: plan, ArtifactDir: plan.BaseDir, ErrorText: readErr.Error()}, readErr
+	}
+	response.SkippedRecords = phylo.SkippedRecordsForRuntimeError(plan, response.ErrorText, response.SkippedRecords)
+	result := phylo.RunResult{
+		Plan:           plan,
+		ArtifactDir:    plan.BaseDir,
+		ErrorText:      strings.TrimSpace(firstNonEmpty(response.ErrorText, string(output))),
+		SkippedRecords: append([]phylo.RuntimeSkippedRecord(nil), response.SkippedRecords...),
+	}
+	if responseErr := strings.TrimSpace(response.ErrorText); responseErr != "" {
+		return result, fmt.Errorf("%s", responseErr)
+	}
+	if runErr != nil {
+		return result, runErr
+	}
+	alignedFASTA, err := os.ReadFile(filepath.Join(plan.BaseDir, "aligned.fasta"))
+	if err != nil {
+		return result, err
+	}
+	newick, err := os.ReadFile(filepath.Join(plan.BaseDir, "tree.nwk"))
+	if err != nil {
+		return result, err
+	}
+	finalPlan, err := phylo.BuildRunPlan(plan.SessionID, plan.RunID, plan.BaseDir, plan.Settings, plan.Kind, plan.Records, plan.Metadata, string(alignedFASTA), string(newick), time.Now())
+	if err != nil {
+		return result, err
+	}
+	if err := finalPlan.ToArtifactSet().Write(); err != nil {
+		return result, err
+	}
+	result.Plan = finalPlan
+	result.SelectedNewick = filepath.Join(plan.BaseDir, "tree.nwk")
+	result.SummaryPath = filepath.Join(plan.BaseDir, "runtime-summary.txt")
+	return result, nil
+}
+
+type workflowStaticRuntime struct{}
+
+func (workflowStaticRuntime) Name() string {
+	return "static-runtime"
+}
+
+func (workflowStaticRuntime) Run(ctx context.Context, plan phylo.RunPlan) (phylo.RunResult, error) {
+	aligned := phylo.InputFASTA(plan.Records)
+	names := make([]string, 0, len(plan.Records))
+	for _, record := range plan.Records {
+		names = append(names, record.TaxonID)
+	}
+	newick := "(" + strings.Join(names, ",") + ");"
+	finalPlan, err := phylo.BuildRunPlan(plan.SessionID, plan.RunID, plan.BaseDir, plan.Settings, plan.Kind, plan.Records, plan.Metadata, aligned, newick, time.Now())
+	if err != nil {
+		return phylo.RunResult{}, err
+	}
+	if err := finalPlan.ToArtifactSet().Write(); err != nil {
+		return phylo.RunResult{}, err
+	}
+	return phylo.RunResult{
+		Plan:           finalPlan,
+		ArtifactDir:    finalPlan.BaseDir,
+		SelectedNewick: filepath.Join(finalPlan.BaseDir, "tree.nwk"),
+	}, nil
+}
+
+func canvasTreeSkippedRowsContainTaxa(rows []canvasTreeSkippedRow, taxa ...string) bool {
+	if len(taxa) == 0 {
+		return false
+	}
+	seen := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		seen[strings.ToUpper(strings.TrimSpace(row.TaxonID))] = true
+	}
+	for _, taxon := range taxa {
+		if !seen[strings.ToUpper(strings.TrimSpace(taxon))] {
+			return false
+		}
+	}
+	return true
 }
 
 func repoRootForWorkflowRuntimeProbeTest(t *testing.T) string {

@@ -42,7 +42,7 @@ Panel pages are ordered so the data-mode decision comes first:
 - page 2: `Align settings`
 - page 3: `Tree settings`
 
-The default focused page is page 1. Target defaults are Protein mode and unselect runtime-reported skipped/failed rows when the recovery dialog continues.
+The default focused page is page 1. Target defaults to Protein mode. When MEGA/runtime reports skipped or failed rows, the recovery dialog's Skip action always unchecks the reported rows and immediately retries the refresh with the remaining selection.
 
 Each module is drawn as a normal boxed TUI region with its own title, matching the visual language used by the existing complex parameter dialogs such as filter and family settings. Yellow is used only for focus and active accents; the panel must not become a custom dashboard or a full yellow block.
 
@@ -187,7 +187,31 @@ When the dropdown changes, Canvas immediately applies it:
 3. If the source column value is empty, copy the original FASTA head/header into `display_name`.
 4. Preserve the user's ability to manually edit individual `display_name` cells afterward.
 
-The tree viewer must use `display_name` for leaf labels. It must not choose labels independently from Newick leaf names.
+The tree viewer must use `display_name` as the base leaf label. It must not choose labels independently from Newick leaf names, and it must not append hidden duplicate-disambiguation suffixes such as `[PHGOT000123]`.
+
+## PHgo Row Coordinates
+
+The Tree settings page includes a checkbox directly under the `Show column` dropdown:
+
+```text
+Show PHgo row coordinates
+```
+
+This option is on by default. When enabled, the tree display label is:
+
+```text
+[canvas item number,row number within item] display_name
+```
+
+Example:
+
+```text
+[1,13] Aco018382.1
+```
+
+The coordinate prefix is display-only. For the tree viewer it is applied to the rendered display label. For the MSA viewer it is sent as separate `display_prefix` metadata and drawn only in Jalview's left sequence list; Jalview's real sequence name, right-click menu text, rename dialog value, and Apply name edit remain the raw base `display_name`. The PHgo MSA left sequence list always draws this text left-aligned immediately after the PHgo checkbox column, regardless of Jalview's right-align-ID setting, and it uses the raw sequence name instead of Jalview's sequence-limit display ID so generated suffixes such as `/1-564` are not shown. Turning the option off clears the prefix metadata and does not modify Canvas cells.
+
+The Canvas left sidebar always prefixes each item title with `[item number]` independently of this option, so Canvas items remain identifiable even when the tree/MSA coordinate prefix is disabled.
 
 ## Manual Display-Name Edits
 
@@ -209,7 +233,7 @@ The viewer should show an empty state for the current Canvas session until the f
 
 ## Refresh And Relabeling
 
-Changing the display-name source dropdown or manually editing the `display_name` column is a preview-only change. It updates the Canvas table and the Reactree payload metadata but must not rerun `mega-phgo-runtime` when the selected rows, sequence content, target mode, alignment method/parameters, and tree method/parameters are unchanged.
+Changing the display-name source dropdown, manually editing the `display_name` column, or toggling `Show PHgo row coordinates` is a preview-only change. It updates the Canvas table and/or viewer payload metadata but must not rerun `mega-phgo-runtime` when the selected rows, sequence content, target mode, alignment method/parameters, and tree method/parameters are unchanged.
 
 Changing the selected rows, sequence content, target mode, skipped-row unselect behavior, alignment method/parameters, or tree method/parameters is a computation change and requires a runtime refresh.
 

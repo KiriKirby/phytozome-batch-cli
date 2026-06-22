@@ -101,7 +101,8 @@ Must preserve:
 - tree target mode, display-name source, skip-unselect setting, alignment method/parameters, and tree method/parameters
 - last tree payload, run manifest, computation fingerprints, aligned FASTA, Newick, runtime request/response, input metadata, and runtime logs when present
 - MSA row states: `green` for rows selected and sent to both tree and MSA, `yellow` for rows unchecked for both tree and MSA because MSA Apply excluded them, and `red` for ordinary unchecked rows
-- last shared tree/MSA payload and aligned FASTA plus durable Jalview state such as groups, annotations, markers, and settings when available
+- last shared tree/MSA payload and aligned FASTA plus durable Jalview state such as groups, sequence features, annotations, markers, settings, sequence descriptions, MSA-local saved sequence names, and MSA sequence text edits when available
+- MSA coordinate display metadata split into raw/base display name and optional `[canvas,row]` display prefix, so the prefix can be redrawn without becoming Jalview's true sequence name
 
 Must not preserve as `.pgo` workflow state:
 
@@ -112,7 +113,7 @@ Must not rebuild on open:
 
 - runtime tree artifacts already packed into the snapshot
 - MSA yellow/red/green row state
-- Jalview groups/annotations/settings already captured by the MSA bridge
+- Jalview groups/features/annotations/settings already captured by the MSA bridge
 
 ## Keyword Workflows
 

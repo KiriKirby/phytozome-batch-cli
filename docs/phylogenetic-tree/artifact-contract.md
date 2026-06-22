@@ -50,7 +50,7 @@ PHGOT000002
 PHGOT000003
 ```
 
-User-facing labels live in metadata and page state. Stable IDs stay alphanumeric so Newick-to-metadata mapping is lossless.
+User-facing labels live in metadata and page state. Stable IDs stay alphanumeric so Newick-to-metadata mapping is lossless. For tree rendering, `display_name` may include the optional PHgo coordinate prefix when the Canvas setting is enabled. For MSA rendering, `base_display_name` is Jalview's true sequence name and `display_prefix` is drawn separately in the left ID list; menus, rename dialogs, and Apply payloads use the base name. PHgo's Jalview left ID renderer ignores Jalview's right-align-ID and sequence-limit suffix settings so the visible list stays left-aligned and never gains generated `/start-end` suffixes that would diverge from PHgo `display_name`.
 
 ## Input Metadata
 
@@ -66,6 +66,8 @@ Required shape:
     {
       "taxon_id": "PHGOT000001",
       "display_name": "PAL1",
+      "base_display_name": "PAL1",
+      "display_prefix": "[1,1]",
       "source_type": "keyword",
       "original_head": "original FASTA header",
       "sequence_kind": "protein",
@@ -297,7 +299,7 @@ Session snapshots must preserve:
 Implemented snapshot shape:
 
 - The Canvas module stores a `tree` object with durable tree settings, last viewer payload, last run manifest, last run directory, last aligned FASTA, last Newick tree, and the computation fingerprints.
-- The `canvas-msa-state-v1` module stores row states (`green`, `yellow`, `red`), the last shared tree/MSA payload and aligned FASTA, and Jalview-owned durable state such as groups, annotations, markers, and settings when available. Browser Jalview state is synchronized with PHgo through `GET`/`PUT /sessions/<id>/msa/state` so snapshot save reads the latest durable MSA state instead of relying on stale launch-time data. PHgo keeps one selected-row set for tree and MSA: green is selected for both, yellow is unchecked for both but marked as MSA-origin in PHgo, and red is ordinary unchecked.
+- The `canvas-msa-state-v1` module stores row states (`green`, `yellow`, `red`), the last shared tree/MSA payload and aligned FASTA, and Jalview-owned durable state such as groups, annotations, markers, settings, per-sequence descriptions, per-sequence saved names, and per-sequence text edits when available. Browser Jalview state is synchronized with PHgo through `GET`/`PUT /sessions/<id>/msa/state` so snapshot save reads the latest durable MSA state instead of relying on stale launch-time data. Checkbox toggles use a lightweight rows-only state save, while File > Save, File > Apply, and startup/layout synchronization save the full durable Jalview state. PHgo keeps one selected-row set for tree and MSA: green is selected for both, yellow is unchecked for both but marked as MSA-origin in PHgo, and red is ordinary unchecked.
 - The artifact manifest packs the last run directory's core files under `artifacts/tree/<session>/<run>/`, including `input.fasta`, `input.meta.json`, `runtime-request.json`, `runtime-response.json`, `aligned.fasta`, `tree.nwk`, `viewer.payload.json`, `run.manifest.json`, and runtime logs when they exist.
 - Snapshot open restores packed files to their original run directory, restores the Canvas tree settings, restores the MSA row/durable Jalview state, and keeps the last payload/plan in memory so reopening the tree panel can immediately push the previous tree and MSA payloads to the local viewer service.
 - Snapshot save synchronizes the last tree payload metadata from the current Canvas table before packing the snapshot. If the user changed `display_name` or the display-name source after the last tree refresh, the snapshot records those current labels in `last_payload` and updates only the preview fingerprint. Alignment/tree fingerprints and runtime artifacts are not changed, and `mega-phgo-runtime` is not rerun during snapshot save.

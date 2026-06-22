@@ -319,9 +319,19 @@
     for (const row of rows) {
       const taxonID = String(row.taxon_id || "").trim();
       const displayName = String(row.display_name || "").trim();
+      const displayPrefix = String(row.display_prefix || "").trim();
       if (!taxonID) continue;
       const index = Number.isFinite(row.index) ? row.index : Number.parseInt(row.index, 10);
-      const entry = { taxonID, displayName, index: Number.isFinite(index) ? index : -1, state: normalizeSelectionState(row.state) };
+      const entry = {
+        taxonID,
+        displayName,
+        displayPrefix,
+        displayLabel: String(row.display_label || "").trim(),
+        canvasItemIndex: Number.parseInt(row.canvas_item_index, 10),
+        canvasRow: Number.parseInt(row.canvas_row, 10),
+        index: Number.isFinite(index) ? index : -1,
+        state: normalizeSelectionState(row.state)
+      };
       selection.set(taxonID, entry);
       if (displayName) byName.set(displayName, entry);
       if (entry.index >= 0) byIndex.set(entry.index, entry);
@@ -399,6 +409,36 @@
     return "";
   }
 
+  function javaMapToObject(value, limit) {
+    const max = Math.max(0, limit || 250);
+    if (!value || max === 0) return {};
+    const out = {};
+    try {
+      if (typeof value.entrySet$ === "function") {
+        const entries = value.entrySet$();
+        const iterator = entries && typeof entries.iterator$ === "function" ? entries.iterator$() : null;
+        let count = 0;
+        while (iterator && typeof iterator.hasNext$ === "function" && iterator.hasNext$() && count < max) {
+          const entry = iterator.next$();
+          const key = stringValue(callValue(entry, ["getKey$"]));
+          const rawValue = callValue(entry, ["getValue$"]);
+          if (key) {
+            if (rawValue && typeof rawValue.entrySet$ === "function") {
+              out[key] = javaMapToObject(rawValue, max);
+            } else {
+              const primitive = primitiveValue(rawValue);
+              out[key] = primitive !== undefined ? primitive : stringValue(rawValue);
+            }
+          }
+          count += 1;
+        }
+      }
+    } catch (error) {
+      debug("java-map-collect-failed", { message: formatValue(error) });
+    }
+    return out;
+  }
+
   function setIfPresent(target, key, value) {
     const primitive = primitiveValue(value);
     if (primitive !== undefined) {
@@ -435,9 +475,61 @@
     return [...selection.values()].map((entry) => ({
       taxon_id: entry.taxonID,
       display_name: entry.displayName || "",
+      display_prefix: entry.displayPrefix || "",
+      display_label: entry.displayLabel || "",
+      canvas_item_index: Number.isFinite(entry.canvasItemIndex) ? entry.canvasItemIndex : undefined,
+      canvas_row: Number.isFinite(entry.canvasRow) ? entry.canvasRow : undefined,
       index: entry.index,
       state: normalizeSelectionState(entry.state)
     }));
+  }
+
+  function alignmentSequences(frame) {
+    const alignment = mainAlignment(frame);
+    if (!alignment) return [];
+    const raw = callValue(alignment, ["getSequences$"]);
+    const fromList = javaListToArray(raw, 5000);
+    if (fromList.length > 0) return fromList;
+    const height = Number(primitiveValue(callValue(alignment, ["getHeight$"]))) || 0;
+    const out = [];
+    for (let i = 0; i < height; i += 1) {
+      try {
+        if (typeof alignment.getSequenceAt$I === "function") {
+          const seq = alignment.getSequenceAt$I(i);
+          if (seq) out.push(seq);
+        }
+      } catch (_error) {
+        // Keep sequence collection best-effort; Jalview may be mid-refresh.
+      }
+    }
+    return out;
+  }
+
+  function sequenceTaxonID(seq) {
+    if (!seq) return "";
+    return String(seq.phgoTaxonID || "").trim();
+  }
+
+  function sequenceDescription(seq) {
+    return stringValue(callValue(seq, ["getDescription$"]));
+  }
+
+  function sequenceText(seq) {
+    return stringValue(callValue(seq, ["getSequenceAsString$"]));
+  }
+
+  function collectMSASequences(frame) {
+    return alignmentSequences(frame).map((seq, index) => {
+      const name = sequenceName(seq);
+      const entry = selectionEntryForSequence(sequenceTaxonID(seq), name, index);
+      return {
+        taxon_id: sequenceTaxonID(seq) || (entry && entry.taxonID) || "",
+        display_name: name,
+        description: sequenceDescription(seq),
+        sequence: sequenceText(seq),
+        index
+      };
+    }).filter((row) => row.taxon_id || row.display_name || row.sequence);
   }
 
   function collectMSASettings(frame) {
@@ -499,53 +591,114 @@
     });
   }
 
-  function collectMSAState(trigger) {
+  function featureListForSequence(seq) {
+    const direct = callValue(seq, ["getSequenceFeatures$"]);
+    const fromDirect = javaListToArray(direct, 20000);
+    if (fromDirect.length > 0) return fromDirect;
+    const featureStore = callValue(seq, ["getFeatures$"]);
+    let allFeatures = null;
+    try {
+      if (featureStore && typeof featureStore.getAllFeatures$SA === "function") {
+        allFeatures = featureStore.getAllFeatures$SA([]);
+      }
+    } catch (_error) {
+      allFeatures = null;
+    }
+    return javaListToArray(allFeatures, 20000);
+  }
+
+  function collectFeatureDetails(feature) {
+    const out = {};
+    setIfPresent(out, "type", callValue(feature, ["getType$"]));
+    setIfPresent(out, "description", callValue(feature, ["getDescription$"]));
+    setIfPresent(out, "begin", callValue(feature, ["getBegin$"]));
+    setIfPresent(out, "end", callValue(feature, ["getEnd$"]));
+    setIfPresent(out, "score", callValue(feature, ["getScore$"]));
+    setIfPresent(out, "feature_group", callValue(feature, ["getFeatureGroup$"]));
+    setIfPresent(out, "status", callValue(feature, ["getStatus$"]));
+    setIfPresent(out, "strand", callValue(feature, ["getStrand$"]));
+    setIfPresent(out, "phase", callValue(feature, ["getPhase$"]));
+    setIfPresent(out, "attributes", callValue(feature, ["getAttributes$"]));
+    setIfPresent(out, "ena_location", callValue(feature, ["getEnaLocation$"]));
+    if (feature && feature.otherDetails) {
+      const other = javaMapToObject(feature.otherDetails, 250);
+      if (Object.keys(other).length > 0) out.other_details = other;
+    }
+    const links = javaListToArray(feature && feature.links, 100).map(stringValue).filter(Boolean);
+    if (links.length > 0) out.links = links;
+    return out;
+  }
+
+  function collectMSAFeatures(frame) {
+    const out = [];
+    const sequences = alignmentSequences(frame);
+    for (let index = 0; index < sequences.length && out.length < 20000; index += 1) {
+      const seq = sequences[index];
+      const name = sequenceName(seq);
+      const entry = selectionEntryForSequence(sequenceTaxonID(seq), name, index);
+      const features = featureListForSequence(seq);
+      for (let featureIndex = 0; featureIndex < features.length && out.length < 20000; featureIndex += 1) {
+        const feature = collectFeatureDetails(features[featureIndex]);
+        feature.sequence_index = index;
+        feature.feature_index = featureIndex;
+        feature.taxon_id = sequenceTaxonID(seq) || (entry && entry.taxonID) || "";
+        feature.display_name = name;
+        out.push(feature);
+      }
+    }
+    return out;
+  }
+
+  function collectMSAState(trigger, options) {
     const frame = mainAlignmentFrame(null);
-    return {
-      schema_version: 1,
+    const full = !options || options.full !== false;
+    const state = {
+      schema_version: 2,
       updated_at: new Date().toISOString(),
       rows: collectSelectionRows(),
       viewer_state: {
         trigger: String(trigger || ""),
         title: document.title,
         ready: document.body.classList.contains("phgo-jalview-ready")
-      },
-      settings: collectMSASettings(frame),
-      groups: collectMSAGroups(frame),
-      annotations: collectMSAAnnotations(frame)
+      }
     };
+    if (full) {
+      state.sequences = collectMSASequences(frame);
+      state.settings = collectMSASettings(frame);
+      state.groups = collectMSAGroups(frame);
+      state.annotations = collectMSAAnnotations(frame);
+      state.features = collectMSAFeatures(frame);
+    }
+    return state;
   }
 
   let msaStateSaveTimer = 0;
-  let msaStateSaveInFlight = false;
-  let msaStateSavePending = "";
-  async function saveMSAStateNow(trigger, options) {
+  let msaStateSaveChain = Promise.resolve();
+  async function saveMSAStateNow(trigger, options, fullState) {
     const session = currentSession();
     if (!session) return;
-    if (msaStateSaveInFlight) {
-      msaStateSavePending = trigger || "pending";
-      return;
-    }
-    msaStateSaveInFlight = true;
-    try {
-      await putJSON(`/sessions/${encodeURIComponent(session)}/msa/state`, collectMSAState(trigger), options);
-    } catch (error) {
-      debug("msa-state-save-failed", { trigger, message: formatValue(error) });
-    } finally {
-      msaStateSaveInFlight = false;
-      if (msaStateSavePending) {
-        const pending = msaStateSavePending;
-        msaStateSavePending = "";
-        scheduleMSAStateSave(pending, 600);
+    const full = fullState !== false;
+    const saveTask = msaStateSaveChain.catch(() => undefined).then(async () => {
+      try {
+        await putJSON(`/sessions/${encodeURIComponent(session)}/msa/state`, collectMSAState(trigger, { full }), options);
+      } catch (error) {
+        debug("msa-state-save-failed", { trigger, message: formatValue(error) });
       }
-    }
+    });
+    msaStateSaveChain = saveTask;
+    await saveTask;
   }
 
-  function scheduleMSAStateSave(trigger, delay) {
+  async function saveMSAStateManual() {
+    await saveMSAStateNow("manual-save");
+    showToast("MSA state saved.", false);
+  }
+
+  function scheduleMSAStateSave(trigger, delay, fullState) {
     if (msaStateSaveTimer) window.clearTimeout(msaStateSaveTimer);
     msaStateSaveTimer = window.setTimeout(() => {
       msaStateSaveTimer = 0;
-      saveMSAStateNow(trigger || "debounced");
+      saveMSAStateNow(trigger || "debounced", undefined, fullState);
     }, Number.isFinite(delay) ? delay : 900);
   }
 
@@ -563,18 +716,16 @@
     return null;
   }
 
-  function selectionEntryForSequenceName(name) {
-    return selectionEntryForSequence("", name);
-  }
-
   function selectionStateForSequence(taxonID, name, index) {
     const entry = selectionEntryForSequence(taxonID, name, index);
     return normalizeSelectionState(entry && entry.state);
   }
 
-  function selectionStateForName(name) {
-    const entry = selectionEntryForSequence("", name);
-    return normalizeSelectionState(entry && entry.state);
+  function invalidateIdCanvas(idCanvas) {
+    if (!idCanvas) return;
+    idCanvas.fastPaint = false;
+    idCanvas.image = null;
+    idCanvas.imgHeight = 0;
   }
 
   function requestMSARepaint() {
@@ -582,20 +733,25 @@
     if (!frame || !frame.alignPanel) return;
     try {
       const ap = frame.alignPanel;
-      if (ap.idPanel && ap.idPanel.idCanvas && typeof ap.idPanel.idCanvas.repaint$ === "function") {
-        ap.idPanel.idCanvas.repaint$();
+      const idCanvas = ap.idPanel && ap.idPanel.idCanvas ? ap.idPanel.idCanvas : null;
+      invalidateIdCanvas(idCanvas);
+      if (ap.av && typeof ap.av.setIdWidth$I === "function") ap.av.setIdWidth$I(-1);
+      if (typeof ap.calculateIdWidth$ === "function" && ap.idPanel && ap.idPanel.idCanvas && typeof ap.idPanel.idCanvas.setPreferredSize$java_awt_Dimension === "function") {
+        ap.idPanel.idCanvas.setPreferredSize$java_awt_Dimension(ap.calculateIdWidth$());
       }
       if (typeof ap.paintAlignment$Z$Z === "function") {
         ap.paintAlignment$Z$Z(false, false);
       } else if (typeof ap.repaint$ === "function") {
         ap.repaint$();
+      } else if (idCanvas && typeof idCanvas.repaint$ === "function") {
+        idCanvas.repaint$();
       }
     } catch (error) {
       debug("msa-repaint-failed", { message: formatValue(error) });
     }
   }
 
-  function toggleSelectionForSequence(taxonID, name, index) {
+  function toggleSelectionForSequence(taxonID, name, index, repaint) {
     const entry = selectionEntryForSequence(taxonID, name, index);
     if (!entry) return "green";
     entry.state = nextSelectionState(entry.state);
@@ -612,28 +768,39 @@
       window.__PHGOMSASelectionByIndex = byIndex;
     }
     window.__PHGOMSASelection = selection;
-    requestMSARepaint();
-    scheduleMSAStateSave("selection-toggle", 250);
+    if (repaint !== false) requestMSARepaint();
+    scheduleMSAStateSave("selection-toggle", 250, false);
     return entry.state;
-  }
-
-  function toggleSelectionForName(name) {
-    return toggleSelectionForSequence("", name);
   }
 
   async function applyMSASelection() {
     const session = currentSession();
     if (!session) return;
     const selection = window.__PHGOMSASelection || new Map();
-    const rows = [...selection.values()].map((entry) => ({
-      taxon_id: entry.taxonID,
-      name: entry.displayName || "",
-      index: entry.index,
-      state: normalizeSelectionState(entry.state)
-    }));
+    const frame = mainAlignmentFrame(null);
+    const sequencesByTaxon = new Map();
+    const sequencesByIndex = new Map();
+    const sequencesByName = new Map();
+    for (const seqRow of collectMSASequences(frame)) {
+      if (seqRow.taxon_id) sequencesByTaxon.set(seqRow.taxon_id, seqRow);
+      if (Number.isFinite(seqRow.index)) sequencesByIndex.set(seqRow.index, seqRow);
+      if (seqRow.display_name) sequencesByName.set(seqRow.display_name, seqRow);
+    }
+    const rows = [...selection.values()].map((entry) => {
+      const seqRow = sequencesByTaxon.get(entry.taxonID) || sequencesByIndex.get(entry.index) || sequencesByName.get(entry.displayName) || {};
+      return {
+        taxon_id: entry.taxonID,
+        name: seqRow.display_name || entry.displayName || "",
+        display_name: seqRow.display_name || entry.displayName || "",
+        description: seqRow.description || "",
+        sequence: seqRow.sequence || "",
+        index: entry.index,
+        state: normalizeSelectionState(entry.state)
+      };
+    });
     showToast("Refreshing tree and MSA...", true);
     try {
-      await saveMSAStateNow("apply");
+      await saveMSAStateNow("apply", undefined, true);
       await fetchJSON(`/sessions/${encodeURIComponent(session)}/msa/apply`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -693,7 +860,7 @@
     installMSAEvents();
     window.setTimeout(requestMSARepaint, 200);
     window.setTimeout(requestMSARepaint, 1000);
-    window.setTimeout(() => scheduleMSAStateSave("startup", 200), 1200);
+    window.setTimeout(() => scheduleMSAStateSave("startup", 200, true), 1200);
   }
 
   function resizeMainAlignmentFrame() {
@@ -743,10 +910,60 @@
       document.body.classList.add("phgo-jalview-ready");
       if (!adaptLayout.msaStateSaveScheduled) {
         adaptLayout.msaStateSaveScheduled = true;
-        scheduleMSAStateSave("layout-ready", 600);
+        scheduleMSAStateSave("layout-ready", 600, true);
       }
     }
     return alignmentReady;
+  }
+
+  function closeAllSwingMenus(reason) {
+    try {
+      if (window.jQuery) {
+        window.jQuery(".ui-j2smenu").each(function () {
+          const menu = window.jQuery(this).data("ui-j2smenu");
+          if (menu && typeof menu.collapseAll === "function") {
+            menu.collapseAll({ type: reason || "phgo-close", target: document.body }, true, "phgo");
+          }
+        });
+      }
+    } catch (error) {
+      debug("hide-menus-failed", { reason, method: "j2smenu.collapseAll", message: formatValue(error) });
+    }
+    try {
+      if (window.J2S && window.J2S.Swing && typeof window.J2S.Swing.hideMenus === "function" && window.J2S.thisApplet) {
+        window.J2S.Swing.hideMenus(window.J2S.thisApplet);
+      }
+    } catch (error) {
+      debug("hide-menus-failed", { reason, method: "J2S.Swing.hideMenus", message: formatValue(error) });
+    }
+    try {
+      if (window.Clazz && typeof window.Clazz._4Name === "function") {
+        const componentUI = window.Clazz._4Name("swingjs.plaf.JSComponentUI");
+        if (componentUI && typeof componentUI.hideMenusAndToolTip$ === "function") componentUI.hideMenusAndToolTip$();
+        const popupUI = window.Clazz._4Name("swingjs.plaf.JSPopupMenuUI");
+        if (popupUI && typeof popupUI.closeAllMenus$ === "function") popupUI.closeAllMenus$();
+      }
+    } catch (error) {
+      debug("hide-menus-failed", { reason, method: "SwingJS plaf close", message: formatValue(error) });
+    }
+    try {
+      document.querySelectorAll(".swingjsPopupMenu, .swingjs-popup, .swingjs-menu, [role='menu'], [role='j2smenu']").forEach((node) => {
+        if (!(node instanceof HTMLElement)) return;
+        if (node.closest("[id*='_MenuBarUI']")) return;
+        node.style.removeProperty("visibility");
+        node.style.display = "none";
+      });
+      document.querySelectorAll(".ui-j2smenu[aria-hidden='true']").forEach((node) => {
+        if (!(node instanceof HTMLElement)) return;
+        node.style.removeProperty("visibility");
+      });
+      document.querySelectorAll(".ui-j2smenu-node.ui-state-active, .ui-j2smenu-node.ui-state-focus").forEach((node) => {
+        if (!(node instanceof HTMLElement)) return;
+        node.classList.remove("ui-state-active", "ui-state-focus");
+      });
+    } catch (error) {
+      debug("hide-menus-failed", { reason, method: "dom-menu-close-fallback", message: formatValue(error) });
+    }
   }
 
   function hideMenusFromOutsideEvent(event) {
@@ -758,19 +975,21 @@
     if (target.closest("[id*='_MenuBarUI'], [id*='_MenuUI'], [id*='_MenuItemUI'], [id*='_CheckBoxMenuItemUI'], [id*='_RadioButtonMenuItemUI']")) {
       return;
     }
-    try {
-      if (window.J2S && window.J2S.Swing && typeof window.J2S.Swing.hideMenus === "function" && window.J2S.thisApplet) {
-        window.J2S.Swing.hideMenus(window.J2S.thisApplet);
-      }
-    } catch (error) {
-      debug("hide-menus-failed", { message: formatValue(error) });
-    }
+    closeAllSwingMenus(event.type || "outside");
+  }
+
+  function hideMenusOnEscape(event) {
+    if (event && event.key === "Escape") closeAllSwingMenus("escape");
   }
 
   function installLayoutBridge() {
     window.addEventListener("resize", scheduleResize);
     window.addEventListener("load", scheduleResize);
     document.addEventListener("pointerdown", hideMenusFromOutsideEvent, true);
+    document.addEventListener("mousedown", hideMenusFromOutsideEvent, true);
+    document.addEventListener("touchstart", hideMenusFromOutsideEvent, true);
+    document.addEventListener("wheel", hideMenusFromOutsideEvent, true);
+    document.addEventListener("keydown", hideMenusOnEscape, true);
     window.addEventListener("message", (event) => {
       const data = event.data || {};
       if (data.source === "phgo-jalview-host" && data.type === "resize") {
@@ -812,14 +1031,19 @@
       installLayoutBridge,
       resizeMainAlignmentFrame,
       applyMSASelection,
-      selectionStateForName,
       selectionStateForSequence,
-      toggleSelectionForName,
       toggleSelectionForSequence,
       collectMSAState,
       saveMSAStateNow,
+      saveMSAStateManual,
       scheduleMSAStateSave,
+      closeAllSwingMenus,
+      invalidateIdCanvas,
       checkboxColumnWidth: () => 16,
+      displayPrefixForSequence: (taxonID, name, index) => {
+        const entry = selectionEntryForSequence(taxonID, name, index);
+        return entry && entry.displayPrefix ? entry.displayPrefix : "";
+      },
       formatValue,
       debug
     };

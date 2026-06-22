@@ -2,8 +2,6 @@ package tair
 
 import (
 	"context"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,6 +36,12 @@ func TestDefaultReleasesCarryVersionSpecificAssets(t *testing.T) {
 	}
 	if !strings.Contains(byName["TAIR12"].GFFURL, "TAIR12_1Feb26.gff3.zip") {
 		t.Fatalf("TAIR12 gff url = %q", byName["TAIR12"].GFFURL)
+	}
+	if byName["TAIR12"].ProteinURL == "" || !strings.Contains(byName["TAIR12"].ProteinURL, "TAIR12_pep.fasta") {
+		t.Fatalf("TAIR12 protein url = %q", byName["TAIR12"].ProteinURL)
+	}
+	if byName["TAIR12"].NucleotideURL == "" || !strings.Contains(byName["TAIR12"].NucleotideURL, "TAIR12_cds.fasta") {
+		t.Fatalf("TAIR12 nucleotide url = %q", byName["TAIR12"].NucleotideURL)
 	}
 	if byName["TAIR10"].ProteinURL == "" || !strings.Contains(byName["TAIR10"].ProteinURL, "TAIR10_pep_20110103_representative_gene_model_updated") {
 		t.Fatalf("TAIR10 protein url = %q", byName["TAIR10"].ProteinURL)
@@ -76,10 +80,10 @@ func TestFilterCandidatesForModeHidesUnavailableReleases(t *testing.T) {
 	for _, candidate := range blastCandidates {
 		seenBlast[candidate.JBrowseName] = true
 	}
-	if seenBlast["TAIR11"] || seenBlast["TAIR12"] {
+	if seenBlast["TAIR11"] {
 		t.Fatalf("blast list should hide unavailable releases, got %#v", seenBlast)
 	}
-	if !seenBlast["TAIR10"] || !seenBlast["Araport11"] || !seenBlast["TAIR9"] || !seenBlast["TAIR8"] || !seenBlast["TAIR7"] || !seenBlast["TAIR6"] {
+	if !seenBlast["TAIR12"] || !seenBlast["TAIR10"] || !seenBlast["Araport11"] || !seenBlast["TAIR9"] || !seenBlast["TAIR8"] || !seenBlast["TAIR7"] || !seenBlast["TAIR6"] {
 		t.Fatalf("blast list missing usable releases: %#v", seenBlast)
 	}
 
@@ -259,6 +263,50 @@ func TestParseTAIRGFFAndFASTA(t *testing.T) {
 	enrichRowWithProtein(&row, entry)
 	if row.Symbols != "NAC001" || !strings.Contains(row.Description, "NAC domain") {
 		t.Fatalf("row not enriched: symbols=%q description=%q", row.Symbols, row.Description)
+	}
+}
+
+func TestBuildIndexMergesTAIR12GeneAndTranscriptRows(t *testing.T) {
+	dir := t.TempDir()
+	gffPath := filepath.Join(dir, "TAIR12.gff3")
+	fastaPath := filepath.Join(dir, "TAIR12_pep.fasta")
+	gff := strings.Join([]string{
+		"##gff-version 3",
+		"Chr1\tGnomon\tgene\t7395\t9666\t.\t+\t.\tID=AT1G01010;locus_tag=TAIR12_AT1G01010;locus_biotype=protein_coding;gene=NAC001;description=NAC domain containing protein 1;gene_synonym=\"ANAC001, NTL10\";Note=NAC domain containing protein 1;Name=AT1G01010;Dbxref=TAIR:AT1G01010_TAIR12;",
+		"Chr1\tGnomon\tmRNA\t7395\t9666\t.\t+\t.\tID=AT1G01010.1;Parent=AT1G01010;Name=AT1G01010.1;product=putative DNA-binding transcription factor[NAC domain containing protein 1];",
+		"",
+	}, "\n")
+	if err := os.WriteFile(gffPath, []byte(gff), 0o600); err != nil {
+		t.Fatalf("WriteFile gff: %v", err)
+	}
+	if err := os.WriteFile(fastaPath, []byte(">AT1G01010.1 | Chr1:7395-9666\nMEDQVG\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile fasta: %v", err)
+	}
+	client := NewClient(nil)
+	rel := releaseInfo{
+		Name:          "TAIR12-test",
+		Label:         "TAIR12-test",
+		GFFURL:        gffPath,
+		ProteinURL:    fastaPath,
+		ReportURLBase: baseURL + "/servlets/TairObject?type=locus&name=",
+	}
+	version := model.SpeciesCandidate{ProteomeID: 370201, JBrowseName: rel.Name, GenomeLabel: rel.Label}
+	idx, err := client.buildIndex(context.Background(), rel, version)
+	if err != nil {
+		t.Fatalf("buildIndex: %v", err)
+	}
+	if len(idx.Rows) != 1 {
+		t.Fatalf("expected merged single row, got %d: %#v", len(idx.Rows), idx.Rows)
+	}
+	row := idx.Rows[0]
+	if row.GeneIdentifier != "AT1G01010" || row.TranscriptID != "AT1G01010.1" || row.SequenceID != "AT1G01010.1" {
+		t.Fatalf("unexpected merged identifiers: %#v", row)
+	}
+	if row.LabelName != "NAC001" || !strings.Contains(row.Synonyms, "ANAC001") || !strings.Contains(row.Aliases, "TAIR12_AT1G01010") {
+		t.Fatalf("gene-level metadata was not merged: label=%q aliases=%q synonyms=%q", row.LabelName, row.Aliases, row.Synonyms)
+	}
+	if !strings.Contains(row.Description, "NAC domain") || row.ExtraColumns["tair_fasta_header"] == "" {
+		t.Fatalf("transcript/protein metadata was not merged: desc=%q extras=%#v", row.Description, row.ExtraColumns)
 	}
 }
 
@@ -451,76 +499,6 @@ func defaultVersionForTest() model.SpeciesCandidate {
 		JBrowseName: "TAIR10",
 		GenomeLabel: "TAIR10",
 		CommonName:  "Arabidopsis thaliana",
-	}
-}
-
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
-	return f(req)
-}
-
-func TestFetchProteinSequenceFallsBackToExternalSources(t *testing.T) {
-	client := NewClient(&http.Client{
-		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			switch {
-			case strings.Contains(req.URL.Host, "rest.ensembl.org") && strings.Contains(req.URL.Path, "/sequence/id/AT1G01010.1"):
-				body := `{"id":"AT1G01010.1","query":"AT1G01010.1","desc":"NAC domain containing protein 1","seq":"MPEPTIDE","molecule":"protein"}`
-				return &http.Response{
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(body)),
-					Header:     make(http.Header),
-				}, nil
-			default:
-				return &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(strings.NewReader(`{"error":"not found"}`)),
-					Header:     make(http.Header),
-				}, nil
-			}
-		}),
-	})
-	data, err := client.FetchProteinSequence(context.Background(), 370201, "AT1G01010.1")
-	if err != nil {
-		t.Fatalf("FetchProteinSequence external fallback: %v", err)
-	}
-	if got := strings.TrimSpace(data.Sequence); got != "MPEPTIDE" {
-		t.Fatalf("external fallback sequence = %q, want %q", got, "MPEPTIDE")
-	}
-	if !strings.Contains(data.OriginalHeader, "AT1G01010.1") {
-		t.Fatalf("external fallback header = %q", data.OriginalHeader)
-	}
-}
-
-func TestFetchProteinSequenceExternalFallbackSupportsTAIR12Target(t *testing.T) {
-	client := NewClient(&http.Client{
-		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			switch {
-			case strings.Contains(req.URL.Host, "rest.ensembl.org") && strings.Contains(req.URL.Path, "/sequence/id/AT1G01010.1"):
-				body := `{"id":"AT1G01010.1","query":"AT1G01010.1","desc":"NAC domain containing protein 1","seq":"MTAIR12SEQ","molecule":"protein"}`
-				return &http.Response{
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(body)),
-					Header:     make(http.Header),
-				}, nil
-			default:
-				return &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(strings.NewReader(`{"error":"not found"}`)),
-					Header:     make(http.Header),
-				}, nil
-			}
-		}),
-	})
-	data, err := client.FetchProteinSequence(context.Background(), 370201, "AT1G01010.1")
-	if err != nil {
-		t.Fatalf("FetchProteinSequence TAIR12 fallback: %v", err)
-	}
-	if got := strings.TrimSpace(data.Sequence); got == "" {
-		t.Fatal("expected TAIR12 fallback sequence")
-	}
-	if !strings.Contains(strings.TrimSpace(data.OriginalHeader), "AT1G01010.1") {
-		t.Fatalf("unexpected TAIR12 fallback header: %q", data.OriginalHeader)
 	}
 }
 

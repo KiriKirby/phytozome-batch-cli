@@ -636,15 +636,6 @@ func enrichLocalBlastRows(ctx context.Context, c *Client, rel releaseInfo, versi
 			row.GeneReportURL = hit.GeneReportURL
 			row.Defline = firstNonEmpty(row.Defline, hit.Description)
 			row.UniProtAccession = hit.UniProt
-		} else if liveHit, hitErr := c.findRow(ctx, version, row.SequenceID); hitErr == nil {
-			lookup[cacheKey] = liveHit
-			hit := liveHit
-			row.Protein = firstNonEmpty(hit.GeneIdentifier, hit.TranscriptID, row.Protein)
-			row.SequenceID = firstNonEmpty(hit.SequenceID, row.SequenceID)
-			row.TranscriptID = hit.TranscriptID
-			row.GeneReportURL = hit.GeneReportURL
-			row.Defline = firstNonEmpty(row.Defline, hit.Description)
-			row.UniProtAccession = hit.UniProt
 		}
 		if row.GeneReportURL == "" {
 			row.GeneReportURL = rel.ReportURLBase + urlQueryEscape(stripTranscriptSuffix(row.SequenceID))

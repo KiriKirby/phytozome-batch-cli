@@ -183,7 +183,10 @@ var bridge=window.__PHGOJalviewBridgeAPI;
 if (bridge && bridge.phgoState && bridge.phgoState.session && e.getX$() <= bridge.checkboxColumnWidth() && pos.seqIndex >= 0 && pos.seqIndex < this.av.getAlignment$().getHeight$()) {
 var seqForPhgo=this.av.getAlignment$().getSequenceAt$I(pos.seqIndex);
 if (seqForPhgo != null ) {
-bridge.toggleSelectionForSequence(seqForPhgo.phgoTaxonID || "", seqForPhgo.getName$(), pos.seqIndex);
+bridge.toggleSelectionForSequence(seqForPhgo.phgoTaxonID || "", seqForPhgo.getName$(), pos.seqIndex, false);
+if (bridge.invalidateIdCanvas) {
+bridge.invalidateIdCanvas(this.getIdCanvas$());
+}
 this.getIdCanvas$().repaint$();
 this.alignPanel.paintAlignment$Z$Z(false, false);
 return;

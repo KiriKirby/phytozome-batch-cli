@@ -47,13 +47,15 @@ const (
 )
 
 type TreeSettings struct {
-	DisplayNameSource      string            `json:"display_name_source"`
-	ConversionTarget       ConversionTarget  `json:"conversion_target"`
-	ConversionSkipUnselect bool              `json:"conversion_skip_unselect,omitempty"`
-	AlignmentMethod        AlignmentMethod   `json:"alignment_method"`
-	AlignmentParams        map[string]string `json:"alignment_params,omitempty"`
-	TreeMethod             TreeMethod        `json:"tree_method"`
-	TreeParams             map[string]string `json:"tree_params,omitempty"`
+	DisplayNameSource        string            `json:"display_name_source"`
+	ShowCanvasCoordinates    bool              `json:"show_canvas_coordinates"`
+	ShowCanvasCoordinatesSet bool              `json:"show_canvas_coordinates_set,omitempty"`
+	ConversionTarget         ConversionTarget  `json:"conversion_target"`
+	ConversionSkipUnselect   bool              `json:"conversion_skip_unselect,omitempty"`
+	AlignmentMethod          AlignmentMethod   `json:"alignment_method"`
+	AlignmentParams          map[string]string `json:"alignment_params,omitempty"`
+	TreeMethod               TreeMethod        `json:"tree_method"`
+	TreeParams               map[string]string `json:"tree_params,omitempty"`
 }
 
 type ParameterKind string
@@ -92,27 +94,32 @@ type MethodDefinition struct {
 
 func DefaultTreeSettings() TreeSettings {
 	return TreeSettings{
-		DisplayNameSource:      DefaultDisplayNameSource,
-		ConversionTarget:       DefaultConversionTarget,
-		ConversionSkipUnselect: true,
-		AlignmentMethod:        DefaultAlignmentMethod,
-		AlignmentParams:        map[string]string{},
-		TreeMethod:             DefaultTreeMethod,
-		TreeParams:             map[string]string{},
+		DisplayNameSource:        DefaultDisplayNameSource,
+		ShowCanvasCoordinates:    true,
+		ShowCanvasCoordinatesSet: true,
+		ConversionTarget:         DefaultConversionTarget,
+		ConversionSkipUnselect:   true,
+		AlignmentMethod:          DefaultAlignmentMethod,
+		AlignmentParams:          map[string]string{},
+		TreeMethod:               DefaultTreeMethod,
+		TreeParams:               map[string]string{},
 	}
 }
 
 type InputRecord struct {
-	TaxonID        string            `json:"taxon_id"`
-	DisplayName    string            `json:"display_name"`
-	SourceType     string            `json:"source_type"`
-	OriginalHead   string            `json:"original_head"`
-	Sequence       string            `json:"-"`
-	SequenceKind   SequenceKind      `json:"sequence_kind"`
-	CanvasItem     string            `json:"canvas_item"`
-	CanvasRow      int               `json:"canvas_row"`
-	TableValues    map[string]string `json:"table_values,omitempty"`
-	RowFingerprint string            `json:"row_fingerprint"`
+	TaxonID         string            `json:"taxon_id"`
+	DisplayName     string            `json:"display_name"`
+	BaseDisplayName string            `json:"base_display_name,omitempty"`
+	DisplayPrefix   string            `json:"display_prefix,omitempty"`
+	SourceType      string            `json:"source_type"`
+	OriginalHead    string            `json:"original_head"`
+	Sequence        string            `json:"-"`
+	SequenceKind    SequenceKind      `json:"sequence_kind"`
+	CanvasItem      string            `json:"canvas_item"`
+	CanvasItemIndex int               `json:"canvas_item_index"`
+	CanvasRow       int               `json:"canvas_row"`
+	TableValues     map[string]string `json:"table_values,omitempty"`
+	RowFingerprint  string            `json:"row_fingerprint"`
 }
 
 type Metadata struct {
@@ -131,21 +138,35 @@ type Metadata struct {
 }
 
 type MSASelectionRow struct {
+	TaxonID         string `json:"taxon_id"`
+	DisplayName     string `json:"display_name,omitempty"`
+	DisplayPrefix   string `json:"display_prefix,omitempty"`
+	DisplayLabel    string `json:"display_label,omitempty"`
+	CanvasItemIndex int    `json:"canvas_item_index,omitempty"`
+	CanvasRow       int    `json:"canvas_row,omitempty"`
+	Index           int    `json:"index"`
+	State           string `json:"state"`
+}
+
+type MSASequenceState struct {
 	TaxonID     string `json:"taxon_id"`
 	DisplayName string `json:"display_name,omitempty"`
-	Index       int    `json:"index"`
-	State       string `json:"state"`
+	Description string `json:"description,omitempty"`
+	Sequence    string `json:"sequence,omitempty"`
+	Index       int    `json:"index,omitempty"`
 }
 
 type MSAState struct {
-	SchemaVersion int               `json:"schema_version"`
-	UpdatedAt     time.Time         `json:"updated_at,omitempty"`
-	Rows          []MSASelectionRow `json:"rows,omitempty"`
-	ViewerState   map[string]any    `json:"viewer_state,omitempty"`
-	Settings      map[string]any    `json:"settings,omitempty"`
-	Annotations   []map[string]any  `json:"annotations,omitempty"`
-	Groups        []map[string]any  `json:"groups,omitempty"`
-	Markers       []map[string]any  `json:"markers,omitempty"`
+	SchemaVersion int                `json:"schema_version"`
+	UpdatedAt     time.Time          `json:"updated_at,omitempty"`
+	Rows          []MSASelectionRow  `json:"rows,omitempty"`
+	Sequences     []MSASequenceState `json:"sequences,omitempty"`
+	ViewerState   map[string]any     `json:"viewer_state,omitempty"`
+	Settings      map[string]any     `json:"settings,omitempty"`
+	Annotations   []map[string]any   `json:"annotations,omitempty"`
+	Features      []map[string]any   `json:"features,omitempty"`
+	Groups        []map[string]any   `json:"groups,omitempty"`
+	Markers       []map[string]any   `json:"markers,omitempty"`
 }
 
 type ViewerPayload struct {

@@ -5,15 +5,39 @@ import (
 )
 
 func InputFASTA(records []InputRecord) string {
+	return inputFASTA(records, nil)
+}
+
+func RuntimeInputFASTA(records []InputRecord, settings TreeSettings) string {
+	return runtimeInputFASTA(records, settings)
+}
+
+func runtimeInputFASTA(records []InputRecord, settings TreeSettings) string {
+	normalize := runtimeSequenceNormalizer(settings)
+	return inputFASTA(records, normalize)
+}
+
+func inputFASTA(records []InputRecord, normalize func(string) string) string {
 	var b strings.Builder
 	for _, record := range records {
 		sequence := sanitizeFASTASequence(record.Sequence)
+		if normalize != nil {
+			sequence = normalize(sequence)
+		}
 		b.WriteString(">")
 		b.WriteString(record.TaxonID)
 		b.WriteByte('\n')
 		writeWrappedSequence(&b, sequence, 80)
 	}
 	return b.String()
+}
+
+func runtimeSequenceNormalizer(settings TreeSettings) func(string) string {
+	return trimTerminalStars
+}
+
+func trimTerminalStars(sequence string) string {
+	return strings.TrimRight(sequence, "*")
 }
 
 func sanitizeFASTASequence(sequence string) string {

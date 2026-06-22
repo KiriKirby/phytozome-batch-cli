@@ -143,7 +143,17 @@ var idWidth=0;
 var id;
 while ((i < al.getHeight$()) && (al.getSequenceAt$I(i) != null ) ){
 var s=al.getSequenceAt$I(i);
-id=s.getDisplayId$Z(this.av.getShowJVSuffix$());
+id=s.getName$();
+{
+var bridge=window.__PHGOJalviewBridgeAPI;
+if (bridge && bridge.displayPrefixForSequence) {
+try {
+var prefix=bridge.displayPrefixForSequence(s.phgoTaxonID || "", id, i) || "";
+if (String(prefix).length > 0) id=prefix + " " + id;
+} catch (e) {
+}
+}
+}
 if (fm.stringWidth$S(id) > idWidth) {
 idWidth=fm.stringWidth$S(id);
 }i++;

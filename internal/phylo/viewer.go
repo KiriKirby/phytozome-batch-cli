@@ -49,10 +49,13 @@ type ViewerSessionStatus struct {
 }
 
 type MSAApplyRow struct {
-	TaxonID string `json:"taxon_id"`
-	Name    string `json:"name,omitempty"`
-	Index   *int   `json:"index,omitempty"`
-	State   string `json:"state"`
+	TaxonID     string `json:"taxon_id"`
+	Name        string `json:"name,omitempty"`
+	DisplayName string `json:"display_name,omitempty"`
+	Description string `json:"description,omitempty"`
+	Sequence    string `json:"sequence,omitempty"`
+	Index       *int   `json:"index,omitempty"`
+	State       string `json:"state"`
 }
 
 type MSAApplyRequest struct {
@@ -163,7 +166,7 @@ func (v *ViewerServer) SetMSAState(sessionID string, state MSAState) {
 		return
 	}
 	if state.SchemaVersion == 0 {
-		state.SchemaVersion = 1
+		state.SchemaVersion = 2
 	}
 	if state.UpdatedAt.IsZero() {
 		state.UpdatedAt = time.Now()
@@ -175,7 +178,8 @@ func (v *ViewerServer) SetMSAState(sessionID string, state MSAState) {
 	if v.state.msaRows == nil {
 		v.state.msaRows = map[string]map[string]string{}
 	}
-	state = cloneMSAState(state)
+	existing := cloneMSAState(v.state.msaStates[sessionID])
+	state = mergeMSAState(existing, state)
 	v.state.msaStates[sessionID] = state
 	rows := make(map[string]string, len(state.Rows))
 	for _, row := range state.Rows {
@@ -381,7 +385,7 @@ func jalviewAlignedFASTA(payload ViewerPayload) string {
 	names := make(map[string]InputRecord, len(payload.Metadata.Records))
 	for _, record := range payload.Metadata.Records {
 		taxonID := strings.TrimSpace(record.TaxonID)
-		if taxonID == "" || strings.TrimSpace(record.DisplayName) == "" {
+		if taxonID == "" || strings.TrimSpace(jalviewRecordDisplayName(record)) == "" {
 			continue
 		}
 		names[taxonID] = record
@@ -418,13 +422,41 @@ func fastaHeaderID(header string) string {
 }
 
 func jalviewPHgoHeader(record InputRecord) string {
-	displayName := strings.TrimSpace(record.DisplayName)
+	displayName := strings.TrimSpace(jalviewRecordDisplayName(record))
 	name := base64.RawURLEncoding.EncodeToString([]byte(displayName))
 	taxonID := base64.RawURLEncoding.EncodeToString([]byte(strings.TrimSpace(record.TaxonID)))
 	if taxonID == "" {
 		return "phgo_name64:" + name
 	}
 	return "phgo_name64:" + name + " phgo_taxon_id64:" + taxonID
+}
+
+func jalviewRecordDisplayName(record InputRecord) string {
+	if name := strings.TrimSpace(record.BaseDisplayName); name != "" {
+		return name
+	}
+	return strings.TrimSpace(record.DisplayName)
+}
+
+func inputRecordDisplayLabel(record InputRecord) string {
+	name := strings.TrimSpace(jalviewRecordDisplayName(record))
+	prefix := strings.TrimSpace(record.DisplayPrefix)
+	if prefix == "" {
+		return name
+	}
+	if name == "" {
+		return prefix
+	}
+	return prefix + " " + name
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if text := strings.TrimSpace(value); text != "" {
+			return text
+		}
+	}
+	return ""
 }
 
 func (v *ViewerServer) handlePayloadPut(w http.ResponseWriter, r *http.Request, sessionID string) {
@@ -536,7 +568,7 @@ func (v *ViewerServer) handleMSAStateGet(w http.ResponseWriter, r *http.Request,
 	seq := v.state.sessions[sessionID]
 	v.state.mu.RUnlock()
 	if state.SchemaVersion == 0 {
-		state.SchemaVersion = 1
+		state.SchemaVersion = 2
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("ETag", strconv.FormatUint(seq, 10))
@@ -547,7 +579,7 @@ func (v *ViewerServer) handleMSAStateGet(w http.ResponseWriter, r *http.Request,
 func (v *ViewerServer) handleMSAStatePut(w http.ResponseWriter, r *http.Request, sessionID string) {
 	defer r.Body.Close()
 	var state MSAState
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20))
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<20))
 	if err := decoder.Decode(&state); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -559,7 +591,7 @@ func (v *ViewerServer) handleMSAStatePut(w http.ResponseWriter, r *http.Request,
 	}
 	now := time.Now()
 	if state.SchemaVersion == 0 {
-		state.SchemaVersion = 1
+		state.SchemaVersion = 2
 	}
 	if state.UpdatedAt.IsZero() {
 		state.UpdatedAt = now
@@ -604,10 +636,14 @@ func (v *ViewerServer) handleMSASelectionGet(w http.ResponseWriter, r *http.Requ
 	rowStates := cloneViewerStringMap(v.msaRowsLocked(sessionID))
 	v.state.mu.RUnlock()
 	type row struct {
-		TaxonID     string `json:"taxon_id"`
-		DisplayName string `json:"display_name"`
-		Index       int    `json:"index"`
-		State       string `json:"state"`
+		TaxonID         string `json:"taxon_id"`
+		DisplayName     string `json:"display_name"`
+		DisplayPrefix   string `json:"display_prefix,omitempty"`
+		DisplayLabel    string `json:"display_label,omitempty"`
+		CanvasItemIndex int    `json:"canvas_item_index,omitempty"`
+		CanvasRow       int    `json:"canvas_row,omitempty"`
+		Index           int    `json:"index"`
+		State           string `json:"state"`
 	}
 	rows := make([]row, 0, len(payload.Metadata.Records))
 	for index, record := range payload.Metadata.Records {
@@ -619,7 +655,16 @@ func (v *ViewerServer) handleMSASelectionGet(w http.ResponseWriter, r *http.Requ
 		if state == "" {
 			state = "green"
 		}
-		rows = append(rows, row{TaxonID: taxonID, DisplayName: strings.TrimSpace(record.DisplayName), Index: index, State: state})
+		rows = append(rows, row{
+			TaxonID:         taxonID,
+			DisplayName:     jalviewRecordDisplayName(record),
+			DisplayPrefix:   strings.TrimSpace(record.DisplayPrefix),
+			DisplayLabel:    inputRecordDisplayLabel(record),
+			CanvasItemIndex: record.CanvasItemIndex,
+			CanvasRow:       record.CanvasRow,
+			Index:           index,
+			State:           state,
+		})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"rows": rows})
@@ -628,8 +673,13 @@ func (v *ViewerServer) handleMSASelectionGet(w http.ResponseWriter, r *http.Requ
 func (v *ViewerServer) handleMSAApplyPost(w http.ResponseWriter, r *http.Request, sessionID string) {
 	defer r.Body.Close()
 	var req MSAApplyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20))
+	if err := decoder.Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if len(req.Rows) > 10000 {
+		http.Error(w, "MSA apply contains too many rows", http.StatusRequestEntityTooLarge)
 		return
 	}
 	v.state.mu.RLock()
@@ -643,17 +693,19 @@ func (v *ViewerServer) handleMSAApplyPost(w http.ResponseWriter, r *http.Request
 			continue
 		}
 		taxonByIndex[index] = taxonID
-		if displayName := strings.TrimSpace(record.DisplayName); displayName != "" {
+		if displayName := strings.TrimSpace(jalviewRecordDisplayName(record)); displayName != "" {
 			taxonByDisplayName[displayName] = taxonID
 		}
 	}
 	cleaned := make(map[string]string, len(req.Rows))
+	cleanedEdits := make(map[string]MSAApplyRow, len(req.Rows))
 	cleanedOrder := make([]string, 0, len(req.Rows))
 	for _, row := range req.Rows {
 		taxonID := strings.TrimSpace(row.TaxonID)
 		state := normalizeMSASelectionState(row.State)
-		if taxonID == "" {
-			taxonID = taxonByDisplayName[strings.TrimSpace(row.Name)]
+		name := strings.TrimSpace(firstNonEmpty(row.DisplayName, row.Name))
+		if taxonID == "" && name != "" {
+			taxonID = taxonByDisplayName[name]
 		}
 		if taxonID == "" && row.Index != nil {
 			taxonID = taxonByIndex[*row.Index]
@@ -664,7 +716,14 @@ func (v *ViewerServer) handleMSAApplyPost(w http.ResponseWriter, r *http.Request
 		if _, exists := cleaned[taxonID]; !exists {
 			cleanedOrder = append(cleanedOrder, taxonID)
 		}
+		row.TaxonID = taxonID
+		row.State = state
+		row.Name = name
+		row.DisplayName = name
+		row.Description = strings.TrimSpace(row.Description)
+		row.Sequence = strings.TrimSpace(row.Sequence)
 		cleaned[taxonID] = state
+		cleanedEdits[taxonID] = row
 	}
 	v.state.mu.Lock()
 	if v.state.msaRows == nil {
@@ -690,16 +749,30 @@ func (v *ViewerServer) handleMSAApplyPost(w http.ResponseWriter, r *http.Request
 				continue
 			}
 			rowIndex := index
+			edit := cleanedEdits[taxonID]
+			name := strings.TrimSpace(firstNonEmpty(edit.DisplayName, edit.Name, jalviewRecordDisplayName(record)))
 			cleanReq.Rows = append(cleanReq.Rows, MSAApplyRow{
-				TaxonID: taxonID,
-				Name:    strings.TrimSpace(record.DisplayName),
-				Index:   &rowIndex,
-				State:   state,
+				TaxonID:     taxonID,
+				Name:        name,
+				DisplayName: name,
+				Description: edit.Description,
+				Sequence:    edit.Sequence,
+				Index:       &rowIndex,
+				State:       state,
 			})
 		}
 	} else {
 		for _, taxonID := range cleanedOrder {
-			cleanReq.Rows = append(cleanReq.Rows, MSAApplyRow{TaxonID: taxonID, State: cleaned[taxonID]})
+			edit := cleanedEdits[taxonID]
+			name := strings.TrimSpace(firstNonEmpty(edit.DisplayName, edit.Name))
+			cleanReq.Rows = append(cleanReq.Rows, MSAApplyRow{
+				TaxonID:     taxonID,
+				Name:        name,
+				DisplayName: name,
+				Description: edit.Description,
+				Sequence:    edit.Sequence,
+				State:       cleaned[taxonID],
+			})
 		}
 	}
 	resp, err := applyFn(r.Context(), sessionID, cleanReq)
@@ -828,9 +901,10 @@ func (v *ViewerServer) normalizeMSAStateLocked(sessionID string, payload ViewerP
 			stateRows = append(stateRows, MSASelectionRow{TaxonID: taxonID, Index: index, State: state})
 		}
 		existing := cloneMSAState(v.state.msaStates[sessionID])
-		existing.SchemaVersion = 1
+		existing.SchemaVersion = 2
 		existing.UpdatedAt = time.Now()
 		existing.Rows = stateRows
+		existing.Sequences = normalizeMSASequencesForPayload(existing.Sequences, payload)
 		v.state.msaRows[sessionID] = rows
 		v.state.msaStates[sessionID] = existing
 		return
@@ -846,16 +920,21 @@ func (v *ViewerServer) normalizeMSAStateLocked(sessionID string, payload ViewerP
 		}
 		rows[taxonID] = state
 		stateRows = append(stateRows, MSASelectionRow{
-			TaxonID:     taxonID,
-			DisplayName: strings.TrimSpace(record.DisplayName),
-			Index:       index,
-			State:       state,
+			TaxonID:         taxonID,
+			DisplayName:     jalviewRecordDisplayName(record),
+			DisplayPrefix:   strings.TrimSpace(record.DisplayPrefix),
+			DisplayLabel:    inputRecordDisplayLabel(record),
+			CanvasItemIndex: record.CanvasItemIndex,
+			CanvasRow:       record.CanvasRow,
+			Index:           index,
+			State:           state,
 		})
 	}
 	existing := cloneMSAState(v.state.msaStates[sessionID])
-	existing.SchemaVersion = 1
+	existing.SchemaVersion = 2
 	existing.UpdatedAt = time.Now()
 	existing.Rows = stateRows
+	existing.Sequences = normalizeMSASequencesForPayload(existing.Sequences, payload)
 	v.state.msaRows[sessionID] = rows
 	v.state.msaStates[sessionID] = existing
 }
@@ -1013,9 +1092,11 @@ func cloneViewerStringMap(values map[string]string) map[string]string {
 func cloneMSAState(in MSAState) MSAState {
 	out := in
 	out.Rows = append([]MSASelectionRow(nil), in.Rows...)
+	out.Sequences = append([]MSASequenceState(nil), in.Sequences...)
 	out.ViewerState = cloneAnyMap(in.ViewerState)
 	out.Settings = cloneAnyMap(in.Settings)
 	out.Annotations = cloneAnyMapSlice(in.Annotations)
+	out.Features = cloneAnyMapSlice(in.Features)
 	out.Groups = cloneAnyMapSlice(in.Groups)
 	out.Markers = cloneAnyMapSlice(in.Markers)
 	return out
@@ -1027,13 +1108,91 @@ func mergeMSAState(base MSAState, update MSAState) MSAState {
 		out.SchemaVersion = update.SchemaVersion
 	}
 	if out.SchemaVersion == 0 {
-		out.SchemaVersion = 1
+		out.SchemaVersion = 2
 	}
 	if update.UpdatedAt.IsZero() {
 		out.UpdatedAt = base.UpdatedAt
 	}
-	if len(update.Rows) == 0 {
+	if update.Rows == nil {
 		out.Rows = append([]MSASelectionRow(nil), base.Rows...)
+	}
+	if update.Sequences == nil {
+		out.Sequences = append([]MSASequenceState(nil), base.Sequences...)
+	}
+	if update.ViewerState == nil {
+		out.ViewerState = cloneAnyMap(base.ViewerState)
+	}
+	if update.Settings == nil {
+		out.Settings = cloneAnyMap(base.Settings)
+	}
+	if update.Annotations == nil {
+		out.Annotations = cloneAnyMapSlice(base.Annotations)
+	}
+	if update.Features == nil {
+		out.Features = cloneAnyMapSlice(base.Features)
+	}
+	if update.Groups == nil {
+		out.Groups = cloneAnyMapSlice(base.Groups)
+	}
+	if update.Markers == nil {
+		out.Markers = cloneAnyMapSlice(base.Markers)
+	}
+	return out
+}
+
+func normalizeMSASequencesForPayload(sequences []MSASequenceState, payload ViewerPayload) []MSASequenceState {
+	if len(sequences) == 0 {
+		return nil
+	}
+	byTaxon := make(map[string]MSASequenceState, len(sequences))
+	byName := make(map[string]MSASequenceState, len(sequences))
+	for _, seq := range sequences {
+		taxonID := strings.TrimSpace(seq.TaxonID)
+		name := strings.TrimSpace(seq.DisplayName)
+		seq.TaxonID = taxonID
+		seq.DisplayName = name
+		seq.Description = strings.TrimSpace(seq.Description)
+		seq.Sequence = strings.TrimSpace(seq.Sequence)
+		if taxonID != "" {
+			byTaxon[taxonID] = seq
+		}
+		if name != "" {
+			byName[name] = seq
+		}
+	}
+	if len(payload.Metadata.Records) == 0 {
+		out := make([]MSASequenceState, 0, len(sequences))
+		keys := make([]string, 0, len(byTaxon))
+		for taxonID := range byTaxon {
+			keys = append(keys, taxonID)
+		}
+		sort.Strings(keys)
+		for index, taxonID := range keys {
+			seq := byTaxon[taxonID]
+			seq.Index = index
+			out = append(out, seq)
+		}
+		return out
+	}
+	out := make([]MSASequenceState, 0, len(payload.Metadata.Records))
+	for index, record := range payload.Metadata.Records {
+		taxonID := strings.TrimSpace(record.TaxonID)
+		if taxonID == "" {
+			continue
+		}
+		seq, ok := byTaxon[taxonID]
+		if !ok {
+			seq, ok = byName[jalviewRecordDisplayName(record)]
+		}
+		if !ok {
+			continue
+		}
+		seq.TaxonID = taxonID
+		if strings.TrimSpace(seq.DisplayName) == "" {
+			seq.DisplayName = jalviewRecordDisplayName(record)
+		}
+		seq.Index = index
+		out = append(out, seq)
 	}
 	return out
 }

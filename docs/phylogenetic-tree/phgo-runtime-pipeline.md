@@ -102,27 +102,26 @@ After the runtime finishes, PHgo accepts or rejects the result from the runtime 
 Canvas tree target mode is configured before alignment:
 
 - Protein mode is the default target.
-- Runtime-reported skipped/failed rows are unchecked by default when the recovery dialog continues.
+- Runtime-reported skipped/failed rows are unchecked when the recovery dialog's Skip action continues; PHgo immediately retries the refresh with the remaining selection.
 
 The right-panel target is the source of truth for both sequence preparation and method availability. Protein mode exposes only the protein ClustalW/MUSCLE choices. DNA mode exposes only ClustalW (DNA), MUSCLE (DNA), ClustalW (Codons), and MUSCLE (Codons). If a restored snapshot or stale UI state contains an incompatible method, refresh normalizes or rejects it before `mega-phgo-runtime` is launched.
 
 MEGA 12.1 GUI behavior is data-type gated: DNA alignment actions are enabled for nucleotide data, protein alignment actions for protein data, and codon actions for coding nucleotide data. The GUI does not reverse-translate protein input into DNA. PHgo follows that behavior in the TUI form: it chooses a MEGA target mode and sends the chosen input to `mega-phgo-runtime`; MEGA either computes or emits the runtime error.
 
-In Protein mode, PHgo uses selected protein payloads as-is. It does not translate nucleotide rows locally, infer protein content from letters, trim stops, or repair residues before runtime execution.
+PHgo uses selected sequence payloads with only runtime-format cleanup: terminal `*` markers are stripped from the FASTA handed to MEGA because a final `*` is a terminator marker with no alignment-site meaning for PHgo's tree computation. PHgo does not translate nucleotide rows locally, infer protein content from letters, remove internal `*`, or repair residues before runtime execution.
 
 In DNA mode, PHgo may use a real nucleotide/CDS sequence only when the selected row already embeds one or when row metadata points to a supported source resolver that can fetch the real nucleotide sequence. PHgo must not invent reverse translations from protein FASTA, must not classify protein-only rows by sequence letters, and must not skip them locally before runtime execution. Protein-only rows handed to DNA mode are left for MEGA runtime to accept or fail.
 
 The maintained real-runtime probe for `C:\Users\wangsychn\Desktop\output\123.pgo` exercises the production path: Protein mode must not show PHgo conversion logs, DNA mode must resolve real row-source metadata such as Lemna BLAST rows before alignment when available, and DNA mode must run ClustalW (DNA), MUSCLE (DNA), ClustalW (Codons), and MUSCLE (Codons) on DNA-capable rows from that snapshot.
 
-`input.fasta` preserves the PHgo-selected sequences for auditability. PHgo does not sanitize, trim, translate, reverse-translate, or repair protein/nucleotide content before runtime execution. The runtime request is the handoff boundary; MEGA-derived alignment/tree components accept the selected data or report the runtime failure.
+`input.fasta` is the runtime FASTA handed to MEGA. It may differ from the stored Canvas/source sequence only by removed terminal `*` markers; metadata keeps the row mapping needed to trace the source sequence. PHgo does not translate, reverse-translate, remove internal `*`, or repair protein/nucleotide content before runtime execution. The runtime request is the handoff boundary; MEGA-derived alignment/tree components accept the selected data or report the runtime failure.
 
 The maintained desktop probe for `C:\Users\wangsychn\Desktop\4CLtree.pgo`
-currently verifies this boundary with real user data. ClustalW correctly
-returns the runtime error `Unsupported protein residue "*" at sequence 85, site
-213`, which maps through the run metadata to `PHGOT000085` /
-`AT1G51680.1[4CL]`. PHgo must surface this MEGA/runtime error directly. It must
-not clean the stop codon locally and must not switch from ClustalW to MUSCLE or
-change the tree method automatically.
+verifies this boundary with real user data. It previously failed at
+`Unsupported protein residue "*" at sequence 85, site 213`; PHgo now strips
+terminal `*` markers before launching MEGA while preserving internal `*`
+validation. PHgo must still surface later MEGA/runtime errors directly and must
+not switch from ClustalW to MUSCLE or change the tree method automatically.
 
 ## Metadata
 
@@ -136,7 +135,14 @@ Every input record has metadata:
 - sequence kind
 - row identity for snapshot restoration
 
-The viewer uses this metadata to map `PHGOT...` Newick leaves to `display_name`.
+The viewer uses this metadata to map `PHGOT...` Newick leaves to the current display name.
+
+Canvas display names are built in two layers:
+
+- the base name comes from the selected Show column/display-name source or the editable Canvas `display_name` cell
+- the default-on `Show PHgo row coordinates` option prefixes tree/MSA metadata labels with `[canvas item number,row number within item]`
+
+The coordinate prefix is not written back to Canvas table cells. It exists only in the tree/MSA metadata payload. PHgo no longer appends duplicate-label suffixes such as `[PHGOT000123]`; when users leave coordinate display enabled, the coordinate prefix is the normal visible disambiguation. If users disable it, PHgo respects the raw display names even when two leaves have the same text.
 
 ## Alignment Methods
 
@@ -171,7 +177,7 @@ Minimum Evolution bootstrap is wired through MEGA's `TBootstrapMEThread` path in
 - compute: prepare selected sequences, run `mega-phgo-runtime` for MEGA alignment and tree inference
 - render: push the current payload/metadata to Reactree
 
-The first refresh in a live Canvas session is always a full compute refresh. After a `.pgo` Canvas snapshot is opened, the restored payload may be shown, but the first user-triggered `Refresh tree` is also always a full compute refresh; it must not reuse snapshot-restored alignment/tree artifacts. Later refreshes may run render-only only when the sole change since the last successful compute is a display label change.
+The first refresh in a live Canvas session is always a full compute refresh. After a `.pgo` Canvas snapshot is opened, the restored payload may be shown, but the first user-triggered `Refresh tree` is also always a full compute refresh; it must not reuse snapshot-restored alignment/tree artifacts. Later refreshes may run render-only only when the sole change since the last successful compute is a display label change, including the Show PHgo row coordinates option.
 
 The progress UI must make the active phase obvious: loading selected rows, preparing the runtime request, running `mega-phgo-runtime`, explicitly reporting render-only artifact reuse when applicable, and finally refreshing Reactree.
 
@@ -181,7 +187,6 @@ Recompute is required when any of these values change:
 - selected row order
 - sequence content
 - target mode
-- skip-and-unselect behavior for runtime-reported skipped/failed rows
 - alignment method
 - alignment parameter values
 - tree method
@@ -191,6 +196,7 @@ Recompute is not required when only these values change:
 
 - manual `display_name` edits
 - display-name bulk source changes that only relabel existing selected rows
+- the Show PHgo row coordinates display option
 - Reactree layout
 - branch length visibility
 - bootstrap visibility
@@ -208,13 +214,13 @@ The runner computes separate fingerprints:
 - tree parameter fingerprint
 - preview fingerprint
 
-The alignment fingerprint includes selected row identity, row order, sequence content, target mode, skip-and-unselect behavior, alignment method, and alignment parameters.
+The alignment fingerprint includes selected row identity, row order, sequence content, target mode, alignment method, and alignment parameters.
 
 The tree fingerprint includes the alignment output fingerprint, tree method, and tree parameters.
 
-The preview fingerprint includes display-name source, display names, and viewer options.
+The preview fingerprint includes display-name source, display names, the Show PHgo row coordinates option, and viewer options.
 
-The compute fingerprints deliberately exclude final `display_name` values and the display-name source selector. This keeps the refresh rule aligned with the Canvas workflow: relabeling leaves should update the viewer payload and browser rendering without re-running the runtime.
+The compute fingerprints deliberately exclude final `display_name` values, the display-name source selector, and the Show PHgo row coordinates option. This keeps the refresh rule aligned with the Canvas workflow: relabeling leaves should update the viewer payload and browser rendering without re-running the runtime.
 
 Artifact reuse compares only computation settings and compute fingerprints. A run with the same selected rows, sequence content, target mode, alignment settings, tree settings, aligned FASTA, and Newick may be reused even when the metadata display names changed; the reused artifact set is rewritten with fresh metadata and viewer payload for the browser.
 

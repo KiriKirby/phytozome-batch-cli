@@ -85,16 +85,17 @@ func BuildInput(records []RowSource, sourceColumn string, sessionID string, now 
 			name = taxonID
 		}
 		record := InputRecord{
-			TaxonID:        taxonID,
-			DisplayName:    name,
-			SourceType:     strings.TrimSpace(src.SourceType),
-			OriginalHead:   strings.TrimSpace(src.OriginalHead),
-			Sequence:       strings.TrimSpace(src.Sequence),
-			SequenceKind:   src.SequenceKind,
-			CanvasItem:     strings.TrimSpace(src.ItemTitle),
-			CanvasRow:      src.RowIndex,
-			TableValues:    cloneTreeTableValues(src.TableValues),
-			RowFingerprint: fingerprintRow(src, sourceColumn),
+			TaxonID:         taxonID,
+			DisplayName:     name,
+			SourceType:      strings.TrimSpace(src.SourceType),
+			OriginalHead:    strings.TrimSpace(src.OriginalHead),
+			Sequence:        strings.TrimSpace(src.Sequence),
+			SequenceKind:    src.SequenceKind,
+			CanvasItem:      strings.TrimSpace(src.ItemTitle),
+			CanvasItemIndex: src.ItemIndex,
+			CanvasRow:       src.RowIndex,
+			TableValues:     cloneTreeTableValues(src.TableValues),
+			RowFingerprint:  fingerprintRow(src, sourceColumn),
 		}
 		out = append(out, record)
 		meta.Records = append(meta.Records, record)
@@ -136,7 +137,7 @@ func viewerPayloadTitle(records []InputRecord, fallback string) string {
 
 func BuildRunPlan(sessionID string, runID string, baseDir string, settings TreeSettings, kind SequenceKind, records []InputRecord, metadata Metadata, alignedFASTA string, newick string, updatedAt time.Time) (RunPlan, error) {
 	settings = NormalizeTreeSettingsForKind(settings, kind)
-	inputFASTA := InputFASTA(records)
+	inputFASTA := runtimeInputFASTA(records, settings)
 	fingerprints := BuildFingerprints(records, settings, alignedFASTA, newick)
 	return RunPlan{
 		SessionID:       strings.TrimSpace(sessionID),
@@ -197,13 +198,14 @@ func (p RunPlan) ToArtifactSet() ArtifactSet {
 
 func BuildFingerprints(records []InputRecord, settings TreeSettings, alignedFASTA string, newick string) Fingerprints {
 	settings = NormalizeTreeSettings(settings)
+	normalizedRecords := normalizeRecordsForRuntime(records, settings)
 	inputDigest := sha256.New()
 	alignmentDigest := sha256.New()
 	treeDigest := sha256.New()
 	previewDigest := sha256.New()
 
-	writeComputeRecordFingerprint(inputDigest, records)
-	writeComputeRecordFingerprint(alignmentDigest, records)
+	writeComputeRecordFingerprint(inputDigest, normalizedRecords)
+	writeComputeRecordFingerprint(alignmentDigest, normalizedRecords)
 	alignmentDigest.Write([]byte("\nconversion_target=" + string(settings.ConversionTarget)))
 	alignmentDigest.Write([]byte("\nmethod=" + string(settings.AlignmentMethod)))
 	writeSortedMap(alignmentDigest, settings.AlignmentParams)
@@ -213,6 +215,7 @@ func BuildFingerprints(records []InputRecord, settings TreeSettings, alignedFAST
 	writeSortedMap(treeDigest, settings.TreeParams)
 
 	writeString(previewDigest, settings.DisplayNameSource)
+	writeString(previewDigest, strconv.FormatBool(settings.ShowCanvasCoordinates))
 	for _, record := range records {
 		previewDigest.Write([]byte(record.TaxonID))
 		previewDigest.Write([]byte("\n"))
@@ -226,6 +229,20 @@ func BuildFingerprints(records []InputRecord, settings TreeSettings, alignedFAST
 		Tree:      hex.EncodeToString(treeDigest.Sum(nil)),
 		Preview:   hex.EncodeToString(previewDigest.Sum(nil)),
 	}
+}
+
+func normalizeRecordsForRuntime(records []InputRecord, settings TreeSettings) []InputRecord {
+	normalize := runtimeSequenceNormalizer(settings)
+	if normalize == nil {
+		return records
+	}
+	out := make([]InputRecord, len(records))
+	for i, record := range records {
+		out[i] = record
+		out[i].Sequence = normalize(sanitizeFASTASequence(record.Sequence))
+		out[i].RowFingerprint = fingerprintInputRecord(out[i])
+	}
+	return out
 }
 
 func LoadRunManifest(dir string) (RunManifest, error) {
@@ -273,6 +290,18 @@ func fingerprintRow(src RowSource, sourceColumn string) string {
 	writeString(h, src.OriginalHead)
 	writeString(h, src.Sequence)
 	writeSortedMapExcept(h, src.TableValues, "display_name")
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func fingerprintInputRecord(record InputRecord) string {
+	h := sha256.New()
+	writeString(h, record.CanvasItem)
+	writeString(h, strconv.Itoa(record.CanvasItemIndex))
+	writeString(h, strconv.Itoa(record.CanvasRow))
+	writeString(h, record.SourceType)
+	writeString(h, record.OriginalHead)
+	writeString(h, record.Sequence)
+	writeSortedMapExcept(h, record.TableValues, "display_name")
 	return hex.EncodeToString(h.Sum(nil))
 }
 

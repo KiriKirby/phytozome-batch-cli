@@ -309,13 +309,9 @@ func (w *BlastWizard) refreshCanvasTreeInteractiveWithRun(ctx context.Context, s
 	if run == nil {
 		return fmt.Errorf("canvas tree refresh runner is unavailable")
 	}
-	suppressed := make([]canvasTreeSkippedRow, 0)
+	autoSkip := false
 	for {
 		runState := *state
-		if len(suppressed) > 0 {
-			runState.Items = cloneCanvasItems(state.Items)
-			unselectCanvasTreeSkippedRows(runState.Items, suppressed)
-		}
 		err := run(ctx, runState, settings)
 		if err == nil {
 			return nil
@@ -323,6 +319,16 @@ func (w *BlastWizard) refreshCanvasTreeInteractiveWithRun(ctx context.Context, s
 		var skippedErr *canvasTreeSkippedRowsError
 		if !errors.As(err, &skippedErr) {
 			return err
+		}
+		if autoSkip {
+			selected := skippedErr.SelectedRows
+			if len(selected) == 0 {
+				selected = w.selectedCanvasRowsInCurrentOrder(state.Items, false)
+			}
+			if changed := unselectCanvasTreeSkippedRows(state.Items, resolveCanvasTreeSkippedRows(selected, skippedErr.SkippedRows)); changed == 0 {
+				return err
+			}
+			continue
 		}
 		action, actionErr := w.canvasTreeRecoveryAction(canvasTreeSkipSummary(skippedErr.SkippedRows), prompt.ErrBackToRowSelection, true)
 		if actionErr != nil {
@@ -336,11 +342,14 @@ func (w *BlastWizard) refreshCanvasTreeInteractiveWithRun(ctx context.Context, s
 		case recoveryRetry:
 			continue
 		case recoverySkip:
-			if settings.ConversionSkipUnselect {
-				unselectCanvasTreeSkippedRows(state.Items, skippedErr.SkippedRows)
-			} else {
-				suppressed = append(suppressed, skippedErr.SkippedRows...)
+			selected := skippedErr.SelectedRows
+			if len(selected) == 0 {
+				selected = w.selectedCanvasRowsInCurrentOrder(state.Items, false)
 			}
+			if changed := unselectCanvasTreeSkippedRows(state.Items, resolveCanvasTreeSkippedRows(selected, skippedErr.SkippedRows)); changed == 0 {
+				return err
+			}
+			autoSkip = true
 			continue
 		default:
 			return err
@@ -443,12 +452,15 @@ func (w *BlastWizard) refreshCanvasTree(ctx context.Context, state canvasLaunchS
 
 type canvasTreeSkippedRow struct {
 	ItemTitle string
+	ItemIndex int
 	RowIndex  int
+	TaxonID   string
 	Reason    string
 }
 
 type canvasTreeSkippedRowsError struct {
-	SkippedRows []canvasTreeSkippedRow
+	SkippedRows  []canvasTreeSkippedRow
+	SelectedRows []canvasSelectedRow
 }
 
 func (e *canvasTreeSkippedRowsError) Error() string {
@@ -619,9 +631,58 @@ func (w *BlastWizard) applyMSASelectionToCanvasState(state *canvasLaunchState, r
 				updateCanvasItemSubtitle(&state.Items[itemIndex])
 				changed = true
 			}
+			canvasRow := &state.Items[itemIndex].Rows[rowIndex]
+			if name := strings.TrimSpace(firstNonEmpty(row.DisplayName, row.Name)); name != "" && name != strings.TrimSpace(canvasRow.DisplayName) {
+				canvasRow.DisplayName = name
+				canvasRow.DisplayNameLocked = true
+				changed = true
+			}
+			if sequence := normalizeMSAEditedSequence(row.Sequence); sequence != "" && sequence != strings.TrimSpace(canvasRowStoredSequence(*canvasRow)) {
+				applyMSAEditedSequenceToCanvasRow(canvasRow, sequence, record.SequenceKind)
+				changed = true
+			}
 		}
 	}
 	return changed
+}
+
+func normalizeMSAEditedSequence(sequence string) string {
+	sequence = strings.TrimSpace(sequence)
+	if sequence == "" {
+		return ""
+	}
+	return strings.ToUpper(sequence)
+}
+
+func applyMSAEditedSequenceToCanvasRow(row *model.CanvasRow, sequence string, kind phylo.SequenceKind) {
+	if row == nil {
+		return
+	}
+	sequence = normalizeMSAEditedSequence(sequence)
+	if sequence == "" {
+		return
+	}
+	if row.SequenceData == nil {
+		row.SequenceData = &model.ProteinSequenceData{}
+	}
+	row.SequenceData.Sequence = sequence
+	ready := true
+	row.SequenceReady = &ready
+	switch row.Kind {
+	case model.CanvasKindFasta:
+		if row.FASTA == nil {
+			row.FASTA = &model.QuerySequenceSource{}
+		}
+		row.FASTA.Sequence = sequence
+		switch kind {
+		case phylo.SequenceNucleotide:
+			row.FASTA.NucleotideSequence = sequence
+			row.FASTA.SequenceKind = model.SequenceDNA
+		case phylo.SequenceProtein:
+			row.FASTA.ProteinSequence = sequence
+			row.FASTA.SequenceKind = model.SequenceProtein
+		}
+	}
 }
 
 func canvasMSAStateFromItems(items []model.CanvasItem, payload phylo.ViewerPayload) phylo.MSAState {
@@ -658,7 +719,7 @@ func canvasMSAStateFromItems(items []model.CanvasItem, payload phylo.ViewerPaylo
 		})
 	}
 	return phylo.MSAState{
-		SchemaVersion: 1,
+		SchemaVersion: 2,
 		UpdatedAt:     time.Now(),
 		Rows:          rows,
 	}
@@ -675,6 +736,10 @@ func canvasSelectionMasks(items []model.CanvasItem) ([][]bool, [][]bool) {
 }
 
 func (w *BlastWizard) buildCanvasTreeArtifacts(ctx context.Context, state canvasLaunchState, selectedRows []canvasSelectedRow, settings phylo.TreeSettings) (phylo.RunResult, error) {
+	return w.buildCanvasTreeArtifactsWithRuntime(ctx, state, selectedRows, settings, nil)
+}
+
+func (w *BlastWizard) buildCanvasTreeArtifactsWithRuntime(ctx context.Context, state canvasLaunchState, selectedRows []canvasSelectedRow, settings phylo.TreeSettings, runtime phylo.Runtime) (phylo.RunResult, error) {
 	now := time.Now()
 	progressctx.Report(ctx, 2, fmt.Sprintf("Loading selected Canvas sequence payloads for MEGA %s-mode tree analysis...", canvasTreeTargetLabel(settings)))
 	rowSources, err := w.canvasTreeRowSourcesWithSkippedForSettings(ctx, state, selectedRows, settings)
@@ -686,6 +751,7 @@ func (w *BlastWizard) buildCanvasTreeArtifacts(ctx context.Context, state canvas
 	if err != nil {
 		return phylo.RunResult{}, err
 	}
+	applyCanvasCoordinateDisplayNames(records, &meta, settings.ShowCanvasCoordinates)
 	runID := canvasTreeRunID(now)
 	artifactDir := mustCanvasTreeArtifactDir(w.canvasTreeSessionID(), runID)
 	plan, err := phylo.BuildRunPlan(w.canvasTreeSessionID(), runID, artifactDir, settings, canvasTreeTargetSequenceKind(settings), records, meta, "", "", now)
@@ -702,10 +768,10 @@ func (w *BlastWizard) buildCanvasTreeArtifacts(ctx context.Context, state canvas
 		return reused, nil
 	}
 	progressctx.Report(ctx, 4, fmt.Sprintf("Running mega-phgo-runtime for MEGA %s alignment and tree inference...", canvasTreeTargetLabel(settings)))
-	result, err := phylo.RunPlanWithRuntime(ctx, plan, phylo.RuntimeOptions{})
+	result, err := phylo.RunPlanWithRuntime(ctx, plan, phylo.RuntimeOptions{Runtime: runtime})
 	if err != nil {
 		if runtimeSkipped := canvasTreeSkippedRowsFromRuntime(result.SkippedRecords); len(runtimeSkipped) > 0 {
-			return result, &canvasTreeSkippedRowsError{SkippedRows: runtimeSkipped}
+			return result, &canvasTreeSkippedRowsError{SkippedRows: runtimeSkipped, SelectedRows: cloneCanvasSelectedRows(selectedRows)}
 		}
 		if strings.TrimSpace(result.ArtifactDir) != "" {
 			return result, fmt.Errorf("%w\n\nmega-phgo-runtime artifacts were kept at:\n%s", err, result.ArtifactDir)
@@ -713,7 +779,7 @@ func (w *BlastWizard) buildCanvasTreeArtifacts(ctx context.Context, state canvas
 		return result, err
 	}
 	if runtimeSkipped := canvasTreeSkippedRowsFromRuntime(result.SkippedRecords); len(runtimeSkipped) > 0 {
-		return result, &canvasTreeSkippedRowsError{SkippedRows: runtimeSkipped}
+		return result, &canvasTreeSkippedRowsError{SkippedRows: runtimeSkipped, SelectedRows: cloneCanvasSelectedRows(selectedRows)}
 	}
 	w.canvasTreeLastPlan = result.Plan
 	w.canvasTreeForceCompute = false
@@ -1040,12 +1106,16 @@ func canvasTreeSkipSummary(skipped []canvasTreeSkippedRow) string {
 	lines := []string{
 		fmt.Sprintf("%d selected Canvas row(s) cannot be used for the current tree refresh.", len(skipped)),
 		"",
-		"Choose Skip to continue after MEGA/runtime reported skipped rows. The cleanup setting controls whether those rows are also unchecked.",
+		"Choose Skip to uncheck the listed row(s), then keep automatically unchecking additional rows reported by mega-phgo-runtime during this refresh until the tree succeeds.",
 		"",
 	}
 	limit := minInt(len(skipped), 8)
 	for i := 0; i < limit; i++ {
-		lines = append(lines, fmt.Sprintf("- %s row %d: %s", firstNonEmpty(strings.TrimSpace(skipped[i].ItemTitle), "Canvas"), skipped[i].RowIndex+1, skipped[i].Reason))
+		reason := strings.TrimSpace(skipped[i].Reason)
+		if taxonID := strings.TrimSpace(skipped[i].TaxonID); taxonID != "" {
+			reason = firstNonEmpty(reason, "was reported by mega-phgo-runtime") + " [" + taxonID + "]"
+		}
+		lines = append(lines, fmt.Sprintf("- %s row %d: %s", firstNonEmpty(strings.TrimSpace(skipped[i].ItemTitle), "Canvas"), skipped[i].RowIndex+1, reason))
 	}
 	if len(skipped) > limit {
 		lines = append(lines, fmt.Sprintf("- ...and %d more row(s)", len(skipped)-limit))
@@ -1053,33 +1123,90 @@ func canvasTreeSkipSummary(skipped []canvasTreeSkippedRow) string {
 	return strings.Join(lines, "\n")
 }
 
-func unselectCanvasTreeSkippedRows(items []model.CanvasItem, skipped []canvasTreeSkippedRow) {
+func unselectCanvasTreeSkippedRows(items []model.CanvasItem, skipped []canvasTreeSkippedRow) int {
 	if len(skipped) == 0 {
-		return
+		return 0
 	}
+	itemIndexRows := make(map[int]map[int]struct{}, len(skipped))
 	itemRowSet := make(map[string]map[int]struct{}, len(skipped))
 	for _, row := range skipped {
+		if row.ItemIndex >= 0 && strings.TrimSpace(row.TaxonID) != "" {
+			if _, ok := itemIndexRows[row.ItemIndex]; !ok {
+				itemIndexRows[row.ItemIndex] = make(map[int]struct{})
+			}
+			itemIndexRows[row.ItemIndex][row.RowIndex] = struct{}{}
+			continue
+		}
 		title := strings.TrimSpace(row.ItemTitle)
 		if _, ok := itemRowSet[title]; !ok {
 			itemRowSet[title] = make(map[int]struct{})
 		}
 		itemRowSet[title][row.RowIndex] = struct{}{}
 	}
+	changed := 0
 	for i := range items {
 		title := strings.TrimSpace(items[i].Title)
 		rows := itemRowSet[title]
+		if indexedRows := itemIndexRows[i]; len(indexedRows) > 0 {
+			if len(rows) == 0 {
+				rows = indexedRows
+			} else {
+				for rowIndex := range indexedRows {
+					rows[rowIndex] = struct{}{}
+				}
+			}
+		}
 		if len(rows) == 0 {
 			continue
 		}
 		selected := normalizeCanvasSelection(items[i].Selected, len(items[i].Rows))
 		for rowIndex := range rows {
-			if rowIndex >= 0 && rowIndex < len(selected) {
+			if rowIndex >= 0 && rowIndex < len(selected) && selected[rowIndex] {
 				selected[rowIndex] = false
+				changed++
 			}
 		}
 		items[i].Selected = selected
 		updateCanvasItemSubtitle(&items[i])
 	}
+	return changed
+}
+
+func resolveCanvasTreeSkippedRows(selected []canvasSelectedRow, skipped []canvasTreeSkippedRow) []canvasTreeSkippedRow {
+	if len(skipped) == 0 {
+		return nil
+	}
+	out := make([]canvasTreeSkippedRow, 0, len(skipped))
+	for _, row := range skipped {
+		resolved := row
+		if index := canvasTreeSkippedTaxonIndex(row); index >= 0 && index < len(selected) {
+			selectedRow := selected[index]
+			resolved.ItemTitle = selectedRow.ItemTitle
+			resolved.ItemIndex = selectedRow.ItemIndex
+			resolved.RowIndex = selectedRow.RowIndex
+		} else if resolved.ItemIndex == 0 && strings.TrimSpace(resolved.TaxonID) != "" {
+			resolved.ItemIndex = -1
+		}
+		out = append(out, resolved)
+	}
+	return out
+}
+
+func canvasTreeSkippedTaxonIndex(row canvasTreeSkippedRow) int {
+	taxonID := strings.ToUpper(strings.TrimSpace(row.TaxonID))
+	const prefix = "PHGOT"
+	if !strings.HasPrefix(taxonID, prefix) {
+		return -1
+	}
+	value := strings.TrimLeft(taxonID[len(prefix):], "0")
+	if value == "" {
+		value = "0"
+	}
+	index, err := strconv.Atoi(value)
+	if err != nil || index <= 0 {
+		return -1
+	}
+	return index - 1
 }
 
 func canvasTreeSkippedRowsFromRuntime(records []phylo.RuntimeSkippedRecord) []canvasTreeSkippedRow {
@@ -1090,7 +1217,9 @@ func canvasTreeSkippedRowsFromRuntime(records []phylo.RuntimeSkippedRecord) []ca
 	for _, record := range records {
 		out = append(out, canvasTreeSkippedRow{
 			ItemTitle: strings.TrimSpace(record.ItemTitle),
+			ItemIndex: -1,
 			RowIndex:  record.RowIndex,
+			TaxonID:   strings.TrimSpace(record.TaxonID),
 			Reason:    firstNonEmpty(strings.TrimSpace(record.Reason), "was reported by mega-phgo-runtime"),
 		})
 	}
@@ -2453,12 +2582,15 @@ func syncCanvasTreeSnapshotPreview(payload phylo.ViewerPayload, plan phylo.RunPl
 		record.SourceType = string(row.Kind)
 		record.OriginalHead = canvasRowOriginalHead(row, current.ItemTitle)
 		record.CanvasItem = strings.TrimSpace(current.ItemTitle)
+		record.CanvasItemIndex = current.ItemIndex
 		record.CanvasRow = current.RowIndex
 		record.TableValues = canvasTreeTableValues(row, current.ItemTitle)
 		record.DisplayName = canvasTreeDisplayNameFromSource(row, current.ItemTitle, displaySource, record.TableValues)
 		records = append(records, record)
 		remaining = append(remaining[:match], remaining[match+1:]...)
 	}
+	previewSettings := treeSettingsFromSnapshotPanel(panelState)
+	applyCanvasCoordinateDisplayNames(records, nil, previewSettings.ShowCanvasCoordinates)
 	payload.Metadata.DisplayNameSource = displaySource
 	payload.Metadata.Records = records
 	payload.Metadata.GeneratedAt = time.Now()
@@ -2502,6 +2634,47 @@ func canvasTreeDisplayNameFromSource(row model.CanvasRow, fallback string, sourc
 		}
 	}
 	return canvasRowDisplayName(row, fallback)
+}
+
+func applyCanvasCoordinateDisplayNames(records []phylo.InputRecord, meta *phylo.Metadata, enabled bool) {
+	for i := range records {
+		name := strings.TrimSpace(records[i].BaseDisplayName)
+		if name == "" {
+			name = strings.TrimSpace(records[i].DisplayName)
+		}
+		if name == "" {
+			name = strings.TrimSpace(records[i].TaxonID)
+		}
+		records[i].BaseDisplayName = name
+		records[i].DisplayPrefix = ""
+		records[i].DisplayName = name
+	}
+	if !enabled {
+		if meta != nil {
+			meta.Records = records
+		}
+		return
+	}
+	for i := range records {
+		records[i].DisplayPrefix = canvasCoordinatePrefix(records[i].CanvasItemIndex, records[i].CanvasRow)
+		records[i].DisplayName = canvasCoordinateDisplayName(records[i].CanvasItemIndex, records[i].CanvasRow, records[i].BaseDisplayName)
+	}
+	if meta != nil {
+		meta.Records = records
+	}
+}
+
+func canvasCoordinatePrefix(canvasItemIndex int, rowIndex int) string {
+	return fmt.Sprintf("[%d,%d]", canvasItemIndex+1, rowIndex+1)
+}
+
+func canvasCoordinateDisplayName(canvasItemIndex int, rowIndex int, displayName string) string {
+	displayName = strings.TrimSpace(displayName)
+	coord := canvasCoordinatePrefix(canvasItemIndex, rowIndex)
+	if displayName == "" {
+		return coord
+	}
+	return coord + " " + displayName
 }
 
 func canvasTreeRecordMatchesSelectedRow(record phylo.InputRecord, selected canvasSelectedRow) bool {
@@ -2575,8 +2748,18 @@ func snapshotCanvasTreeArtifacts(plan phylo.RunPlan) (*sessionsnapshot.ArtifactM
 
 type canvasSelectedRow struct {
 	ItemTitle string
+	ItemIndex int
 	RowIndex  int
 	Row       model.CanvasRow
+}
+
+func cloneCanvasSelectedRows(rows []canvasSelectedRow) []canvasSelectedRow {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]canvasSelectedRow, len(rows))
+	copy(out, rows)
+	return out
 }
 
 func canvasExportCompleteMessage(settings exportSettings) string {
@@ -2632,7 +2815,7 @@ func (w *BlastWizard) selectedCanvasRowsInCurrentOrderForExport(items []model.Ca
 
 func selectedCanvasRowsInOrder(items []model.CanvasItem) []canvasSelectedRow {
 	out := make([]canvasSelectedRow, 0)
-	for _, item := range items {
+	for itemIndex, item := range items {
 		selected := normalizeCanvasSelection(item.Selected, len(item.Rows))
 		for rowIndex, row := range item.Rows {
 			if rowIndex >= len(selected) || !selected[rowIndex] {
@@ -2640,6 +2823,7 @@ func selectedCanvasRowsInOrder(items []model.CanvasItem) []canvasSelectedRow {
 			}
 			out = append(out, canvasSelectedRow{
 				ItemTitle: strings.TrimSpace(item.Title),
+				ItemIndex: itemIndex,
 				RowIndex:  rowIndex,
 				Row:       row,
 			})
@@ -2660,7 +2844,7 @@ func selectedCanvasRowsInOrderForExport(items []model.CanvasItem) []canvasSelect
 
 func selectedCanvasRowsInVisibleOrder(items []model.CanvasItem, reviewState tui.BlastRunSelectionState, includeUnchecked bool) []canvasSelectedRow {
 	out := make([]canvasSelectedRow, 0)
-	for _, item := range items {
+	for itemIndex, item := range items {
 		selected := normalizeCanvasSelection(item.Selected, len(item.Rows))
 		order := prompt.CanvasVisibleRowOrder(item, reviewState.Sort)
 		if len(order) != len(item.Rows) {
@@ -2679,6 +2863,7 @@ func selectedCanvasRowsInVisibleOrder(items []model.CanvasItem, reviewState tui.
 			}
 			out = append(out, canvasSelectedRow{
 				ItemTitle: strings.TrimSpace(item.Title),
+				ItemIndex: itemIndex,
 				RowIndex:  rowIndex,
 				Row:       row,
 			})

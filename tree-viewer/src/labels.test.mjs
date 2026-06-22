@@ -11,6 +11,13 @@ const metadata = {
   ],
 };
 
+const duplicateMetadata = {
+  records: [
+    { taxon_id: 'PHGOT000010', display_name: 'Aco018382.1' },
+    { taxon_id: 'PHGOT000120', display_name: 'Aco018382.1' },
+  ],
+};
+
 assert.equal(sanitizeReactreeLabel(' PAL: 1; (beta) '), 'PAL: 1; (beta)');
 
 const labels = reactreeLabelMap(metadata);
@@ -19,12 +26,16 @@ assert.equal(labels.get('PHGOT000002'), 'PAL_1');
 assert.equal(labels.get('PHGOT000003'), 'PAL:1(beta)');
 assert.equal(labels.get('PHGOT000004'), 'PHGOT000004');
 assert.equal(labels.get('PHGOT000005'), "O'Brien, PAL; 2");
-assert.equal(new Set(labels.values()).size, labels.size);
 
 const { reverse } = reactreeLabelMaps(metadata);
 assert.equal(reverse.get('PAL 1'), 'PHGOT000001');
 assert.equal(reverse.get('PAL_1'), 'PHGOT000002');
 assert.equal(reverse.get("O'Brien, PAL; 2"), 'PHGOT000005');
+
+const duplicateLabels = reactreeLabelMap(duplicateMetadata);
+assert.equal(duplicateLabels.get('PHGOT000010'), 'Aco018382.1');
+assert.equal(duplicateLabels.get('PHGOT000120'), 'Aco018382.1');
+assert.ok(!relabelNewick('(PHGOT000010,PHGOT000120);', duplicateMetadata).includes('[PHGOT'));
 
 assert.equal(
   relabelNewick('(PHGOT000001:0.1,(PHGOT000002:0.2,PHGOT000003:0.3),PHGOT000004,PHGOT000005);', metadata),

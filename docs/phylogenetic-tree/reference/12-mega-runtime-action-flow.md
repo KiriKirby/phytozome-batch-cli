@@ -73,6 +73,11 @@ Records are copied into runtime structs with `taxon_id`, `display_name`,
 `sequence_kind`, `canvas_item`, and `canvas_row`. Current runtime code does not
 use those records for biological filtering.
 
+Canvas row coordinate display is a PHgo metadata/viewer concern, not a runtime
+choice. When enabled, PHgo prefixes metadata display labels with
+`[canvas item,row]` before writing the viewer payload; it does not alter the
+runtime taxon IDs, runtime FASTA headers, or MEGA computation inputs.
+
 ## FASTA Handling
 
 `ParseFasta`:
@@ -465,11 +470,11 @@ On any exception after request parsing:
 1. Write `runtime-response.json` with `error_text=<exception message>`.
 2. Re-raise so CLI exits nonzero and stderr contains the runtime error.
 
-Unsupported residues are runtime errors. The regression probe
-`C:\Users\wangsychn\Desktop\4CLtree.pgo` currently exercises this with
-`Unsupported protein residue "*" at sequence 85, site 213`, corresponding to
-`PHGOT000085` / `AT1G51680.1[4CL]`. PHgo surfaces the error text and preserves
-runtime artifacts; it does not trim `*`, skip the row locally, or retry with a
+Unsupported internal residues are runtime errors. Before writing the runtime
+FASTA, PHgo strips terminal `*` markers from every sequence because a final `*`
+is a terminator marker with no alignment-site meaning for PHgo's tree
+computation. Internal `*` characters remain in the runtime input and are left
+for MEGA to accept or reject. PHgo does not skip rows locally or retry with a
 different alignment method.
 
 `runtime-response.json` fields:

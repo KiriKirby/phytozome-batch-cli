@@ -266,6 +266,145 @@ func TestInputFASTADoesNotDropEmptySequences(t *testing.T) {
 	}
 }
 
+func TestBuildRunPlanTrimsTerminalStarsForRuntimeFASTA(t *testing.T) {
+	records, meta, err := BuildInput([]RowSource{
+		{
+			ItemTitle:    "group 1",
+			RowIndex:     0,
+			Sequence:     "MPEPTIDE**",
+			SequenceKind: SequenceProtein,
+			SourceType:   "keyword",
+			OriginalHead: "terminal stop",
+			TableValues:  map[string]string{"label_name": "terminal"},
+		},
+		{
+			ItemTitle:    "group 1",
+			RowIndex:     1,
+			Sequence:     "MPEP*TIDE*",
+			SequenceKind: SequenceProtein,
+			SourceType:   "keyword",
+			OriginalHead: "internal stop",
+			TableValues:  map[string]string{"label_name": "internal"},
+		},
+	}, "label_name", "session", time.Now())
+	if err != nil {
+		t.Fatalf("BuildInput returned error: %v", err)
+	}
+	plan, err := BuildRunPlan("session", "run1", t.TempDir(), DefaultTreeSettings(), SequenceProtein, records, meta, "", "", time.Now())
+	if err != nil {
+		t.Fatalf("BuildRunPlan returned error: %v", err)
+	}
+	if strings.Contains(plan.InputFASTA, "MPEPTIDE**") || !strings.Contains(plan.InputFASTA, "MPEPTIDE\n") {
+		t.Fatalf("terminal star was not trimmed from runtime FASTA:\n%s", plan.InputFASTA)
+	}
+	if !strings.Contains(plan.InputFASTA, "MPEP*TIDE\n") {
+		t.Fatalf("internal star should remain for MEGA/runtime validation:\n%s", plan.InputFASTA)
+	}
+	if records[0].Sequence != "MPEPTIDE**" || meta.Records[0].Sequence != "MPEPTIDE**" {
+		t.Fatalf("runtime FASTA normalization should not mutate metadata records: %#v %#v", records[0], meta.Records[0])
+	}
+
+	dnaRecords, dnaMeta, err := BuildInput([]RowSource{{
+		ItemTitle:    "group 1",
+		RowIndex:     0,
+		Sequence:     "ATGC**",
+		SequenceKind: SequenceNucleotide,
+		SourceType:   "fasta",
+		OriginalHead: "dna terminal star",
+		TableValues:  map[string]string{"label_name": "dna"},
+	}}, "label_name", "session", time.Now())
+	if err != nil {
+		t.Fatalf("BuildInput DNA returned error: %v", err)
+	}
+	dnaSettings := DefaultTreeSettings()
+	dnaSettings.ConversionTarget = ConversionTargetDNA
+	dnaPlan, err := BuildRunPlan("session", "run1", t.TempDir(), dnaSettings, SequenceNucleotide, dnaRecords, dnaMeta, "", "", time.Now())
+	if err != nil {
+		t.Fatalf("BuildRunPlan DNA returned error: %v", err)
+	}
+	if strings.Contains(dnaPlan.InputFASTA, "ATGC*") || !strings.Contains(dnaPlan.InputFASTA, "ATGC\n") {
+		t.Fatalf("terminal star should be trimmed for DNA runtime FASTA too:\n%s", dnaPlan.InputFASTA)
+	}
+}
+
+func TestBuildFingerprintsUseRuntimeTerminalStarNormalization(t *testing.T) {
+	now := time.Now()
+	settings := DefaultTreeSettings()
+	withStop, _, err := BuildInput([]RowSource{{
+		ItemTitle:    "group 1",
+		RowIndex:     0,
+		Sequence:     "MPEPTIDE*",
+		SequenceKind: SequenceProtein,
+		SourceType:   "keyword",
+		OriginalHead: "terminal stop",
+		TableValues:  map[string]string{"label_name": "terminal"},
+	}}, "label_name", "session", now)
+	if err != nil {
+		t.Fatalf("BuildInput with terminal stop returned error: %v", err)
+	}
+	withoutStop, _, err := BuildInput([]RowSource{{
+		ItemTitle:    "group 1",
+		RowIndex:     0,
+		Sequence:     "MPEPTIDE",
+		SequenceKind: SequenceProtein,
+		SourceType:   "keyword",
+		OriginalHead: "terminal stop",
+		TableValues:  map[string]string{"label_name": "terminal"},
+	}}, "label_name", "session", now)
+	if err != nil {
+		t.Fatalf("BuildInput without terminal stop returned error: %v", err)
+	}
+	if BuildFingerprints(withStop, settings, "", "") != BuildFingerprints(withoutStop, settings, "", "") {
+		t.Fatalf("terminal star should not change runtime fingerprints")
+	}
+
+	internalStop, _, err := BuildInput([]RowSource{{
+		ItemTitle:    "group 1",
+		RowIndex:     0,
+		Sequence:     "MPEP*TIDE",
+		SequenceKind: SequenceProtein,
+		SourceType:   "keyword",
+		OriginalHead: "internal stop",
+		TableValues:  map[string]string{"label_name": "terminal"},
+	}}, "label_name", "session", now)
+	if err != nil {
+		t.Fatalf("BuildInput with internal stop returned error: %v", err)
+	}
+	if BuildFingerprints(withoutStop, settings, "", "") == BuildFingerprints(internalStop, settings, "", "") {
+		t.Fatalf("internal star should remain fingerprint-significant")
+	}
+
+	dnaSettings := DefaultTreeSettings()
+	dnaSettings.ConversionTarget = ConversionTargetDNA
+	dnaWithStar, _, err := BuildInput([]RowSource{{
+		ItemTitle:    "group 1",
+		RowIndex:     0,
+		Sequence:     "ATGC*",
+		SequenceKind: SequenceNucleotide,
+		SourceType:   "fasta",
+		OriginalHead: "dna terminal star",
+		TableValues:  map[string]string{"label_name": "dna"},
+	}}, "label_name", "session", now)
+	if err != nil {
+		t.Fatalf("BuildInput DNA with terminal star returned error: %v", err)
+	}
+	dnaWithoutStar, _, err := BuildInput([]RowSource{{
+		ItemTitle:    "group 1",
+		RowIndex:     0,
+		Sequence:     "ATGC",
+		SequenceKind: SequenceNucleotide,
+		SourceType:   "fasta",
+		OriginalHead: "dna terminal star",
+		TableValues:  map[string]string{"label_name": "dna"},
+	}}, "label_name", "session", now)
+	if err != nil {
+		t.Fatalf("BuildInput DNA without terminal star returned error: %v", err)
+	}
+	if BuildFingerprints(dnaWithStar, dnaSettings, "", "") != BuildFingerprints(dnaWithoutStar, dnaSettings, "", "") {
+		t.Fatalf("terminal star should not change DNA runtime fingerprints")
+	}
+}
+
 func TestBuildRunPlanProducesArtifacts(t *testing.T) {
 	records, meta, err := BuildInput([]RowSource{{
 		ItemTitle:    "group 1",

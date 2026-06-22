@@ -631,3 +631,25 @@ func main() {
 	script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = \"%s\" ]; then echo mega-phgo-runtime probe ok; exit 0; fi\necho runtime started\nsleep 30\n", megaphgo.RuntimeProbeArgument)
 	return os.WriteFile(exe, []byte(script), 0o755)
 }
+
+func TestSkippedRecordsForRuntimeErrorParsesDistancePairMessage(t *testing.T) {
+	records := make([]InputRecord, 114)
+	for i := range records {
+		records[i] = InputRecord{
+			TaxonID:    fmt.Sprintf("PHGOT%06d", i+1),
+			CanvasItem: "Asp",
+			CanvasRow:  i,
+		}
+	}
+	plan := RunPlan{Records: records}
+	skipped := SkippedRecordsForRuntimeError(plan, "Some pairwise distances could not be estimated. For example, between sequences 114 and 113.", nil)
+	if len(skipped) != 2 {
+		t.Fatalf("skipped records = %#v, want two records", skipped)
+	}
+	if skipped[0].TaxonID != "PHGOT000114" || skipped[0].RowIndex != 113 {
+		t.Fatalf("first skipped record = %#v, want sequence 114", skipped[0])
+	}
+	if skipped[1].TaxonID != "PHGOT000113" || skipped[1].RowIndex != 112 {
+		t.Fatalf("second skipped record = %#v, want sequence 113", skipped[1])
+	}
+}

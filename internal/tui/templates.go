@@ -298,6 +298,7 @@ type BlastRunSelectionPage struct {
 	Title                       string
 	Description                 string
 	Items                       []BlastRunItem
+	CanvasMode                  bool
 	SidebarTitle                string
 	EmptyTitle                  string
 	EmptyMessage                string
@@ -381,18 +382,20 @@ type CanvasTreePanel struct {
 }
 
 type CanvasTreePanelState struct {
-	Expanded               bool
-	Focused                bool
-	EnabledEver            bool
-	CurrentControl         int
-	ScrollOffset           int
-	DisplayNameSource      string
-	ConversionTarget       string
-	ConversionSkipUnselect bool
-	AlignmentMethod        string
-	AlignmentParams        map[string]string
-	TreeMethod             string
-	TreeParams             map[string]string
+	Expanded                 bool
+	Focused                  bool
+	EnabledEver              bool
+	CurrentControl           int
+	ScrollOffset             int
+	DisplayNameSource        string
+	ShowCanvasCoordinates    bool
+	ShowCanvasCoordinatesSet bool
+	ConversionTarget         string
+	ConversionSkipUnselect   bool
+	AlignmentMethod          string
+	AlignmentParams          map[string]string
+	TreeMethod               string
+	TreeParams               map[string]string
 }
 
 type CanvasTreeMethod struct {
@@ -540,6 +543,7 @@ func RunCanvasPage(page CanvasPage) (CanvasResult, error) {
 		Title:                       page.Title,
 		Description:                 page.Description,
 		Items:                       items,
+		CanvasMode:                  true,
 		SidebarTitle:                "Canvas list",
 		EmptyTitle:                  "Canvas",
 		EmptyMessage:                "Canvas is empty. Add a canvas item to start building this workspace.",
@@ -775,6 +779,10 @@ func (c *canvasTreePanelPrimitive) currentState() CanvasTreePanelState {
 	if state.TreeParams == nil {
 		state.TreeParams = map[string]string{}
 	}
+	if !state.ShowCanvasCoordinatesSet {
+		state.ShowCanvasCoordinates = true
+		state.ShowCanvasCoordinatesSet = true
+	}
 	return state
 }
 
@@ -789,6 +797,10 @@ func (c *canvasTreePanelPrimitive) applyState(state CanvasTreePanelState) {
 	}
 	if state.TreeParams == nil {
 		state.TreeParams = map[string]string{}
+	}
+	if !state.ShowCanvasCoordinatesSet {
+		state.ShowCanvasCoordinates = true
+		state.ShowCanvasCoordinatesSet = true
 	}
 	c.panel.State = state
 	c.syncUIState()
@@ -1489,6 +1501,17 @@ func (c *canvasTreePanelPrimitive) buildTreePage() (*buttonFlex, []canvasTreePan
 	})
 	module.AddItem(displayDropDown, 1, 0, true)
 	fields := []canvasTreePanelField{{primitive: displayDropDown, group: 0}}
+	coordinateCheckbox := newCheckboxModule("Show PHgo row coordinates", func() bool {
+		return c.currentState().ShowCanvasCoordinates
+	}, func() {
+		next := c.currentState()
+		next.ShowCanvasCoordinates = !next.ShowCanvasCoordinates
+		next.ShowCanvasCoordinatesSet = true
+		c.applyState(next)
+	})
+	coordinateCheckbox.SetBorder(false)
+	module.AddItem(coordinateCheckbox, 1, 0, false)
+	fields = append(fields, canvasTreePanelField{primitive: coordinateCheckbox, group: 0})
 	module.AddItem(sectionHeader("Inference"), 1, 0, false)
 	treeMethodDropDown := c.newChoiceDropDown("Tree method", c.panel.TreeMethods, state.TreeMethod, func(id string) {
 		next := c.currentState()
@@ -5022,6 +5045,10 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 	if treePanelState.DisplayNameSource == "" && len(page.TreePanel.DisplayNameSources) > 0 {
 		treePanelState.DisplayNameSource = strings.TrimSpace(page.TreePanel.DisplayNameSources[0].Value)
 	}
+	if !treePanelState.ShowCanvasCoordinatesSet {
+		treePanelState.ShowCanvasCoordinates = true
+		treePanelState.ShowCanvasCoordinatesSet = true
+	}
 	page.TreePanel.State = treePanelState
 	var treePanel *canvasTreePanelPrimitive
 	var refresh func()
@@ -5268,7 +5295,7 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 		}
 	}
 	listText := func(item BlastRunItem, index int) string {
-		return firstNonEmptyText(item.Label, item.AltLabel, fmt.Sprintf("query %d", index+1))
+		return blastRunSidebarPrimaryLabel(item, index, page.CanvasMode)
 	}
 	listSecondaryLines := func(item BlastRunItem) []string {
 		values := splitSidebarLines(item.AltLabel)
@@ -11607,6 +11634,14 @@ func blastRunSidebarLineCountLabel(selectedByRun [][]bool, items []BlastRunItem,
 		selected = countSelectedBools(selectedByRun[index])
 	}
 	return tableLineCountLabel(selected, len(items[index].Rows))
+}
+
+func blastRunSidebarPrimaryLabel(item BlastRunItem, index int, canvasMode bool) string {
+	label := firstNonEmptyText(item.Label, item.AltLabel, fmt.Sprintf("query %d", index+1))
+	if canvasMode {
+		return fmt.Sprintf("[%d] %s", index+1, label)
+	}
+	return label
 }
 
 func countSelectedBools(values []bool) int {

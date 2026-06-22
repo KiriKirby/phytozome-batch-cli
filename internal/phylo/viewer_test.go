@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -126,15 +127,19 @@ func TestViewerAssetsIncludeJalviewBootstrapPage(t *testing.T) {
 		!strings.Contains(html, `j2sPath: "/assets/jalviewjs/swingjs/j2s"`) ||
 		!strings.Contains(html, `body.phgo-jalview-ready #jalview-desktop-div`) ||
 		!strings.Contains(html, `#jalview-desktop-div.phgo-window-manager`) ||
+		!strings.Contains(html, `display: block !important`) ||
+		!strings.Contains(html, `visibility: visible !important`) ||
 		!strings.Contains(html, `.phgo-root-desktop-frame`) ||
 		!strings.Contains(html, `[id*="_DesktopPaneUI"]`) ||
+		!strings.Contains(html, `#jalview-desktop-div .phgo-root-desktop-frame [id*="_MenuBarUI"]`) ||
+		!strings.Contains(html, `#jalview-alignment-div [id*="_MenuBarUI"]`) ||
 		!strings.Contains(html, `scrollbar-color: rgba(96, 94, 92, 0.62) rgba(243, 242, 241, 0.9)`) ||
 		!strings.Contains(html, `*::-webkit-scrollbar-thumb`) ||
-		!strings.Contains(html, `display: block !important`) ||
 		!strings.Contains(html, `pointer-events: none`) ||
+		strings.Contains(html, "body.phgo-jalview-ready #jalview-desktop-div,\r\n      #jalview-desktop-div.phgo-window-manager {\r\n        display: none !important") ||
+		strings.Contains(html, "body.phgo-jalview-ready #jalview-desktop-div,\n      #jalview-desktop-div.phgo-window-manager {\n        display: none !important") ||
 		strings.Contains(html, `aria-hidden="true"`) ||
 		strings.Contains(html, `phgo-hidden-desktop`) ||
-		strings.Contains(html, `display: none !important`) ||
 		strings.Contains(html, `#jalview-alignment-div .swingjs-window`) {
 		t.Fatalf("jalview bootstrap asset does not look like the local bootstrap page: %s", html)
 	}
@@ -157,21 +162,39 @@ func TestViewerAssetsIncludePHgoJalviewBridge(t *testing.T) {
 		!strings.Contains(js, `window.__PHGOJalviewState`) ||
 		!strings.Contains(js, `function applyMainFrameMode(frame)`) ||
 		!strings.Contains(js, `function hideMenusFromOutsideEvent(event)`) ||
+		!strings.Contains(js, `function closeAllSwingMenus(reason)`) ||
+		!strings.Contains(js, `j2smenu.collapseAll`) ||
+		!strings.Contains(js, `dom-menu-close-fallback`) ||
+		!strings.Contains(js, `node.style.removeProperty("visibility")`) ||
+		!strings.Contains(js, `document.addEventListener("mousedown", hideMenusFromOutsideEvent, true)`) ||
+		!strings.Contains(js, `document.addEventListener("keydown", hideMenusOnEscape, true)`) ||
 		!strings.Contains(js, `document.addEventListener("pointerdown", hideMenusFromOutsideEvent, true)`) ||
 		!strings.Contains(js, `desktop.phgoMainAlignmentFrame`) ||
 		!strings.Contains(js, `window.__PHGOJalviewBridgeAPI`) ||
-		!strings.Contains(js, `selectionStateForName`) ||
-		!strings.Contains(js, `toggleSelectionForName`) ||
 		!strings.Contains(js, `collectMSAState`) ||
+		!strings.Contains(js, `collectMSASequences`) ||
+		!strings.Contains(js, `collectMSAFeatures`) ||
+		!strings.Contains(js, `state.features = collectMSAFeatures(frame)`) ||
+		!strings.Contains(js, `javaMapToObject`) ||
+		!strings.Contains(js, `const full = fullState !== false`) ||
+		!strings.Contains(js, `scheduleMSAStateSave("selection-toggle", 250, false)`) ||
+		!strings.Contains(js, `let msaStateSaveChain = Promise.resolve()`) ||
+		!strings.Contains(js, `await saveTask`) ||
 		!strings.Contains(js, `saveMSAStateNow`) ||
+		!strings.Contains(js, `saveMSAStateManual`) ||
+		!strings.Contains(js, `displayPrefixForSequence`) ||
 		!strings.Contains(js, `/msa/state`) ||
 		!strings.Contains(js, `payloadUpdatedAt`) ||
 		!strings.Contains(js, `currentPayloadUpdatedAt`) ||
 		!strings.Contains(js, `Reloading MSA...`) ||
 		!strings.Contains(js, `checkboxColumnWidth`) ||
 		strings.Contains(js, `installApplyMenuFallback`) ||
-		strings.Contains(js, `window.setInterval(updateMSACheckboxLayer`) ||
 		strings.Contains(js, `desktop.setAttribute("aria-hidden", "true")`) ||
+		strings.Contains(js, `node.style.visibility = "hidden"`) ||
+		strings.Contains(js, `selectionStateForName`) ||
+		strings.Contains(js, `toggleSelectionForName`) ||
+		strings.Contains(js, `selectionEntryForSequenceName`) ||
+		strings.Contains(js, `window.setInterval(updateMSACheckboxLayer`) ||
 		strings.Contains(js, `phgo-hidden-desktop`) ||
 		strings.Contains(js, `notify("layout-warning"`) ||
 		!strings.Contains(js, `resizeMainAlignmentFrame`) ||
@@ -200,9 +223,20 @@ func TestVendoredJalviewCoreHasPHgoSourcePatches(t *testing.T) {
 		`var wasFrozen=this._boundsFrozen`,
 		`this.__phgoMainAlignmentFrame || this.__phgoRootDesktopFrame`,
 		`phgoCheckboxColumnWidth$`,
+		`phgoDisplayPrefix$`,
+		`phgoDisplayName$`,
 		`drawPHgoCheckbox$java_awt_Graphics2D`,
+		`id=s.getName$()`,
+		`var prefix=this.phgoDisplayPrefix$jalview_datamodel_SequenceI$I`,
+		`var string=this.phgoDisplayName$jalview_datamodel_SequenceI`,
+		`string=prefix + " " + string`,
+		`if (this.fastPaint && this.image != null )`,
+		`}this.fastPaint=false;`,
+		`this.image == null  || oldHeight != this.imgHeight`,
 		`toggleSelectionForSequence`,
+		`var phgoSave=Clazz_new_($I$(2).c$$S,["Save"])`,
 		`var phgoApply=Clazz_new_($I$(2).c$$S,["Apply"])`,
+		`bridge.saveMSAStateManual`,
 		`bridge.applyMSASelection`,
 		`applyPHgoFluentScrollBarStyle$`,
 		`__phgoFluentScrollBarStyle`,
@@ -211,6 +245,93 @@ func TestVendoredJalviewCoreHasPHgoSourcePatches(t *testing.T) {
 	} {
 		if !strings.Contains(js, want) {
 			t.Fatalf("vendored JalviewJS core is missing PHgo patch %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		`this.add$javax_swing_JMenuItem(this.pdbStructureDialog);`,
+		`this.editMenu.add$javax_swing_JMenuItem(this.toggle);`,
+		`label.spaces_converted_to_underscores`,
+		`.replace$C$C(" ", this.b$['jalview.gui.PopupMenu'].ap.av.getGapCharacter$())`,
+		`var string=s.getDisplayId$Z(this.av.getShowJVSuffix$());`,
+		`var string=sequence.getDisplayId$Z(alignViewport.getShowJVSuffix$());`,
+		`}if (this.av.isRightAlignIds$() && String(prefix).length == 0) {`,
+		`if (alignViewport.isRightAlignIds$() && String(prefix).length == 0) {`,
+		`this.c && this.c.__phgoRootDesktopFrame`,
+		`bridge.toggleSelectionForSequence(seqForPhgo.phgoTaxonID || "", seqForPhgo.getName$(), pos.seqIndex);` + "\r\n" + `this.getIdCanvas$().repaint$();`,
+		`bridge.toggleSelectionForSequence(seqForPhgo.phgoTaxonID || "", seqForPhgo.getName$(), pos.seqIndex);` + "\n" + `this.getIdCanvas$().repaint$();`,
+	} {
+		if strings.Contains(js, forbidden) {
+			t.Fatalf("vendored JalviewJS core still contains disabled PHgo MSA behavior %q", forbidden)
+		}
+	}
+}
+
+func TestVendoredJalviewIdCanvasBundlesStayInSync(t *testing.T) {
+	for _, asset := range []string{
+		"assets/jalviewjs/swingjs/j2s/jalview/gui/IdCanvas.js",
+		"assets/jalviewjs/swingjs/j2s/core/core_jalview.js",
+		"assets/jalviewjs/swingjs/j2s/core/corejalview.js",
+		"assets/jalviewjs/swingjs/j2s/core/corejvexamplefile.js",
+	} {
+		body, err := viewerAsset(asset)
+		if err != nil {
+			t.Fatalf("%s missing: %v", asset, err)
+		}
+		js := string(body)
+		for _, want := range []string{
+			`phgoCheckboxColumnWidth$`,
+			`phgoSelectionState$jalview_datamodel_SequenceI$I`,
+			`phgoDisplayPrefix$jalview_datamodel_SequenceI$I`,
+			`phgoDisplayName$jalview_datamodel_SequenceI`,
+			`phgoResidueRatio$jalview_datamodel_SequenceI`,
+			`phgoDisplayLabel$jalview_datamodel_SequenceI$I`,
+			`drawPHgoCheckbox$java_awt_Graphics2D`,
+			`var checkboxWidth=this.phgoCheckboxColumnWidth$();`,
+			`var string=this.phgoDisplayLabel$jalview_datamodel_SequenceI$I`,
+			`getSequenceAsString$()`,
+			`residues + "/" + total`,
+			`this.drawPHgoCheckbox$java_awt_Graphics2D$jalview_datamodel_SequenceI$I$I$I$I$java_awt_Color`,
+			`getDisplayId$Z(false)`,
+		} {
+			if !strings.Contains(js, want) {
+				t.Fatalf("%s is missing synchronized PHgo IdCanvas patch %q", asset, want)
+			}
+		}
+		for _, forbidden := range []string{
+			`var string=s.getDisplayId$Z(this.av.getShowJVSuffix$());`,
+			`var string=sequence.getDisplayId$Z(alignViewport.getShowJVSuffix$());`,
+			`if (this.av.isRightAlignIds$()) {`,
+			`if (alignViewport.isRightAlignIds$()) {`,
+		} {
+			if strings.Contains(js, forbidden) {
+				t.Fatalf("%s still contains stale Jalview IdCanvas behavior %q", asset, forbidden)
+			}
+		}
+	}
+}
+
+func TestVendoredJalviewCheckboxClickUsesNativeRepaintPath(t *testing.T) {
+	for _, asset := range []string{
+		"assets/jalviewjs/swingjs/j2s/jalview/gui/IdPanel.js",
+		"assets/jalviewjs/swingjs/j2s/core/corejvexamplefile.js",
+	} {
+		body, err := viewerAsset(asset)
+		if err != nil {
+			t.Fatalf("%s missing: %v", asset, err)
+		}
+		js := string(body)
+		for _, want := range []string{
+			`bridge.toggleSelectionForSequence(seqForPhgo.phgoTaxonID || "", seqForPhgo.getName$(), pos.seqIndex, false);`,
+			`bridge.invalidateIdCanvas(this.getIdCanvas$());`,
+			`this.getIdCanvas$().repaint$();`,
+			`this.alignPanel.paintAlignment$Z$Z(false, false);`,
+		} {
+			if !strings.Contains(js, want) {
+				t.Fatalf("%s is missing native checkbox repaint path %q", asset, want)
+			}
+		}
+		if strings.Contains(js, `bridge.toggleSelectionForSequence(seqForPhgo.phgoTaxonID || "", seqForPhgo.getName$(), pos.seqIndex);`) {
+			t.Fatalf("%s still lets the bridge repaint synchronously during checkbox click", asset)
 		}
 	}
 }
@@ -305,6 +426,79 @@ func TestViewerMSAApplyKeepsPayloadOrderAndState(t *testing.T) {
 	}
 }
 
+func TestViewerMSAApplyRejectsExcessiveRows(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := NewViewerServer("127.0.0.1:0")
+	if err := server.Start(ctx); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	server.SetMSAPayload("canvas", ViewerPayload{
+		SchemaVersion: 1,
+		SessionID:     "canvas",
+		UpdatedAt:     time.Now(),
+		AlignedFASTA:  ">a\nAAA\n",
+		Metadata:      Metadata{Records: []InputRecord{{TaxonID: "a", DisplayName: "A"}}},
+	})
+	var b strings.Builder
+	b.WriteString(`{"rows":[`)
+	for i := 0; i < 10001; i++ {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, `{"taxon_id":"a","state":"green","index":%d}`, i)
+	}
+	b.WriteString(`]}`)
+	resp, err := http.Post(server.URL()+"/sessions/canvas/msa/apply", "application/json", strings.NewReader(b.String()))
+	if err != nil {
+		t.Fatalf("MSA apply post: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("MSA apply excessive rows status = %d", resp.StatusCode)
+	}
+}
+
+func TestJalviewAlignedFASTAUsesRawDisplayNameAndSelectionKeepsCoordinatePrefix(t *testing.T) {
+	payload := ViewerPayload{
+		SchemaVersion: 1,
+		SessionID:     "canvas",
+		UpdatedAt:     time.Now(),
+		AlignedFASTA:  ">PHGOT000001\nMPEPTIDE\n",
+		Metadata: Metadata{Records: []InputRecord{{
+			TaxonID:         "PHGOT000001",
+			DisplayName:     "[1,2] Alpha name",
+			BaseDisplayName: "Alpha name",
+			DisplayPrefix:   "[1,2]",
+			CanvasItemIndex: 0,
+			CanvasRow:       1,
+		}}},
+	}
+	fasta := jalviewAlignedFASTA(payload)
+	rawName := base64.RawURLEncoding.EncodeToString([]byte("Alpha name"))
+	prefixedName := base64.RawURLEncoding.EncodeToString([]byte("[1,2] Alpha name"))
+	if !strings.Contains(fasta, "phgo_name64:"+rawName) {
+		t.Fatalf("Jalview FASTA should encode raw display name, got: %s", fasta)
+	}
+	if strings.Contains(fasta, "phgo_name64:"+prefixedName) {
+		t.Fatalf("Jalview FASTA must not encode coordinate-prefixed name: %s", fasta)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := NewViewerServer("127.0.0.1:0")
+	if err := server.Start(ctx); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	server.SetMSAPayload("canvas", payload)
+	body := getViewerPayload(t, server.URL()+"/sessions/canvas/msa/selection")
+	if !strings.Contains(body, `"display_name":"Alpha name"`) ||
+		!strings.Contains(body, `"display_prefix":"[1,2]"`) ||
+		!strings.Contains(body, `"display_label":"[1,2] Alpha name"`) {
+		t.Fatalf("MSA selection should split raw display name and coordinate prefix: %s", body)
+	}
+}
+
 func TestViewerServerMSAStateEndpointPreservesDurableJalviewState(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -328,9 +522,13 @@ func TestViewerServerMSAStateEndpointPreservesDurableJalviewState(t *testing.T) 
 			{"taxon_id":"a","state":"yellow"},
 			{"taxon_id":"b","state":"green"}
 		],
+		"sequences": [
+			{"taxon_id":"a","display_name":"Alpha Renamed","description":"manual desc","sequence":"m p e p"}
+		],
 		"settings": {"show_annotations": false, "wrap_alignment": true},
 		"groups": [{"name": "manual", "start": 1, "end": 4}],
-		"annotations": [{"label": "quality", "visible": true}]
+		"annotations": [{"label": "quality", "visible": true}],
+		"features": [{"taxon_id":"a","display_name":"Alpha Renamed","type":"domain","begin":1,"end":4,"feature_group":"manual","other_details":{"ID":"feat1"}}]
 	}`))
 	if err != nil {
 		t.Fatalf("build MSA state request: %v", err)
@@ -356,8 +554,33 @@ func TestViewerServerMSAStateEndpointPreservesDurableJalviewState(t *testing.T) 
 	if len(state.Annotations) != 1 || state.Annotations[0]["label"] != "quality" {
 		t.Fatalf("MSA annotations were not preserved: %#v", state.Annotations)
 	}
+	if len(state.Features) != 1 || state.Features[0]["type"] != "domain" || state.Features[0]["taxon_id"] != "a" {
+		t.Fatalf("MSA features were not preserved: %#v", state.Features)
+	}
+	if len(state.Sequences) != 1 || state.Sequences[0].TaxonID != "a" || state.Sequences[0].DisplayName != "Alpha Renamed" || state.Sequences[0].Description != "manual desc" || state.Sequences[0].Sequence != "m p e p" {
+		t.Fatalf("MSA sequence edits were not preserved: %#v", state.Sequences)
+	}
+	partialReq, err := http.NewRequest(http.MethodPut, server.URL()+"/sessions/canvas/msa/state", strings.NewReader(`{
+		"schema_version": 2,
+		"rows": [{"taxon_id":"a","state":"green"}]
+	}`))
+	if err != nil {
+		t.Fatalf("build partial MSA state request: %v", err)
+	}
+	partialResp, err := http.DefaultClient.Do(partialReq)
+	if err != nil {
+		t.Fatalf("PUT partial MSA state failed: %v", err)
+	}
+	_ = partialResp.Body.Close()
+	if partialResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("PUT partial MSA state status = %d", partialResp.StatusCode)
+	}
+	state = server.GetMSAState("canvas")
+	if len(state.Features) != 1 || len(state.Groups) != 1 || len(state.Annotations) != 1 || len(state.Sequences) != 1 {
+		t.Fatalf("partial MSA state update should preserve durable Jalview state: %#v", state)
+	}
 	body := getViewerPayload(t, server.URL()+"/sessions/canvas/msa/state")
-	if !strings.Contains(body, `"show_annotations":false`) || !strings.Contains(body, `"state":"yellow"`) {
+	if !strings.Contains(body, `"show_annotations":false`) || !strings.Contains(body, `"state":"green"`) || !strings.Contains(body, `"description":"manual desc"`) || !strings.Contains(body, `"features"`) {
 		t.Fatalf("MSA state endpoint body missing durable state: %s", body)
 	}
 }

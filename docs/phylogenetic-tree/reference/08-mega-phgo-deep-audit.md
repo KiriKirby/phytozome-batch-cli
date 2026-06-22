@@ -143,16 +143,23 @@ and fixes applied.
   real-runtime freeze probes passed for all exposed alignment and tree methods.
 - 2026-06-20: Re-ran the production MEGA PHgo path against
   `C:\Users\wangsychn\Desktop\4CLtree.pgo` with the source-built Windows
-  runtime executable. The root cause is now a surfaced MEGA/runtime data error,
-  not a PHgo crash: `Unsupported protein residue "*" at sequence 85, site 213`,
-  mapped to `PHGOT000085` / `AT1G51680.1[4CL]`. PHgo must not auto-switch
-  ClustalW to MUSCLE or otherwise choose a replacement aligner/tree method for
-  the user.
+  runtime executable. The first failure was traced to terminal `*` markers in
+  the runtime FASTA, which PHgo now strips from all sequence ends before
+  launching MEGA. PHgo must keep internal `*` characters runtime-visible and
+  must not auto-switch ClustalW to MUSCLE or otherwise choose a replacement
+  aligner/tree method for the user.
 - 2026-06-20: Fixed Windows bundled-runtime probing so
   `mega-phgo-runtime.bin` is treated as a package asset and prepared as a
   temporary `.exe` with runtime-owned `muscleWin64.bin` before probing or
   execution. Packaging scripts now probe the same way instead of trying to open
   the `.bin` directly.
+- 2026-06-20: Removed the old duplicate-label suffix mechanism that appended
+  hidden taxon IDs such as `[PHGOT000123]` to Reactree labels. Canvas tree/MSA
+  display now uses the default-on Show PHgo row coordinates option to prefix
+  metadata labels with `[canvas item,row]` without writing that prefix into the
+  Canvas `display_name` column. This option is preview-only and changes only
+  the preview fingerprint, so runtime alignment/tree artifacts are reused when
+  compute inputs are unchanged.
 - 2026-06-20: Tightened PHgo task-modal cancellation: Cancel/Esc cancels the
   task context and waits for the task goroutine to exit; the legacy task modal
   no longer queues a synchronous redraw from inside the input-event cancel path.

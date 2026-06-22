@@ -112138,7 +112138,17 @@ var idWidth=0;
 var id;
 while ((i < al.getHeight$()) && (al.getSequenceAt$I(i) != null ) ){
 var s=al.getSequenceAt$I(i);
-id=s.getDisplayId$Z(this.av.getShowJVSuffix$());
+id=s.getName$();
+{
+var bridge=window.__PHGOJalviewBridgeAPI;
+if (bridge && bridge.displayPrefixForSequence) {
+try {
+var prefix=bridge.displayPrefixForSequence(s.phgoTaxonID || "", id, i) || "";
+if (String(prefix).length > 0) id=prefix + " " + id;
+} catch (e) {
+}
+}
+}
 if (fm.stringWidth$S(id) > idWidth) {
 idWidth=fm.stringWidth$S(id);
 }i++;
@@ -121229,6 +121239,79 @@ return "";
 }
 });
 
+Clazz_newMeth(C$, 'phgoDisplayPrefix$jalview_datamodel_SequenceI$I', function (seq, index) {
+{
+var bridge=window.__PHGOJalviewBridgeAPI;
+if (!bridge || !seq || !bridge.displayPrefixForSequence) return "";
+try {
+var name="";
+try {
+name=seq.getName$();
+} catch (nameError) {
+name="";
+}
+return bridge.displayPrefixForSequence(seq.phgoTaxonID || "", name, index) || "";
+} catch (e) {
+return "";
+}
+}
+});
+
+Clazz_newMeth(C$, 'phgoDisplayName$jalview_datamodel_SequenceI', function (seq) {
+if (seq == null ) {
+return "";
+}
+try {
+var name=seq.getName$();
+if (name != null  && String(name).length > 0) {
+return name;
+}
+} catch (e) {
+}
+try {
+var id=seq.getDisplayId$Z(false);
+return id == null  ? "" : id;
+} catch (e2) {
+return "";
+}
+});
+
+Clazz_newMeth(C$, 'phgoResidueRatio$jalview_datamodel_SequenceI', function (seq) {
+if (seq == null ) {
+return "";
+}
+try {
+var text=seq.getSequenceAsString$();
+if (text == null ) {
+return "";
+}
+var total=String(text).length;
+if (total < 1) {
+return "";
+}
+var residues=0;
+for (var i=0; i < total; i++) {
+var ch=String(text).charAt(i);
+if (ch !== "-" && ch !== "." && ch !== " " && ch !== "\t" && ch !== "\r" && ch !== "\n" && ch !== "*") {
+residues++;
+}
+}
+var pct=Math.round((residues * 1000) / total) / 10;
+return " " + residues + "/" + total + " " + pct + "%";
+} catch (e) {
+return "";
+}
+});
+
+Clazz_newMeth(C$, 'phgoDisplayLabel$jalview_datamodel_SequenceI$I', function (seq, index) {
+var prefix=this.phgoDisplayPrefix$jalview_datamodel_SequenceI$I(seq, index);
+var string=this.phgoDisplayName$jalview_datamodel_SequenceI(seq);
+if (String(prefix).length > 0) {
+string=prefix + " " + string;
+}
+return string + this.phgoResidueRatio$jalview_datamodel_SequenceI(seq);
+});
+
 Clazz_newMeth(C$, 'drawPHgoCheckbox$java_awt_Graphics2D$jalview_datamodel_SequenceI$I$I$I$I$java_awt_Color', function (g, s, index, y, charHeight, width, textColor) {
 {
 if (!width) return;
@@ -121263,6 +121346,7 @@ var xPos=checkboxWidth;
 var panelWidth=this.getWidth$();
 var charHeight=this.av.getCharHeight$();
 var y=((i - starty) * charHeight) + ypos;
+var string=this.phgoDisplayLabel$jalview_datamodel_SequenceI$I(s, i);
 if ((this.searchResults != null ) && this.searchResults.contains$O(s) ) {
 g.setColor$java_awt_Color($I$(3).black);
 g.fillRect$I$I$I$I(0, y, this.getWidth$(), charHeight);
@@ -121275,13 +121359,7 @@ g.setColor$java_awt_Color($I$(3).white);
 g.setColor$java_awt_Color(this.av.getSequenceColour$jalview_datamodel_SequenceI(s));
 g.fillRect$I$I$I$I(0, y, this.getWidth$(), charHeight);
 g.setColor$java_awt_Color($I$(3).black);
-}if (this.av.isRightAlignIds$()) {
-var fm=g.getFontMetrics$();
-xPos=panelWidth - fm.stringWidth$S(s.getDisplayId$Z(this.av.getShowJVSuffix$())) - 4 ;
-if (xPos < checkboxWidth) {
-xPos=checkboxWidth;
-}
-}g.drawString$S$I$I(s.getDisplayId$Z(this.av.getShowJVSuffix$()), xPos, (((i - starty + 1) * charHeight) + ypos) - ((charHeight/5|0)));
+}g.drawString$S$I$I(string, xPos, (((i - starty + 1) * charHeight) + ypos) - ((charHeight/5|0)));
 this.drawPHgoCheckbox$java_awt_Graphics2D$jalview_datamodel_SequenceI$I$I$I$I$java_awt_Color(g, s, i, y, charHeight, checkboxWidth, g.getColor$());
 if (hiddenRows) {
 this.drawMarker$java_awt_Graphics2D$jalview_gui_AlignViewport$I$I$I(g, this.av, i, starty, ypos);
@@ -121318,16 +121396,17 @@ this.av.getAlignPanel$().repaint$();
 Clazz_newMeth(C$, 'paintComponent$java_awt_Graphics', function (g) {
 g.setColor$java_awt_Color($I$(3).white);
 g.fillRect$I$I$I$I(0, 0, this.getWidth$(), this.getHeight$());
-if (this.fastPaint) {
+if (this.fastPaint && this.image != null ) {
 this.fastPaint=false;
 g.drawImage$java_awt_Image$I$I$java_awt_image_ImageObserver(this.image, 0, 0, this);
 return;
-}var oldHeight=this.imgHeight;
+}this.fastPaint=false;
+var oldHeight=this.imgHeight;
 this.imgHeight=this.getHeight$();
 this.imgHeight-=(this.imgHeight % this.av.getCharHeight$());
 if (this.imgHeight < 1) {
 return;
-}if (oldHeight != this.imgHeight || this.image.getWidth$java_awt_image_ImageObserver(this) != this.getWidth$() ) {
+}if (this.image == null  || oldHeight != this.imgHeight || this.image.getWidth$java_awt_image_ImageObserver(this) != this.getWidth$() ) {
 this.image=Clazz_new_($I$(4).c$$I$I$I,[this.getWidth$(), this.imgHeight, 1]);
 }var gg=this.image.createGraphics$();
 gg.setColor$java_awt_Color($I$(3).white);
@@ -121376,13 +121455,8 @@ var charHeight=alignViewport.getCharHeight$();
 var y=(i - startSeq) * charHeight;
 g.fillRect$I$I$I$I(0, y, this.getWidth$(), charHeight);
 g.setColor$java_awt_Color(currentTextColor);
-var string=sequence.getDisplayId$Z(alignViewport.getShowJVSuffix$());
-if (alignViewport.isRightAlignIds$()) {
-xPos=panelWidth - fm.stringWidth$S(string) - 4 ;
-if (xPos < checkboxWidth) {
-xPos=checkboxWidth;
-}
-}g.drawString$S$I$I(string, xPos, (((i - startSeq) * charHeight) + charHeight) - ((charHeight/5|0)));
+var string=this.phgoDisplayLabel$jalview_datamodel_SequenceI$I(sequence, i);
+g.drawString$S$I$I(string, xPos, (((i - startSeq) * charHeight) + charHeight) - ((charHeight/5|0)));
 this.drawPHgoCheckbox$java_awt_Graphics2D$jalview_datamodel_SequenceI$I$I$I$I$java_awt_Color(g, sequence, i, y, charHeight, checkboxWidth, g.getColor$());
 if (hasHiddenRows) {
 this.drawMarker$java_awt_Graphics2D$jalview_gui_AlignViewport$I$I$I(g, alignViewport, i, startSeq, 0);
@@ -121674,7 +121748,10 @@ var bridge=window.__PHGOJalviewBridgeAPI;
 if (bridge && bridge.phgoState && bridge.phgoState.session && e.getX$() <= bridge.checkboxColumnWidth() && pos.seqIndex >= 0 && pos.seqIndex < this.av.getAlignment$().getHeight$()) {
 var seqForPhgo=this.av.getAlignment$().getSequenceAt$I(pos.seqIndex);
 if (seqForPhgo != null ) {
-bridge.toggleSelectionForSequence(seqForPhgo.phgoTaxonID || "", seqForPhgo.getName$(), pos.seqIndex);
+bridge.toggleSelectionForSequence(seqForPhgo.phgoTaxonID || "", seqForPhgo.getName$(), pos.seqIndex, false);
+if (bridge.invalidateIdCanvas) {
+bridge.invalidateIdCanvas(this.getIdCanvas$());
+}
 this.getIdCanvas$().repaint$();
 this.alignPanel.paintAlignment$Z$Z(false, false);
 return;
@@ -123920,7 +123997,6 @@ this.groupMenu.add$javax_swing_JMenuItem(this.sequenceSelDetails);
 this.add$javax_swing_JMenuItem(this.groupMenu);
 this.add$javax_swing_JMenuItem(this.sequenceMenu);
 this.add$javax_swing_JMenuItem(this.rnaStructureMenu);
-this.add$javax_swing_JMenuItem(this.pdbStructureDialog);
 if (this.sequence != null ) {
 this.add$javax_swing_JMenuItem(this.hideInsertions);
 }this.sequenceMenu.add$javax_swing_JMenuItem(this.seqShowAnnotationsMenu);
@@ -123945,7 +124021,6 @@ this.editMenu.add$javax_swing_JMenuItem(this.cut);
 this.editMenu.add$javax_swing_JMenuItem(this.editSequence);
 this.editMenu.add$javax_swing_JMenuItem(this.upperCase);
 this.editMenu.add$javax_swing_JMenuItem(this.lowerCase);
-this.editMenu.add$javax_swing_JMenuItem(this.toggle);
 this.jMenu1.add$javax_swing_JMenuItem(this.groupName);
 this.jMenu1.add$javax_swing_JMenuItem(this.colourMenu);
 this.jMenu1.add$javax_swing_JMenuItem(this.showBoxes);
@@ -124261,9 +124336,7 @@ Clazz_newMeth(C$, '$init$', function () {
 
 Clazz_newMeth(C$, 'run$', function () {
 if (this.$finals$.dialog.getName$() != null ) {
-if (this.$finals$.dialog.getName$().indexOf$S(" ") > -1) {
-$I$(12).showMessageDialog$java_awt_Component$S$S$I(this.b$['jalview.gui.PopupMenu'].ap, $I$(4).getString$S("label.spaces_converted_to_underscores"), $I$(4).getString$S("label.no_spaces_allowed_sequence_name"), 2);
-}this.b$['jalview.gui.PopupMenu'].sequence.setName$S(this.$finals$.dialog.getName$().replace$C$C(" ", "_"));
+this.b$['jalview.gui.PopupMenu'].sequence.setName$S(this.$finals$.dialog.getName$());
 this.b$['jalview.gui.PopupMenu'].ap.paintAlignment$Z$Z(false, false);
 }this.b$['jalview.gui.PopupMenu'].sequence.setDescription$S(this.$finals$.dialog.getDescription$());
 this.b$['jalview.gui.PopupMenu'].ap.av.firePropertyChange$S$O$O("alignment", null, this.b$['jalview.gui.PopupMenu'].ap.av.getAlignment$().getSequences$());
@@ -124416,7 +124489,7 @@ Clazz_newMeth(C$, '$init$', function () {
 }, 1);
 
 Clazz_newMeth(C$, 'run$', function () {
-var editCommand=Clazz_new_($I$(54).c$$S$jalview_commands_EditCommand_Action$S$jalview_datamodel_SequenceIA$I$I$jalview_datamodel_AlignmentI,[$I$(4).getString$S("label.edit_sequences"), $I$(55).REPLACE, this.$finals$.dialog.getName$().replace$C$C(" ", this.b$['jalview.gui.PopupMenu'].ap.av.getGapCharacter$()), this.$finals$.sg.getSequencesAsArray$java_util_Map(this.b$['jalview.gui.PopupMenu'].ap.av.getHiddenRepSequences$()), this.$finals$.sg.getStartRes$(), this.$finals$.sg.getEndRes$() + 1, this.b$['jalview.gui.PopupMenu'].ap.av.getAlignment$()]);
+var editCommand=Clazz_new_($I$(54).c$$S$jalview_commands_EditCommand_Action$S$jalview_datamodel_SequenceIA$I$I$jalview_datamodel_AlignmentI,[$I$(4).getString$S("label.edit_sequences"), $I$(55).REPLACE, ("" + this.$finals$.dialog.getName$()).toUpperCase(), this.$finals$.sg.getSequencesAsArray$java_util_Map(this.b$['jalview.gui.PopupMenu'].ap.av.getHiddenRepSequences$()), this.$finals$.sg.getStartRes$(), this.$finals$.sg.getEndRes$() + 1, this.b$['jalview.gui.PopupMenu'].ap.av.getAlignment$()]);
 this.b$['jalview.gui.PopupMenu'].ap.alignFrame.addHistoryItem$jalview_commands_CommandI(editCommand);
 this.b$['jalview.gui.PopupMenu'].ap.av.firePropertyChange$S$O$O("alignment", null, this.b$['jalview.gui.PopupMenu'].ap.av.getAlignment$().getSequences$());
 });
@@ -140471,6 +140544,14 @@ fileMenu.add$javax_swing_JMenuItem(this.closeMenuItem);
 {
 var phgoBridge=window.__PHGOJalviewBridgeAPI;
 if (phgoBridge && phgoBridge.phgoState && phgoBridge.phgoState.session) {
+var phgoSave=Clazz_new_($I$(2).c$$S,["Save"]);
+phgoSave.addActionListener$java_awt_event_ActionListener({
+actionPerformed$: function(e) { this.actionPerformed$java_awt_event_ActionEvent(e); },
+actionPerformed$java_awt_event_ActionEvent: function(e) {
+var bridge=window.__PHGOJalviewBridgeAPI;
+if (bridge && bridge.saveMSAStateManual) bridge.saveMSAStateManual().catch(function(error){ if (bridge && bridge.debug) bridge.debug("msa-save-failed", { message: bridge.formatValue ? bridge.formatValue(error) : String(error) }); });
+}
+});
 var phgoApply=Clazz_new_($I$(2).c$$S,["Apply"]);
 phgoApply.addActionListener$java_awt_event_ActionListener({
 actionPerformed$: function(e) { this.actionPerformed$java_awt_event_ActionEvent(e); },
@@ -140480,6 +140561,7 @@ if (bridge && bridge.applyMSASelection) bridge.applyMSASelection().catch(functio
 }
 });
 fileMenu.addSeparator$();
+fileMenu.add$javax_swing_JMenuItem(phgoSave);
 fileMenu.add$javax_swing_JMenuItem(phgoApply);
 }
 }

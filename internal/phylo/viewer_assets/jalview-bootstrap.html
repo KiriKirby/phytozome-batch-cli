@@ -111,6 +111,12 @@
       }
 
       #jalview-desktop-div .phgo-root-desktop-frame [id*="_MenuBarUI"],
+      #jalview-desktop-div .phgo-root-desktop-frame [id*="_MenuBarUI"] * {
+        display: none !important;
+        visibility: hidden !important;
+        pointer-events: none !important;
+      }
+
       #jalview-desktop-div .phgo-root-desktop-frame canvas {
         visibility: hidden !important;
         pointer-events: none !important;
@@ -132,11 +138,10 @@
         pointer-events: auto !important;
       }
 
-      #jalview-desktop-div .phgo-root-desktop-frame [id*="_MenuBarUI"],
-      #jalview-desktop-div .phgo-root-desktop-frame [id*="_MenuBarUI"] *,
-      #jalview-desktop-div .phgo-root-desktop-frame canvas {
-        visibility: hidden !important;
-        pointer-events: none !important;
+      #jalview-alignment-div [id*="_MenuBarUI"],
+      #jalview-alignment-div [id*="_MenuBarUI"] * {
+        visibility: visible !important;
+        pointer-events: auto !important;
       }
 
       #jalview-alignment-div {

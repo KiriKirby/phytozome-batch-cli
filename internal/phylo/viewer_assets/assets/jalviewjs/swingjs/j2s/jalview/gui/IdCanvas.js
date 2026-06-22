@@ -53,6 +53,79 @@ return "";
 }
 });
 
+Clazz.newMeth(C$, 'phgoDisplayPrefix$jalview_datamodel_SequenceI$I', function (seq, index) {
+{
+var bridge=window.__PHGOJalviewBridgeAPI;
+if (!bridge || !seq || !bridge.displayPrefixForSequence) return "";
+try {
+var name="";
+try {
+name=seq.getName$();
+} catch (nameError) {
+name="";
+}
+return bridge.displayPrefixForSequence(seq.phgoTaxonID || "", name, index) || "";
+} catch (e) {
+return "";
+}
+}
+});
+
+Clazz.newMeth(C$, 'phgoDisplayName$jalview_datamodel_SequenceI', function (seq) {
+if (seq == null ) {
+return "";
+}
+try {
+var name=seq.getName$();
+if (name != null  && String(name).length > 0) {
+return name;
+}
+} catch (e) {
+}
+try {
+var id=seq.getDisplayId$Z(false);
+return id == null  ? "" : id;
+} catch (e2) {
+return "";
+}
+});
+
+Clazz.newMeth(C$, 'phgoResidueRatio$jalview_datamodel_SequenceI', function (seq) {
+if (seq == null ) {
+return "";
+}
+try {
+var text=seq.getSequenceAsString$();
+if (text == null ) {
+return "";
+}
+var total=String(text).length;
+if (total < 1) {
+return "";
+}
+var residues=0;
+for (var i=0; i < total; i++) {
+var ch=String(text).charAt(i);
+if (ch !== "-" && ch !== "." && ch !== " " && ch !== "\t" && ch !== "\r" && ch !== "\n" && ch !== "*") {
+residues++;
+}
+}
+var pct=Math.round((residues * 1000) / total) / 10;
+return " " + residues + "/" + total + " " + pct + "%";
+} catch (e) {
+return "";
+}
+});
+
+Clazz.newMeth(C$, 'phgoDisplayLabel$jalview_datamodel_SequenceI$I', function (seq, index) {
+var prefix=this.phgoDisplayPrefix$jalview_datamodel_SequenceI$I(seq, index);
+var string=this.phgoDisplayName$jalview_datamodel_SequenceI(seq);
+if (String(prefix).length > 0) {
+string=prefix + " " + string;
+}
+return string + this.phgoResidueRatio$jalview_datamodel_SequenceI(seq);
+});
+
 Clazz.newMeth(C$, 'drawPHgoCheckbox$java_awt_Graphics2D$jalview_datamodel_SequenceI$I$I$I$I$java_awt_Color', function (g, s, index, y, charHeight, width, textColor) {
 {
 if (!width) return;
@@ -87,6 +160,7 @@ var xPos=checkboxWidth;
 var panelWidth=this.getWidth$();
 var charHeight=this.av.getCharHeight$();
 var y=((i - starty) * charHeight) + ypos;
+var string=this.phgoDisplayLabel$jalview_datamodel_SequenceI$I(s, i);
 if ((this.searchResults != null ) && this.searchResults.contains$O(s) ) {
 g.setColor$java_awt_Color($I$(3).black);
 g.fillRect$I$I$I$I(0, y, this.getWidth$(), charHeight);
@@ -99,13 +173,7 @@ g.setColor$java_awt_Color($I$(3).white);
 g.setColor$java_awt_Color(this.av.getSequenceColour$jalview_datamodel_SequenceI(s));
 g.fillRect$I$I$I$I(0, y, this.getWidth$(), charHeight);
 g.setColor$java_awt_Color($I$(3).black);
-}if (this.av.isRightAlignIds$()) {
-var fm=g.getFontMetrics$();
-xPos=panelWidth - fm.stringWidth$S(s.getDisplayId$Z(this.av.getShowJVSuffix$())) - 4 ;
-if (xPos < checkboxWidth) {
-xPos=checkboxWidth;
-}
-}g.drawString$S$I$I(s.getDisplayId$Z(this.av.getShowJVSuffix$()), xPos, (((i - starty + 1) * charHeight) + ypos) - ((charHeight/5|0)));
+}g.drawString$S$I$I(string, xPos, (((i - starty + 1) * charHeight) + ypos) - ((charHeight/5|0)));
 this.drawPHgoCheckbox$java_awt_Graphics2D$jalview_datamodel_SequenceI$I$I$I$I$java_awt_Color(g, s, i, y, charHeight, checkboxWidth, g.getColor$());
 if (hiddenRows) {
 this.drawMarker$java_awt_Graphics2D$jalview_gui_AlignViewport$I$I$I(g, this.av, i, starty, ypos);
@@ -142,16 +210,17 @@ this.av.getAlignPanel$().repaint$();
 Clazz.newMeth(C$, 'paintComponent$java_awt_Graphics', function (g) {
 g.setColor$java_awt_Color($I$(3).white);
 g.fillRect$I$I$I$I(0, 0, this.getWidth$(), this.getHeight$());
-if (this.fastPaint) {
+if (this.fastPaint && this.image != null ) {
 this.fastPaint=false;
 g.drawImage$java_awt_Image$I$I$java_awt_image_ImageObserver(this.image, 0, 0, this);
 return;
-}var oldHeight=this.imgHeight;
+}this.fastPaint=false;
+var oldHeight=this.imgHeight;
 this.imgHeight=this.getHeight$();
 this.imgHeight-=(this.imgHeight % this.av.getCharHeight$());
 if (this.imgHeight < 1) {
 return;
-}if (oldHeight != this.imgHeight || this.image.getWidth$java_awt_image_ImageObserver(this) != this.getWidth$() ) {
+}if (this.image == null  || oldHeight != this.imgHeight || this.image.getWidth$java_awt_image_ImageObserver(this) != this.getWidth$() ) {
 this.image=Clazz.new_($I$(4).c$$I$I$I,[this.getWidth$(), this.imgHeight, 1]);
 }var gg=this.image.createGraphics$();
 gg.setColor$java_awt_Color($I$(3).white);
@@ -200,13 +269,8 @@ var charHeight=alignViewport.getCharHeight$();
 var y=(i - startSeq) * charHeight;
 g.fillRect$I$I$I$I(0, y, this.getWidth$(), charHeight);
 g.setColor$java_awt_Color(currentTextColor);
-var string=sequence.getDisplayId$Z(alignViewport.getShowJVSuffix$());
-if (alignViewport.isRightAlignIds$()) {
-xPos=panelWidth - fm.stringWidth$S(string) - 4 ;
-if (xPos < checkboxWidth) {
-xPos=checkboxWidth;
-}
-}g.drawString$S$I$I(string, xPos, (((i - startSeq) * charHeight) + charHeight) - ((charHeight/5|0)));
+var string=this.phgoDisplayLabel$jalview_datamodel_SequenceI$I(sequence, i);
+g.drawString$S$I$I(string, xPos, (((i - startSeq) * charHeight) + charHeight) - ((charHeight/5|0)));
 this.drawPHgoCheckbox$java_awt_Graphics2D$jalview_datamodel_SequenceI$I$I$I$I$java_awt_Color(g, sequence, i, y, charHeight, checkboxWidth, g.getColor$());
 if (hasHiddenRows) {
 this.drawMarker$java_awt_Graphics2D$jalview_gui_AlignViewport$I$I$I(g, alignViewport, i, startSeq, 0);

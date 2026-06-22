@@ -9,7 +9,6 @@ import (
 	"crypto/sha256"
 	"encoding/csv"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"html"
 	"io"
@@ -33,8 +32,11 @@ import (
 )
 
 const (
-	baseURL     = "https://www.arabidopsis.org"
-	downloadAPI = "https://www.arabidopsis.org/api/download-files/download?filePath="
+	baseURL                     = "https://www.arabidopsis.org"
+	downloadAPI                 = "https://www.arabidopsis.org/api/download-files/download?filePath="
+	tairKeywordIndexCacheSchema = "tair-keyword-index-v5"
+	tairFamilyRowsCacheSchema   = "tair-family-rows-v2"
+	tairLiveFamilyCacheSchema   = "tair-live-family-v2"
 )
 
 type Client struct {
@@ -51,7 +53,6 @@ type Client struct {
 	fastaHeaders    map[string]map[string]fastaEntry
 	descriptions    map[string]map[string]descriptionEntry
 	representative  map[string]map[string]string
-	externalSeqs    map[string]proteinEntry
 	liveGeneDocs    map[string][]tairSearchDoc
 	liveProteinDocs map[string][]tairSearchDoc
 	liveKeywordDocs map[string][]tairKeywordSearchDoc
@@ -141,7 +142,6 @@ func NewClient(httpClient *http.Client) *Client {
 		fastaHeaders:    make(map[string]map[string]fastaEntry),
 		descriptions:    make(map[string]map[string]descriptionEntry),
 		representative:  make(map[string]map[string]string),
-		externalSeqs:    make(map[string]proteinEntry),
 		liveGeneDocs:    make(map[string][]tairSearchDoc),
 		liveProteinDocs: make(map[string][]tairSearchDoc),
 		liveKeywordDocs: make(map[string][]tairKeywordSearchDoc),
@@ -165,6 +165,9 @@ func defaultReleases() []releaseInfo {
 			Label:                  "TAIR12",
 			ReleaseDate:            "2026-02-01",
 			GFFURL:                 downloadURL("Genes/TAIR12_genome_release/TAIR12_1Feb26.gff3.zip"),
+			ProteinURL:             downloadURL("Genes/TAIR12_genome_release/TAIR12_pep.fasta"),
+			NucleotideURL:          downloadURL("Genes/TAIR12_genome_release/TAIR12_cds.fasta"),
+			CDSURL:                 downloadURL("Genes/TAIR12_genome_release/TAIR12_cds.fasta"),
 			DescriptionURL:         "",
 			RepresentativeModelURL: "",
 			ReportURLBase:          baseURL + "/servlets/TairObject?type=locus&name=",
@@ -422,6 +425,7 @@ func (c *Client) SearchKeywordRowsByIdentifier(ctx context.Context, version mode
 				return rows, nil
 			}
 		}
+		return nil, nil
 	}
 	rows, err := c.searchLiveIdentifierRows(ctx, version, term, kind)
 	if err != nil {
@@ -442,6 +446,7 @@ func (c *Client) SearchKeywordRowsByLabel(ctx context.Context, version model.Spe
 				return rows, nil
 			}
 		}
+		return nil, nil
 	}
 	rows, err := c.searchLiveLabelRows(ctx, version, term)
 	if err != nil {
@@ -458,6 +463,7 @@ func (c *Client) SearchKeywordRowsByKeywordText(ctx context.Context, version mod
 				return rows, nil
 			}
 		}
+		return nil, nil
 	}
 	rows, err := c.searchLiveKeywordRows(ctx, version, term, false)
 	if err != nil {
@@ -474,6 +480,7 @@ func (c *Client) SearchKeywordRowsByWideText(ctx context.Context, version model.
 				return rows, nil
 			}
 		}
+		return nil, nil
 	}
 	rows, err := c.searchLiveKeywordRows(ctx, version, term, true)
 	if err != nil {
@@ -493,6 +500,7 @@ func (c *Client) SearchKeywordRowsByBroadText(ctx context.Context, version model
 				return rows, nil
 			}
 		}
+		return nil, nil
 	}
 	rows, err := c.searchLiveKeywordRows(ctx, version, term, true)
 	if err != nil {
@@ -512,6 +520,17 @@ func (c *Client) SearchKeywordRowsByFamily(ctx context.Context, version model.Sp
 	if rel, err := c.releaseForVersion(version); err == nil && rel.GFFURL != "" {
 		if idx, idxErr := c.cachedIndex(ctx, version); idxErr == nil && len(idx.Rows) > 0 {
 			rows := c.searchKeywordRowsByFamilyIndex(idx, key, limit)
+			rows = keywordRowsWithSequences(rows)
+			if len(rows) > 0 {
+				for i := range rows {
+					rows[i].SearchTerm = key
+					rows[i].SearchType = tairkeyword.SearchTypeFamily
+				}
+				c.storeFamilyRows(version, key, limit, rows)
+				return rows, nil
+			}
+			rows = c.searchIndex(idx, key, true, limit)
+			rows = keywordRowsWithSequences(rows)
 			if len(rows) > 0 {
 				for i := range rows {
 					rows[i].SearchTerm = key
@@ -521,6 +540,7 @@ func (c *Client) SearchKeywordRowsByFamily(ctx context.Context, version model.Sp
 				return rows, nil
 			}
 		}
+		return nil, nil
 	}
 	candidates, err := c.FetchFamilyCandidates(ctx, version)
 	if err != nil {
@@ -547,6 +567,7 @@ func (c *Client) FetchFamilyCandidates(ctx context.Context, version model.Specie
 		if idx, idxErr := c.cachedIndex(ctx, version); idxErr == nil && len(idx.FamilyCandidates) > 0 {
 			return familyCandidatesToSpecies(idx.FamilyCandidates), nil
 		}
+		return nil, nil
 	}
 	families, err := c.cachedLiveFamilyCandidates(ctx, version)
 	if err != nil {
@@ -556,7 +577,7 @@ func (c *Client) FetchFamilyCandidates(ctx context.Context, version model.Specie
 }
 
 func (c *Client) cachedLiveFamilyCandidates(ctx context.Context, version model.SpeciesCandidate) ([]familyCandidate, error) {
-	cacheKey := strings.ToLower(strings.TrimSpace(firstNonEmpty(version.JBrowseName, version.GenomeLabel, "tair")))
+	cacheKey := tairLiveFamilyCacheSchema + "|" + strings.ToLower(strings.TrimSpace(firstNonEmpty(version.JBrowseName, version.GenomeLabel, "tair")))
 	c.mu.RLock()
 	if cached := c.familyLists[cacheKey]; len(cached) > 0 {
 		out := append([]familyCandidate(nil), cached...)
@@ -602,11 +623,19 @@ func (c *Client) cachedFamilyRows(version model.SpeciesCandidate, family string,
 	c.mu.RUnlock()
 	if !ok || len(cached) == 0 {
 		if cached, diskOK := readCachedJSON[[]model.KeywordResultRow]("family-rows", cacheKey); diskOK && len(cached) > 0 {
+			cached = keywordRowsWithSequences(cached)
+			if len(cached) == 0 {
+				return nil, false
+			}
 			c.mu.Lock()
 			c.familyRows[cacheKey] = cloneKeywordResultRows(cached)
 			c.mu.Unlock()
 			return cloneKeywordResultRows(cached), true
 		}
+		return nil, false
+	}
+	cached = keywordRowsWithSequences(cached)
+	if len(cached) == 0 {
 		return nil, false
 	}
 	return cloneKeywordResultRows(cached), true
@@ -1121,6 +1150,19 @@ func limitKeywordRows(rows []model.KeywordResultRow, limit int) []model.KeywordR
 	return append([]model.KeywordResultRow(nil), rows[:limit]...)
 }
 
+func keywordRowsWithSequences(rows []model.KeywordResultRow) []model.KeywordResultRow {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]model.KeywordResultRow, 0, len(rows))
+	for _, row := range rows {
+		if strings.TrimSpace(row.SequenceID) != "" {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
 func filterFamilyCandidates(candidates []model.SpeciesCandidate, keyword string) []model.SpeciesCandidate {
 	keyword = strings.TrimSpace(keyword)
 	if keyword == "" {
@@ -1436,7 +1478,7 @@ func (c *Client) cachedIndex(ctx context.Context, version model.SpeciesCandidate
 	if err != nil {
 		return tairIndex{}, err
 	}
-	cacheKey := rel.Name + "|" + rel.GFFURL + "|" + rel.ProteinURL
+	cacheKey := tairKeywordIndexCacheSchema + "|" + rel.Name + "|" + rel.GFFURL + "|" + rel.ProteinURL
 	c.mu.RLock()
 	if idx, ok := c.rowIndex[cacheKey]; ok && len(idx.Rows) > 0 {
 		c.mu.RUnlock()
@@ -1519,14 +1561,9 @@ func (c *Client) buildIndex(ctx context.Context, rel releaseInfo, version model.
 		if row.GeneIdentifier == "" && row.TranscriptID == "" {
 			continue
 		}
-		key := strings.ToUpper(firstNonEmpty(row.TranscriptID, row.GeneIdentifier))
+		key := strings.ToUpper(firstNonEmpty(row.GeneIdentifier, stripTranscriptSuffix(row.TranscriptID), row.TranscriptID))
 		if idx, ok := rowByGene[key]; ok {
-			if rows[idx].ProteinID == "" && row.ProteinID != "" {
-				rows[idx].ProteinID = row.ProteinID
-			}
-			if rows[idx].Description == "" && row.Description != "" {
-				rows[idx].Description = row.Description
-			}
+			mergeKeywordRows(&rows[idx], row)
 			continue
 		}
 		rowByGene[key] = len(rows)
@@ -1553,13 +1590,15 @@ func (c *Client) buildIndex(ctx context.Context, rel releaseInfo, version model.
 	for i, row := range rows {
 		mergeDescriptionIntoRow(&row, descriptions)
 		applyRepresentativeModelHint(&row, representative)
-		if fam := familyNameFromDescription(firstNonEmpty(row.Description, row.AutoDefine, row.Comments)); fam != "" {
-			row.ExtraColumns = ensureExtraColumns(row.ExtraColumns)
-			row.ExtraColumns["tair_family_name"] = fam
-			row.ExtraColumns["tair_family_short_name"] = familyShortName(fam)
-			if parentName, parentKey := familyParentName(fam); parentKey != "" {
-				row.ExtraColumns["tair_family_parent_name"] = parentName
-				row.ExtraColumns["tair_family_parent_key"] = parentKey
+		if row.SequenceID != "" {
+			if fam := familyNameFromDescription(firstNonEmpty(row.Description, row.AutoDefine, row.Comments)); fam != "" {
+				row.ExtraColumns = ensureExtraColumns(row.ExtraColumns)
+				row.ExtraColumns["tair_family_name"] = fam
+				row.ExtraColumns["tair_family_short_name"] = familyShortName(fam)
+				if parentName, parentKey := familyParentName(fam); parentKey != "" {
+					row.ExtraColumns["tair_family_parent_name"] = parentName
+					row.ExtraColumns["tair_family_parent_key"] = parentKey
+				}
 			}
 		}
 		rows[i] = row
@@ -1573,6 +1612,9 @@ func (c *Client) buildIndex(ctx context.Context, rel releaseInfo, version model.
 		}
 		for _, token := range normalizeKeywordTerms(rowSearchText(row)) {
 			addIndexHit(idx.ByToken, token, i)
+		}
+		if row.SequenceID == "" {
+			continue
 		}
 		if fam := firstNonEmpty(row.ExtraColumns["tair_family_name"], familyNameFromDescription(row.Description)); fam != "" {
 			key := normalizeFamilyKey(fam)
@@ -1660,6 +1702,15 @@ func buildKeywordRowFromGFF(version model.SpeciesCandidate, rel releaseInfo, gff
 	if strings.EqualFold(description, "protein_coding_gene") || strings.EqualFold(description, "protein coding gene") {
 		description = ""
 	}
+	symbol := cleanText(firstNonEmpty(attrs["symbol"], attrs["gene_symbol"], attrs["gene"]))
+	synonyms := cleanText(firstNonEmpty(attrs["gene_synonym"], attrs["synonym"], attrs["Alias"]))
+	aliases := joinUniqueFields(attrs["Alias"], attrs["Dbxref"], attrs["dbxref"], attrs["locus_tag"], synonyms, symbol)
+	if proteinID == "" && transcript != "" {
+		proteinID = transcript
+	}
+	if sequenceID == id && transcript == "" {
+		sequenceID = ""
+	}
 	extra := map[string]string{
 		"tair_version":   rel.Name,
 		"tair_gff_url":   rel.GFFURL,
@@ -1679,14 +1730,15 @@ func buildKeywordRowFromGFF(version model.SpeciesCandidate, rel releaseInfo, gff
 	return model.KeywordResultRow{
 		SourceDatabase:      "tair",
 		SearchType:          "TAIR keyword",
-		LabelName:           firstSymbolFromText(firstNonEmpty(attrs["symbol"], attrs["Alias"], attrs["Name"])),
+		LabelName:           firstNonEmpty(symbol, firstSymbolFromText(firstNonEmpty(attrs["Alias"], attrs["Name"]))),
 		ProteinID:           proteinID,
 		TranscriptID:        transcript,
 		GeneIdentifier:      gene,
 		Genome:              version.DisplayLabel(),
 		Location:            fmt.Sprintf("%s:%s..%s %s", gff.SeqID, gff.Start, gff.End, gff.Strand),
-		Aliases:             firstNonEmpty(attrs["Alias"], attrs["Dbxref"]),
-		Symbols:             firstNonEmpty(attrs["symbol"], attrs["gene_symbol"]),
+		Aliases:             aliases,
+		Symbols:             symbol,
+		Synonyms:            synonyms,
 		UniProt:             firstNonEmpty(strings.Join(extractUniProtAccessions(attrs["Dbxref"], attrs["dbxref"], gff.Attributes), "; "), attrs["UniProtKB"]),
 		Description:         description,
 		Comments:            firstNonEmpty(attrs["Note"], attrs["comment"]),
@@ -1714,6 +1766,62 @@ func enrichRowWithProtein(row *model.KeywordResultRow, protein proteinEntry) {
 	row.ExtraColumns["tair_fasta_symbols"] = protein.Symbols
 }
 
+func mergeKeywordRows(dst *model.KeywordResultRow, src model.KeywordResultRow) {
+	if dst == nil {
+		return
+	}
+	dst.LabelName = firstNonEmpty(dst.LabelName, src.LabelName)
+	dst.ProteinID = firstNonEmpty(dst.ProteinID, src.ProteinID)
+	dst.TranscriptID = firstNonEmpty(dst.TranscriptID, src.TranscriptID)
+	dst.GeneIdentifier = firstNonEmpty(dst.GeneIdentifier, src.GeneIdentifier)
+	dst.Genome = firstNonEmpty(dst.Genome, src.Genome)
+	dst.Location = firstNonEmpty(dst.Location, src.Location)
+	dst.Aliases = joinUniqueFields(dst.Aliases, src.Aliases)
+	dst.Symbols = joinUniqueFields(dst.Symbols, src.Symbols)
+	dst.Synonyms = joinUniqueFields(dst.Synonyms, src.Synonyms)
+	dst.UniProt = joinUniqueFields(dst.UniProt, src.UniProt)
+	dst.Description = firstNonEmpty(dst.Description, src.Description)
+	dst.Comments = firstNonEmpty(dst.Comments, src.Comments)
+	dst.AutoDefine = firstNonEmpty(dst.AutoDefine, src.AutoDefine)
+	dst.GeneReportURL = firstNonEmpty(dst.GeneReportURL, src.GeneReportURL)
+	dst.SequenceHeaderLabel = firstNonEmpty(dst.SequenceHeaderLabel, src.SequenceHeaderLabel)
+	dst.SequenceID = firstNonEmpty(dst.SequenceID, src.SequenceID)
+	dst.ExtraColumns = mergeExtraColumns(dst.ExtraColumns, src.ExtraColumns)
+}
+
+func mergeExtraColumns(dst map[string]string, src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return dst
+	}
+	dst = ensureExtraColumns(dst)
+	for key, value := range src {
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		if existing := strings.TrimSpace(dst[key]); existing != "" && existing != value {
+			dst[key] = joinUniqueFields(existing, value)
+			continue
+		}
+		dst[key] = value
+	}
+	return dst
+}
+
+func joinUniqueFields(values ...string) string {
+	parts := make([]string, 0, len(values)*2)
+	for _, value := range values {
+		for _, part := range strings.FieldsFunc(value, func(r rune) bool {
+			return r == ';' || r == ',' || r == '|' || r == '\t'
+		}) {
+			part = strings.TrimSpace(strings.Trim(part, `"' `))
+			if part != "" {
+				parts = append(parts, part)
+			}
+		}
+	}
+	return strings.Join(uniqueStrings(parts), "; ")
+}
+
 func (c *Client) FetchProteinSequence(ctx context.Context, targetID int, sequenceID string) (model.ProteinSequenceData, error) {
 	sequenceID = cleanIdentifier(sequenceID)
 	if sequenceID == "" {
@@ -1731,17 +1839,10 @@ func (c *Client) FetchProteinSequence(ctx context.Context, targetID int, sequenc
 			}
 		}
 	}
-	entry, externalErr := c.fetchExternalProteinSequence(ctx, rel, sequenceID)
-	if externalErr == nil {
-		return model.ProteinSequenceData{Sequence: entry.Sequence, OriginalHeader: entry.Header}, nil
-	}
 	if err != nil {
-		return model.ProteinSequenceData{}, fmt.Errorf("%w; external fallback: %v", err, externalErr)
+		return model.ProteinSequenceData{}, fmt.Errorf("load TAIR %s protein FASTA: %w", rel.Name, err)
 	}
-	if externalErr != nil {
-		return model.ProteinSequenceData{}, externalErr
-	}
-	return model.ProteinSequenceData{}, fmt.Errorf("no TAIR protein sequence matched %s in %s", sequenceID, rel.Name)
+	return model.ProteinSequenceData{}, fmt.Errorf("no TAIR protein sequence matched %s in %s official protein FASTA", sequenceID, rel.Name)
 }
 
 func (c *Client) FetchNucleotideSequence(ctx context.Context, targetID int, sequenceID string, program string) (model.ProteinSequenceData, error) {
@@ -2284,193 +2385,6 @@ func parseFASTA(reader io.Reader) (map[string]proteinEntry, error) {
 	return seqs, nil
 }
 
-type ensemblProteinSequenceResponse struct {
-	ID       string `json:"id"`
-	Query    string `json:"query"`
-	Desc     string `json:"desc"`
-	Sequence string `json:"seq"`
-	Molecule string `json:"molecule"`
-}
-
-type uniProtSequenceSearchResponse struct {
-	Results []struct {
-		PrimaryAccession string `json:"primaryAccession"`
-		UniProtkbID      string `json:"uniProtkbId"`
-		Sequence         struct {
-			Value string `json:"value"`
-		} `json:"sequence"`
-		Genes []struct {
-			GeneName struct {
-				Value string `json:"value"`
-			} `json:"geneName"`
-			OrderedLocusNames []struct {
-				Value string `json:"value"`
-			} `json:"orderedLocusNames"`
-		} `json:"genes"`
-		ProteinDescription struct {
-			RecommendedName struct {
-				FullName struct {
-					Value string `json:"value"`
-				} `json:"fullName"`
-			} `json:"recommendedName"`
-		} `json:"proteinDescription"`
-	} `json:"results"`
-}
-
-func (c *Client) fetchExternalProteinSequence(ctx context.Context, rel releaseInfo, sequenceID string) (proteinEntry, error) {
-	sequenceID = cleanIdentifier(sequenceID)
-	if sequenceID == "" {
-		return proteinEntry{}, fmt.Errorf("empty TAIR protein sequence id")
-	}
-	cacheKey := strings.ToLower(rel.Name) + "|" + strings.ToUpper(sequenceID)
-	c.mu.RLock()
-	if cached, ok := c.externalSeqs[cacheKey]; ok && strings.TrimSpace(cached.Sequence) != "" {
-		c.mu.RUnlock()
-		return cached, nil
-	}
-	c.mu.RUnlock()
-	if cached, ok := readCachedJSON[proteinEntry]("external-protein-sequence", cacheKey); ok && strings.TrimSpace(cached.Sequence) != "" {
-		c.mu.Lock()
-		c.externalSeqs[cacheKey] = cached
-		c.mu.Unlock()
-		return cached, nil
-	}
-	value, err, _ := c.sf.Do("tair-external-protein:"+cacheKey, func() (any, error) {
-		if cached, ok := readCachedJSON[proteinEntry]("external-protein-sequence", cacheKey); ok && strings.TrimSpace(cached.Sequence) != "" {
-			return cached, nil
-		}
-		entry, err := c.fetchExternalProteinSequenceUncached(ctx, sequenceID)
-		if err != nil {
-			return proteinEntry{}, err
-		}
-		c.mu.Lock()
-		c.externalSeqs[cacheKey] = entry
-		c.mu.Unlock()
-		writeCachedJSON("external-protein-sequence", cacheKey, entry)
-		return entry, nil
-	})
-	if err != nil {
-		return proteinEntry{}, err
-	}
-	return value.(proteinEntry), nil
-}
-
-func (c *Client) fetchExternalProteinSequenceUncached(ctx context.Context, sequenceID string) (proteinEntry, error) {
-	for _, candidate := range uniqueStrings([]string{sequenceID, stripTranscriptSuffix(sequenceID)}) {
-		if entry, err := c.fetchProteinSequenceFromEnsembl(ctx, candidate); err == nil {
-			return entry, nil
-		}
-	}
-	for _, candidate := range uniqueStrings([]string{sequenceID, stripTranscriptSuffix(sequenceID)}) {
-		if entry, err := c.fetchProteinSequenceFromUniProt(ctx, candidate); err == nil {
-			return entry, nil
-		}
-	}
-	return proteinEntry{}, fmt.Errorf("no external protein sequence source matched %s", sequenceID)
-}
-
-func (c *Client) fetchProteinSequenceFromEnsembl(ctx context.Context, sequenceID string) (proteinEntry, error) {
-	sequenceID = cleanIdentifier(sequenceID)
-	if sequenceID == "" {
-		return proteinEntry{}, fmt.Errorf("empty Ensembl sequence id")
-	}
-	rawURL := "https://rest.ensembl.org/sequence/id/" + url.PathEscape(sequenceID) + "?type=protein"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return proteinEntry{}, err
-	}
-	req.Header.Set("Accept", "application/json")
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return proteinEntry{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return proteinEntry{}, fmt.Errorf("Ensembl protein lookup returned %d for %s", resp.StatusCode, sequenceID)
-	}
-	var payload ensemblProteinSequenceResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return proteinEntry{}, err
-	}
-	seq := strings.TrimSpace(payload.Sequence)
-	if seq == "" {
-		return proteinEntry{}, fmt.Errorf("Ensembl returned empty protein sequence for %s", sequenceID)
-	}
-	id := cleanIdentifier(firstNonEmpty(payload.ID, payload.Query, sequenceID))
-	desc := cleanText(payload.Desc)
-	header := ">" + id
-	if desc != "" {
-		header += " " + desc
-	}
-	return proteinEntry{
-		ID:          id,
-		Header:      header,
-		Sequence:    seq,
-		Description: desc,
-		Symbols:     firstSymbolFromText(desc),
-	}, nil
-}
-
-func (c *Client) fetchProteinSequenceFromUniProt(ctx context.Context, sequenceID string) (proteinEntry, error) {
-	sequenceID = cleanIdentifier(sequenceID)
-	if sequenceID == "" {
-		return proteinEntry{}, fmt.Errorf("empty UniProt sequence id")
-	}
-	query := fmt.Sprintf("(gene:%s OR gene:%s) AND organism_id:3702", sequenceID, strings.ToUpper(sequenceID))
-	rawURL := "https://rest.uniprot.org/uniprotkb/search?format=json&size=3&query=" + url.QueryEscape(query)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return proteinEntry{}, err
-	}
-	req.Header.Set("Accept", "application/json")
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return proteinEntry{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return proteinEntry{}, fmt.Errorf("UniProt protein lookup returned %d for %s", resp.StatusCode, sequenceID)
-	}
-	var payload uniProtSequenceSearchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return proteinEntry{}, err
-	}
-	for _, result := range payload.Results {
-		seq := strings.TrimSpace(result.Sequence.Value)
-		if seq == "" {
-			continue
-		}
-		desc := cleanText(result.ProteinDescription.RecommendedName.FullName.Value)
-		symbols := ""
-		for _, gene := range result.Genes {
-			if symbols == "" {
-				symbols = cleanText(gene.GeneName.Value)
-			}
-			for _, locus := range gene.OrderedLocusNames {
-				if strings.EqualFold(cleanIdentifier(locus.Value), stripTranscriptSuffix(sequenceID)) && symbols == "" {
-					symbols = cleanText(gene.GeneName.Value)
-				}
-			}
-		}
-		id := cleanIdentifier(sequenceID)
-		header := ">" + id
-		if accession := strings.TrimSpace(result.PrimaryAccession); accession != "" {
-			header += " | UniProt: " + accession
-		}
-		if desc != "" {
-			header += " | " + desc
-		}
-		return proteinEntry{
-			ID:          id,
-			Header:      header,
-			Sequence:    seq,
-			Description: desc,
-			Symbols:     symbols,
-		}, nil
-	}
-	return proteinEntry{}, fmt.Errorf("UniProt returned no protein sequence for %s", sequenceID)
-}
-
 func (c *Client) openMaybeCompressed(ctx context.Context, requestURL string) (io.Reader, func(), error) {
 	if strings.Contains(requestURL, "://") == false {
 		f, err := os.Open(requestURL)
@@ -2905,6 +2819,17 @@ func familyNameFromDescription(description string) string {
 	if description == "" || !strings.Contains(strings.ToLower(description), "family") {
 		return ""
 	}
+	lower := strings.ToLower(description)
+	if strings.HasPrefix(lower, "encodes ") ||
+		strings.Contains(lower, " family members") ||
+		strings.Contains(lower, " family member") ||
+		strings.Contains(lower, "targets several ") ||
+		strings.Contains(lower, "microRNAs are regulatory") {
+		return ""
+	}
+	if strings.ContainsAny(description, ".:") || len(strings.Fields(description)) > 12 {
+		return ""
+	}
 	value := familyNoisePattern.ReplaceAllString(description, "")
 	value = strings.Trim(value, " ;,.")
 	if len(value) < 4 {
@@ -2914,9 +2839,11 @@ func familyNameFromDescription(description string) string {
 }
 
 func normalizeFamilyKey(value string) string {
-	value = familyNameFromDescription(value)
-	if value == "" {
-		value = strings.TrimSpace(value)
+	original := strings.TrimSpace(value)
+	if fam := familyNameFromDescription(original); fam != "" {
+		value = fam
+	} else {
+		value = original
 	}
 	return normalizeSearchTight(value)
 }
@@ -3105,6 +3032,7 @@ func cloneKeywordResultRows(values []model.KeywordResultRow) []model.KeywordResu
 
 func familyRowsCacheKey(version model.SpeciesCandidate, family string, limit int) string {
 	return strings.Join([]string{
+		tairFamilyRowsCacheSchema,
 		strings.ToLower(strings.TrimSpace(firstNonEmpty(version.JBrowseName, version.GenomeLabel))),
 		strings.ToLower(strings.TrimSpace(family)),
 		strconv.Itoa(limit),

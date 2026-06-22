@@ -662,14 +662,37 @@ func TestCanvasTreePanelBuildsTreePageFields(t *testing.T) {
 	if got := primitive.currentPage(); got != 2 {
 		t.Fatalf("current page = %d, want 2", got)
 	}
-	if len(primitive.fieldsByPage[2]) < 3 {
-		t.Fatalf("tree page fields = %d, want at least 3", len(primitive.fieldsByPage[2]))
+	if len(primitive.fieldsByPage[2]) < 4 {
+		t.Fatalf("tree page fields = %d, want at least 4", len(primitive.fieldsByPage[2]))
 	}
 	if _, ok := primitive.fieldsByPage[2][0].primitive.(*tview.DropDown); !ok {
 		t.Fatal("first tree-page control should be display-column dropdown")
 	}
-	if _, ok := primitive.fieldsByPage[2][1].primitive.(*tview.DropDown); !ok {
-		t.Fatal("second tree-page control should be tree-method dropdown")
+	if _, ok := primitive.fieldsByPage[2][2].primitive.(*tview.DropDown); !ok {
+		t.Fatal("third tree-page control should be tree-method dropdown")
+	}
+}
+
+func TestCanvasTreePanelDefaultsCoordinateDisplayOn(t *testing.T) {
+	panel := CanvasTreePanel{
+		State:              CanvasTreePanelState{Focused: true, CurrentControl: 2},
+		DisplayNameSources: []Choice{{Value: "label_name", Label: "label_name"}},
+		AlignmentMethods:   []CanvasTreeMethod{{ID: "clustalw", Label: "ClustalW"}},
+		TreeMethods:        []CanvasTreeMethod{{ID: "neighbor_joining", Label: "Neighbor-Joining"}},
+	}
+	primitive := newCanvasTreePanelPrimitive(panel, nil, nil, nil, nil, nil)
+	if state := primitive.currentState(); !state.ShowCanvasCoordinates || !state.ShowCanvasCoordinatesSet {
+		t.Fatalf("coordinate display should default on: %#v", state)
+	}
+}
+
+func TestBlastRunSidebarPrimaryLabelPrefixesCanvasItems(t *testing.T) {
+	item := BlastRunItem{Label: "PAL family"}
+	if got := blastRunSidebarPrimaryLabel(item, 2, true); got != "[3] PAL family" {
+		t.Fatalf("canvas sidebar label = %q, want item coordinate prefix", got)
+	}
+	if got := blastRunSidebarPrimaryLabel(item, 2, false); got != "PAL family" {
+		t.Fatalf("non-canvas sidebar label = %q, want unprefixed label", got)
 	}
 }
 

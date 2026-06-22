@@ -1026,7 +1026,6 @@ this.groupMenu.add$javax_swing_JMenuItem(this.sequenceSelDetails);
 this.add$javax_swing_JMenuItem(this.groupMenu);
 this.add$javax_swing_JMenuItem(this.sequenceMenu);
 this.add$javax_swing_JMenuItem(this.rnaStructureMenu);
-this.add$javax_swing_JMenuItem(this.pdbStructureDialog);
 if (this.sequence != null ) {
 this.add$javax_swing_JMenuItem(this.hideInsertions);
 }this.sequenceMenu.add$javax_swing_JMenuItem(this.seqShowAnnotationsMenu);
@@ -1051,7 +1050,6 @@ this.editMenu.add$javax_swing_JMenuItem(this.cut);
 this.editMenu.add$javax_swing_JMenuItem(this.editSequence);
 this.editMenu.add$javax_swing_JMenuItem(this.upperCase);
 this.editMenu.add$javax_swing_JMenuItem(this.lowerCase);
-this.editMenu.add$javax_swing_JMenuItem(this.toggle);
 this.jMenu1.add$javax_swing_JMenuItem(this.groupName);
 this.jMenu1.add$javax_swing_JMenuItem(this.colourMenu);
 this.jMenu1.add$javax_swing_JMenuItem(this.showBoxes);
@@ -1367,9 +1365,7 @@ Clazz.newMeth(C$, '$init$', function () {
 
 Clazz.newMeth(C$, 'run$', function () {
 if (this.$finals$.dialog.getName$() != null ) {
-if (this.$finals$.dialog.getName$().indexOf$S(" ") > -1) {
-$I$(12).showMessageDialog$java_awt_Component$S$S$I(this.b$['jalview.gui.PopupMenu'].ap, $I$(4).getString$S("label.spaces_converted_to_underscores"), $I$(4).getString$S("label.no_spaces_allowed_sequence_name"), 2);
-}this.b$['jalview.gui.PopupMenu'].sequence.setName$S(this.$finals$.dialog.getName$().replace$C$C(" ", "_"));
+this.b$['jalview.gui.PopupMenu'].sequence.setName$S(this.$finals$.dialog.getName$());
 this.b$['jalview.gui.PopupMenu'].ap.paintAlignment$Z$Z(false, false);
 }this.b$['jalview.gui.PopupMenu'].sequence.setDescription$S(this.$finals$.dialog.getDescription$());
 this.b$['jalview.gui.PopupMenu'].ap.av.firePropertyChange$S$O$O("alignment", null, this.b$['jalview.gui.PopupMenu'].ap.av.getAlignment$().getSequences$());
@@ -1522,7 +1518,7 @@ Clazz.newMeth(C$, '$init$', function () {
 }, 1);
 
 Clazz.newMeth(C$, 'run$', function () {
-var editCommand=Clazz.new_($I$(54).c$$S$jalview_commands_EditCommand_Action$S$jalview_datamodel_SequenceIA$I$I$jalview_datamodel_AlignmentI,[$I$(4).getString$S("label.edit_sequences"), $I$(55).REPLACE, this.$finals$.dialog.getName$().replace$C$C(" ", this.b$['jalview.gui.PopupMenu'].ap.av.getGapCharacter$()), this.$finals$.sg.getSequencesAsArray$java_util_Map(this.b$['jalview.gui.PopupMenu'].ap.av.getHiddenRepSequences$()), this.$finals$.sg.getStartRes$(), this.$finals$.sg.getEndRes$() + 1, this.b$['jalview.gui.PopupMenu'].ap.av.getAlignment$()]);
+var editCommand=Clazz.new_($I$(54).c$$S$jalview_commands_EditCommand_Action$S$jalview_datamodel_SequenceIA$I$I$jalview_datamodel_AlignmentI,[$I$(4).getString$S("label.edit_sequences"), $I$(55).REPLACE, ("" + this.$finals$.dialog.getName$()).toUpperCase(), this.$finals$.sg.getSequencesAsArray$java_util_Map(this.b$['jalview.gui.PopupMenu'].ap.av.getHiddenRepSequences$()), this.$finals$.sg.getStartRes$(), this.$finals$.sg.getEndRes$() + 1, this.b$['jalview.gui.PopupMenu'].ap.av.getAlignment$()]);
 this.b$['jalview.gui.PopupMenu'].ap.alignFrame.addHistoryItem$jalview_commands_CommandI(editCommand);
 this.b$['jalview.gui.PopupMenu'].ap.av.firePropertyChange$S$O$O("alignment", null, this.b$['jalview.gui.PopupMenu'].ap.av.getAlignment$().getSequences$());
 });

@@ -2107,6 +2107,14 @@ fileMenu.add$javax_swing_JMenuItem(this.closeMenuItem);
 {
 var phgoBridge=window.__PHGOJalviewBridgeAPI;
 if (phgoBridge && phgoBridge.phgoState && phgoBridge.phgoState.session) {
+var phgoSave=Clazz.new_($I$(2).c$$S,["Save"]);
+phgoSave.addActionListener$java_awt_event_ActionListener({
+actionPerformed$: function(e) { this.actionPerformed$java_awt_event_ActionEvent(e); },
+actionPerformed$java_awt_event_ActionEvent: function(e) {
+var bridge=window.__PHGOJalviewBridgeAPI;
+if (bridge && bridge.saveMSAStateManual) bridge.saveMSAStateManual().catch(function(error){ if (bridge && bridge.debug) bridge.debug("msa-save-failed", { message: bridge.formatValue ? bridge.formatValue(error) : String(error) }); });
+}
+});
 var phgoApply=Clazz.new_($I$(2).c$$S,["Apply"]);
 phgoApply.addActionListener$java_awt_event_ActionListener({
 actionPerformed$: function(e) { this.actionPerformed$java_awt_event_ActionEvent(e); },
@@ -2116,6 +2124,7 @@ if (bridge && bridge.applyMSASelection) bridge.applyMSASelection().catch(functio
 }
 });
 fileMenu.addSeparator$();
+fileMenu.add$javax_swing_JMenuItem(phgoSave);
 fileMenu.add$javax_swing_JMenuItem(phgoApply);
 }
 }

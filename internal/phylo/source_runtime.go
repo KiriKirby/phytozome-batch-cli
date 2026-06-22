@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +18,11 @@ import (
 
 const RuntimeRequestFile = "runtime-request.json"
 const RuntimeResponseFile = "runtime-response.json"
+
+var (
+	runtimeSequencePairPattern     = regexp.MustCompile(`(?i)sequence pair\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)`)
+	runtimeBetweenSequencesPattern = regexp.MustCompile(`(?i)between sequences\s+(\d+)\s+and\s+(\d+)`)
+)
 
 type MegaPHGORuntime struct {
 	Executable string
@@ -85,6 +92,7 @@ func (r MegaPHGORuntime) Run(ctx context.Context, plan RunPlan) (RunResult, erro
 	if readErr != nil {
 		return RunResult{Plan: plan, ArtifactDir: plan.BaseDir, StdoutPath: stdoutPath, StderrPath: stderrPath, ErrorText: readErr.Error()}, readErr
 	}
+	response.SkippedRecords = skippedRecordsForRuntimeError(plan, response.ErrorText, response.SkippedRecords)
 	if responseErr := strings.TrimSpace(response.ErrorText); responseErr != "" {
 		err := fmt.Errorf("%s", responseErr)
 		return RunResult{Plan: plan, ArtifactDir: plan.BaseDir, StdoutPath: stdoutPath, StderrPath: stderrPath, ErrorText: responseErr, SkippedRecords: append([]RuntimeSkippedRecord(nil), response.SkippedRecords...)}, err
@@ -308,4 +316,53 @@ func readMegaPHGORuntimeResponse(path string) (MegaPHGORuntimeResponse, error) {
 		return MegaPHGORuntimeResponse{}, err
 	}
 	return response, nil
+}
+
+func SkippedRecordsForRuntimeError(plan RunPlan, errorText string, existing []RuntimeSkippedRecord) []RuntimeSkippedRecord {
+	return skippedRecordsForRuntimeError(plan, errorText, existing)
+}
+
+func skippedRecordsForRuntimeError(plan RunPlan, errorText string, existing []RuntimeSkippedRecord) []RuntimeSkippedRecord {
+	if len(existing) > 0 {
+		return append([]RuntimeSkippedRecord(nil), existing...)
+	}
+	pair := runtimeErrorSequencePair(errorText)
+	if len(pair) != 2 {
+		return nil
+	}
+	out := make([]RuntimeSkippedRecord, 0, 2)
+	seen := make(map[int]bool, 2)
+	for _, seqIndex := range pair {
+		if seqIndex <= 0 || seqIndex > len(plan.Records) || seen[seqIndex] {
+			continue
+		}
+		seen[seqIndex] = true
+		record := plan.Records[seqIndex-1]
+		reason := strings.TrimSpace(errorText)
+		if reason == "" {
+			reason = "mega-phgo-runtime reported an uncomputable sequence pair"
+		}
+		out = append(out, RuntimeSkippedRecord{
+			TaxonID:   strings.TrimSpace(record.TaxonID),
+			ItemTitle: strings.TrimSpace(record.CanvasItem),
+			RowIndex:  record.CanvasRow,
+			Reason:    fmt.Sprintf("%s (MEGA sequence %d)", reason, seqIndex),
+		})
+	}
+	return out
+}
+
+func runtimeErrorSequencePair(errorText string) []int {
+	for _, pattern := range []*regexp.Regexp{runtimeSequencePairPattern, runtimeBetweenSequencesPattern} {
+		match := pattern.FindStringSubmatch(errorText)
+		if len(match) != 3 {
+			continue
+		}
+		first, err1 := strconv.Atoi(match[1])
+		second, err2 := strconv.Atoi(match[2])
+		if err1 == nil && err2 == nil && first > 0 && second > 0 {
+			return []int{first, second}
+		}
+	}
+	return nil
 }

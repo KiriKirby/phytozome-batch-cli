@@ -242,7 +242,7 @@ func TestMegaPHGORuntimeDesktop4CLProteinClustalWMLOrderProbe(t *testing.T) {
 	}
 }
 
-func TestMegaPHGORuntimeProteinStopCodonProbeDoesNotSanitizeInPHgo(t *testing.T) {
+func TestMegaPHGORuntimeProteinStopCodonProbeTrimsOnlyTerminalStops(t *testing.T) {
 	if strings.TrimSpace(os.Getenv("PHYTOZOME_RUN_MEGAPHGO_RUNTIME")) == "" {
 		t.Skip("set PHYTOZOME_RUN_MEGAPHGO_RUNTIME=1 to run the real mega-phgo-runtime probe")
 	}
@@ -281,13 +281,19 @@ func TestMegaPHGORuntimeProteinStopCodonProbeDoesNotSanitizeInPHgo(t *testing.T)
 			if err != nil {
 				t.Fatalf("BuildRunPlan returned error: %v", err)
 			}
+			if strings.Contains(plan.InputFASTA, "MKTAYIAKQRQISFVKSHFSRQ*") || strings.Contains(plan.InputFASTA, "GATAYIAKQRQISFVKSHFSRQD*") {
+				t.Fatalf("terminal stars should be trimmed before runtime FASTA:\n%s", plan.InputFASTA)
+			}
+			if !strings.Contains(plan.InputFASTA, "MKTAYIAKQRQISFVKSHFSR*QD\n") {
+				t.Fatalf("internal star should remain for runtime validation:\n%s", plan.InputFASTA)
+			}
 			result, err := RunPlanWithRuntime(context.Background(), plan, RuntimeOptions{})
 			logData, readErr := os.ReadFile(filepath.Join(result.ArtifactDir, "runtime.log"))
 			if readErr != nil {
 				t.Fatalf("read runtime log: %v", readErr)
 			}
 			if strings.Contains(string(logData), "protein.sanitized") {
-				t.Fatalf("runtime log must not record PHgo protein stop-codon sanitization, got:\n%s", logData)
+				t.Fatalf("runtime log must not record broad PHgo protein sanitization, got:\n%s", logData)
 			}
 			if err != nil {
 				return

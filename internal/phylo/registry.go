@@ -128,6 +128,7 @@ func DefaultParamsForTree(method TreeMethod) map[string]string {
 
 func NormalizeTreeSettings(settings TreeSettings) TreeSettings {
 	settingsWasEmpty := strings.TrimSpace(settings.DisplayNameSource) == "" &&
+		!settings.ShowCanvasCoordinatesSet &&
 		strings.TrimSpace(string(settings.ConversionTarget)) == "" &&
 		!settings.ConversionSkipUnselect &&
 		strings.TrimSpace(string(settings.AlignmentMethod)) == "" &&
@@ -136,6 +137,10 @@ func NormalizeTreeSettings(settings TreeSettings) TreeSettings {
 		len(settings.TreeParams) == 0
 	if strings.TrimSpace(settings.DisplayNameSource) == "" {
 		settings.DisplayNameSource = DefaultDisplayNameSource
+	}
+	if !settings.ShowCanvasCoordinatesSet {
+		settings.ShowCanvasCoordinates = true
+		settings.ShowCanvasCoordinatesSet = true
 	}
 	switch strings.ToLower(strings.TrimSpace(string(settings.ConversionTarget))) {
 	case "dna", "nucleotide":
