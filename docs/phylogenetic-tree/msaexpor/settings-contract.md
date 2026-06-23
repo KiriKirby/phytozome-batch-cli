@@ -8,11 +8,11 @@
 - `PNG`
 - `PDF`
 
-SVG is the canonical container format returned by the Jalview-native render bridge. PNG and PDF are derived from the same generated scene so all formats share identical layout and content.
+SVG is the canonical vector format returned by the Jalview-native render bridge. PNG and PDF are derived from the same generated scene so all formats share identical layout and content.
 
 ## Scale Choices
 
-The size selector is a resolution scale, not a fixed long-edge size.
+The size selector is a PNG raster resolution scale, not a fixed long-edge size.
 
 Allowed scale choices:
 
@@ -23,9 +23,9 @@ Allowed scale choices:
 
 Default: `2x`.
 
-`1x` is not a tiny UI pixel export. It is the baseline publication layout scale chosen by PHgo so residue text is readable. Higher scales multiply output resolution while keeping the same logical layout proportions.
+`1x` is not a tiny UI pixel export. It is the baseline publication layout chosen by PHgo so residue text is readable. Higher scales multiply PNG output resolution while keeping the same logical layout proportions. SVG and PDF exports ignore this control because they remain vector outputs.
 
-Two exports with the same data, same cell dimensions, same font settings, and same scale must produce the same element sizes. Changing the amount of content changes the canvas width/height by adding or removing cells/rows, not by shrinking existing elements.
+Two exports with the same data, same cell dimensions, and same font settings must produce the same SVG/PDF element sizes regardless of the selected scale. For PNG, the selected scale changes only raster pixel dimensions. Changing the amount of content changes the figure width/height by adding or removing cells/rows, not by shrinking existing elements.
 
 ## Cell Geometry
 
@@ -127,9 +127,9 @@ The window action buttons are:
 - `Generate`
 - `Cancel`
 
-`Refresh preview` manually regenerates the in-window SVG preview from the current settings. Editing fields must not automatically rerender the preview; edits instead mark the preview with `Preview needs refresh` until the user refreshes it. The preview always uses the Jalview-native SVG container scene at preview scale `1x` in a scrollable browser region, independent of the selected final format or export scale.
+`Refresh preview` manually regenerates the in-window SVG preview from the current settings. Editing fields must not automatically rerender the preview; edits instead mark the preview with `Preview needs refresh` until the user refreshes it. The preview always uses the Jalview-native vector SVG scene in a scrollable browser region, independent of the selected final format or PNG export scale.
 
-`Generate` validates settings, regenerates the canonical Jalview-native SVG container scene, and opens the PHgo save bridge or browser/operating-system save-location picker. If neither save path is available, export fails with an in-window error.
+`Generate` validates settings and prepares the PHgo save bridge or browser/operating-system save-location target before starting any Jalview-native render, PNG conversion, or PDF conversion. If the user cancels the picker, export stops as `Export canceled.` and no scene is rendered. After a target is acquired, `Generate` regenerates the canonical Jalview-native vector SVG scene from the current settings and writes the selected output format to that prepared target. SVG/PDF are written without a page background; PNG is rasterized from the same transparent SVG and is the only format affected by Scale. If neither save path is available, export fails with an in-window error.
 
 `Cancel` closes the `msaexpor` child window without exporting and without changing MSA state.
 

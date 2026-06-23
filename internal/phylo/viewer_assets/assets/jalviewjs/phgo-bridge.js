@@ -587,6 +587,21 @@
       const sequenceRef = callValue(annotation, ["getSequenceRef$"]);
       const name = sequenceName(sequenceRef);
       if (name) out.sequence = name;
+      const cells = javaListToArray(annotation && annotation.annotations, 20000).map((cell, column) => {
+        if (!cell) return null;
+        const item = { column };
+        setIfPresent(item, "display", cell.displayCharacter);
+        setIfPresent(item, "description", cell.description);
+        setIfPresent(item, "secondary", cell.secondaryStructure);
+        setIfPresent(item, "value", cell.value);
+        const colour = javaColorToHex(cell.colour, "");
+        if (colour) item.colour = colour;
+        return item;
+      }).filter(Boolean);
+      if (cells.length > 0) out.cells = cells;
+      setIfPresent(out, "graph_min", annotation.graphMin);
+      setIfPresent(out, "graph_max", annotation.graphMax);
+      setIfPresent(out, "graph_height", annotation.graphHeight);
       return out;
     });
   }
@@ -670,6 +685,322 @@
       state.features = collectMSAFeatures(frame);
     }
     return state;
+  }
+
+  async function loadSavedMSAState() {
+    const session = currentSession();
+    if (!session) return null;
+    return fetchJSON(`/sessions/${encodeURIComponent(session)}/msa/state`);
+  }
+
+  function findSequenceBySavedReference(frame, ref) {
+    const sequences = alignmentSequences(frame);
+    const taxon = String(ref && (ref.taxon_id || ref.taxonID) || "").trim();
+    const name = String(ref && (ref.display_name || ref.displayName || ref.name || ref.sequence) || "").trim();
+    const index = Number.parseInt(ref && (ref.sequence_index ?? ref.index), 10);
+    if (Number.isFinite(index) && index >= 0 && index < sequences.length) return sequences[index];
+    if (taxon) {
+      const found = sequences.find((seq) => sequenceTaxonID(seq) === taxon);
+      if (found) return found;
+    }
+    if (name) {
+      const found = sequences.find((seq) => sequenceName(seq) === name);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  function hexToAwtColor(hex) {
+    const text = String(hex || "").trim();
+    const match = text.match(/^#?([0-9a-f]{6})$/i);
+    if (!match) return null;
+    const value = match[1];
+    return awtColor(
+      Number.parseInt(value.slice(0, 2), 16),
+      Number.parseInt(value.slice(2, 4), 16),
+      Number.parseInt(value.slice(4, 6), 16)
+    );
+  }
+
+  function savedAnnotationKey(item) {
+    return [
+      String(item && item.label || ""),
+      String(item && item.description || ""),
+      String(item && item.sequence || ""),
+      String(item && item.index || "")
+    ].join("\u001f");
+  }
+
+  function existingAnnotationKeys(alignment) {
+    const keys = new Set();
+    const existing = javaListToArray(alignment && callValue(alignment, ["getAlignmentAnnotation$"]), 2000);
+    for (const ann of existing) {
+      if (ann && ann.__phgoRestoredKey) keys.add(ann.__phgoRestoredKey);
+      keys.add(savedAnnotationKey({
+        label: stringValue(callValue(ann, ["getLabel$"])) || ann && ann.label,
+        description: stringValue(callValue(ann, ["getDescription$"])) || ann && ann.description,
+        sequence: sequenceName(callValue(ann, ["getSequenceRef$"]))
+      }));
+    }
+    return keys;
+  }
+
+  function buildSavedAnnotation(item, alignmentWidth) {
+    const annotationClass = clazzClass("jalview.datamodel.Annotation");
+    const alignmentAnnotationClass = clazzClass("jalview.datamodel.AlignmentAnnotation");
+    if (!annotationClass || !alignmentAnnotationClass) return null;
+    const cells = Array.isArray(item && item.cells) ? item.cells : [];
+    const width = Math.max(
+      1,
+      Number(alignmentWidth) || 0,
+      ...cells.map((cell) => (Number.parseInt(cell && cell.column, 10) || 0) + 1)
+    );
+    const annotations = window.Clazz && typeof window.Clazz.array === "function"
+      ? window.Clazz.array(annotationClass, [width])
+      : new Array(width);
+    for (const cell of cells) {
+      const column = Number.parseInt(cell && cell.column, 10);
+      if (!Number.isFinite(column) || column < 0 || column >= width) continue;
+      const display = String(cell.display || "");
+      const desc = String(cell.description || "");
+      const secondary = String(cell.secondary || " ").charAt(0) || " ";
+      const value = Number(cell.value);
+      const colour = hexToAwtColor(cell.colour);
+      const ctor = colour && annotationClass.c$$S$S$C$F$java_awt_Color ? annotationClass.c$$S$S$C$F$java_awt_Color : annotationClass.c$$S$S$C$F;
+      const args = colour && annotationClass.c$$S$S$C$F$java_awt_Color
+        ? [display, desc, secondary, Number.isFinite(value) ? value : 0, colour]
+        : [display, desc, secondary, Number.isFinite(value) ? value : 0];
+      annotations[column] = clazzNew(ctor, args);
+    }
+    const label = String(item && item.label || "PHgo annotation");
+    const description = String(item && item.description || "");
+    const graph = Number(item && item.graph);
+    let ann = null;
+    if (Number.isFinite(graph) && graph !== 0 && alignmentAnnotationClass.c$$S$S$jalview_datamodel_AnnotationA$F$F$I) {
+      const min = Number(item.graph_min);
+      const max = Number(item.graph_max);
+      ann = clazzNew(alignmentAnnotationClass.c$$S$S$jalview_datamodel_AnnotationA$F$F$I, [
+        label,
+        description,
+        annotations,
+        Number.isFinite(min) ? min : 0,
+        Number.isFinite(max) ? max : 0,
+        graph
+      ]);
+    }
+    if (!ann) {
+      ann = clazzNew(alignmentAnnotationClass.c$$S$S$jalview_datamodel_AnnotationA, [label, description, annotations]);
+    }
+    if (!ann) return null;
+    ann.__phgoRestoredKey = savedAnnotationKey(item);
+    if (typeof item.visible === "boolean") ann.visible = item.visible;
+    if (typeof item.below_alignment === "boolean") ann.belowAlignment = item.below_alignment;
+    const graphHeight = Number(item.graph_height);
+    if (Number.isFinite(graphHeight)) ann.graphHeight = graphHeight;
+    return ann;
+  }
+
+  function applySavedMSAAnnotations(frame, state) {
+    const alignment = mainAlignment(frame);
+    if (!alignment || !Array.isArray(state && state.annotations) || state.annotations.length === 0) return 0;
+    const width = Number(primitiveValue(callValue(alignment, ["getWidth$"]))) || 0;
+    const existing = existingAnnotationKeys(alignment);
+    let applied = 0;
+    for (const item of state.annotations) {
+      const key = savedAnnotationKey(item);
+      if (existing.has(key)) continue;
+      const ann = buildSavedAnnotation(item, width);
+      if (!ann) continue;
+      const seq = findSequenceBySavedReference(frame, item);
+      try {
+        if (seq && typeof ann.createSequenceMapping$jalview_datamodel_SequenceI$I$Z === "function") {
+          ann.createSequenceMapping$jalview_datamodel_SequenceI$I$Z(seq, 1, true);
+        }
+        if (typeof alignment.addAnnotation$jalview_datamodel_AlignmentAnnotation === "function") {
+          alignment.addAnnotation$jalview_datamodel_AlignmentAnnotation(ann);
+        }
+        if (Number.isInteger(Number(item.index)) && typeof alignment.setAnnotationIndex$jalview_datamodel_AlignmentAnnotation$I === "function") {
+          alignment.setAnnotationIndex$jalview_datamodel_AlignmentAnnotation$I(ann, Number(item.index));
+        }
+        if (seq && typeof seq.addAlignmentAnnotation$jalview_datamodel_AlignmentAnnotation === "function") {
+          seq.addAlignmentAnnotation$jalview_datamodel_AlignmentAnnotation(ann);
+        }
+        existing.add(key);
+        applied += 1;
+      } catch (error) {
+        debug("msa-state-annotation-restore-failed", { message: formatValue(error), label: String(item && item.label || "") });
+      }
+    }
+    return applied;
+  }
+
+  function savedFeatureKey(item) {
+    return [
+      String(item && (item.taxon_id || item.display_name || item.sequence_index) || ""),
+      String(item && item.type || ""),
+      String(item && item.begin || ""),
+      String(item && item.end || ""),
+      String(item && item.feature_group || "")
+    ].join("\u001f");
+  }
+
+  function applySavedMSAFeatures(frame, state) {
+    if (!Array.isArray(state && state.features) || state.features.length === 0) return 0;
+    const featureClass = clazzClass("jalview.datamodel.SequenceFeature");
+    const hashMapClass = clazzClass("java.util.HashMap");
+    if (!featureClass) return 0;
+    let applied = 0;
+    for (const item of state.features) {
+      const seq = findSequenceBySavedReference(frame, item);
+      if (!seq || typeof seq.addSequenceFeature$jalview_datamodel_SequenceFeature !== "function") continue;
+      const key = savedFeatureKey(item);
+      seq.__phgoRestoredFeatureKeys = seq.__phgoRestoredFeatureKeys || new Set();
+      if (seq.__phgoRestoredFeatureKeys.has(key)) continue;
+      const begin = Number.parseInt(item.begin, 10);
+      const end = Number.parseInt(item.end, 10);
+      if (!Number.isFinite(begin) || !Number.isFinite(end)) continue;
+      const score = Number(item.score);
+      const feature = clazzNew(featureClass.c$$S$S$I$I$F$S || featureClass.c$$S$S$I$I$S, featureClass.c$$S$S$I$I$F$S
+        ? [String(item.type || "feature"), String(item.description || ""), begin, end, Number.isFinite(score) ? score : 0, String(item.feature_group || "")]
+        : [String(item.type || "feature"), String(item.description || ""), begin, end, String(item.feature_group || "")]);
+      if (!feature) continue;
+      try {
+        if (hashMapClass && item.other_details && typeof item.other_details === "object") {
+          feature.otherDetails = clazzNew(hashMapClass.c$, []);
+          for (const [keyName, value] of Object.entries(item.other_details)) {
+            if (feature.otherDetails && typeof feature.otherDetails.put$TK$TV === "function") {
+              feature.otherDetails.put$TK$TV(String(keyName), String(value));
+            }
+          }
+        }
+        if (Array.isArray(item.links) && typeof feature.addLink$S === "function") {
+          for (const link of item.links) feature.addLink$S(String(link));
+        }
+        seq.addSequenceFeature$jalview_datamodel_SequenceFeature(feature);
+        seq.__phgoRestoredFeatureKeys.add(key);
+        applied += 1;
+      } catch (error) {
+        debug("msa-state-feature-restore-failed", { message: formatValue(error), type: String(item.type || "") });
+      }
+    }
+    return applied;
+  }
+
+  function applySavedMSAGroups(frame, state) {
+    const alignment = mainAlignment(frame);
+    if (!alignment || !Array.isArray(state && state.groups) || state.groups.length === 0) return 0;
+    const groupClass = clazzClass("jalview.datamodel.SequenceGroup");
+    if (!groupClass || typeof alignment.addGroup$jalview_datamodel_SequenceGroup !== "function") return 0;
+    const existing = javaListToArray(callValue(alignment, ["getGroups$"]), 1000)
+      .map((group) => String(group && group.__phgoRestoredKey || callValue(group, ["getName$"]) || ""))
+      .filter(Boolean);
+    const existingSet = new Set(existing);
+    let applied = 0;
+    for (const item of state.groups) {
+      const key = String(item && (item.name || item.index) || "");
+      if (key && existingSet.has(key)) continue;
+      const group = clazzNew(groupClass.c$, []);
+      if (!group) continue;
+      try {
+        if (typeof group.setName$S === "function") group.setName$S(String(item.name || "PHgo group"));
+        if (typeof group.setDescription$S === "function") group.setDescription$S(String(item.description || ""));
+        if (typeof group.setStartRes$I === "function" && Number.isFinite(Number(item.start))) group.setStartRes$I(Number(item.start));
+        if (typeof group.setEndRes$I === "function" && Number.isFinite(Number(item.end))) group.setEndRes$I(Number(item.end));
+        if (typeof group.setDisplayBoxes$Z === "function" && typeof item.display_boxes === "boolean") group.setDisplayBoxes$Z(item.display_boxes);
+        if (typeof group.setDisplayText$Z === "function" && typeof item.display_text === "boolean") group.setDisplayText$Z(item.display_text);
+        if (typeof group.setColourText$Z === "function" && typeof item.colour_text === "boolean") group.setColourText$Z(item.colour_text);
+        const names = Array.isArray(item.sequences) ? item.sequences : [];
+        for (const name of names) {
+          const seq = findSequenceBySavedReference(frame, { display_name: name, name });
+          if (seq && typeof group.addSequence$jalview_datamodel_SequenceI$Z === "function") {
+            group.addSequence$jalview_datamodel_SequenceI$Z(seq, false);
+          }
+        }
+        group.__phgoRestoredKey = key || String(item.index || applied);
+        alignment.addGroup$jalview_datamodel_SequenceGroup(group);
+        existingSet.add(group.__phgoRestoredKey);
+        applied += 1;
+      } catch (error) {
+        debug("msa-state-group-restore-failed", { message: formatValue(error), name: String(item.name || "") });
+      }
+    }
+    return applied;
+  }
+
+  function applySavedMSASettings(frame, state) {
+    const viewport = mainViewport(frame);
+    const settings = state && state.settings || {};
+    if (!viewport || !settings || typeof settings !== "object") return 0;
+    let applied = 0;
+    const boolSetters = [
+      ["show_annotations", "setShowAnnotation$Z"],
+      ["show_sequence_features", "setShowSequenceFeatures$Z"],
+      ["show_boxes", "setShowBoxes$Z"],
+      ["show_text", "setShowText$Z"]
+    ];
+    for (const [key, method] of boolSetters) {
+      if (typeof settings[key] === "boolean" && typeof viewport[method] === "function") {
+        try {
+          viewport[method](settings[key]);
+          applied += 1;
+        } catch (_error) {
+          // Continue with other restorable settings.
+        }
+      }
+    }
+    return applied;
+  }
+
+  function repaintRestoredMSA(frame) {
+    try {
+      const alignPanel = frame && frame.alignPanel;
+      if (alignPanel && typeof alignPanel.validateAnnotationDimensions$Z === "function") alignPanel.validateAnnotationDimensions$Z(false);
+      if (alignPanel && typeof alignPanel.paintAlignment$Z$Z === "function") alignPanel.paintAlignment$Z$Z(true, true);
+      else if (alignPanel && typeof alignPanel.repaint$ === "function") alignPanel.repaint$();
+      if (frame && typeof frame.buildSortByAnnotationScoresMenu$ === "function") frame.buildSortByAnnotationScoresMenu$();
+    } catch (error) {
+      debug("msa-state-restore-repaint-failed", { message: formatValue(error) });
+    }
+  }
+
+  function applySavedMSAStateToJalview(state) {
+    const frame = mainAlignmentFrame(null);
+    const alignment = mainAlignment(frame);
+    if (!frame || !alignment || !state || typeof state !== "object") return false;
+    const durableCount =
+      (Array.isArray(state.annotations) ? state.annotations.length : 0) +
+      (Array.isArray(state.features) ? state.features.length : 0) +
+      (Array.isArray(state.groups) ? state.groups.length : 0);
+    const signature = JSON.stringify({
+      updated_at: state.updated_at || "",
+      annotations: Array.isArray(state.annotations) ? state.annotations.length : 0,
+      features: Array.isArray(state.features) ? state.features.length : 0,
+      groups: Array.isArray(state.groups) ? state.groups.length : 0
+    });
+    if (window.__PHGOMSAStateRestoreSignature === signature) return true;
+    const applied = applySavedMSASettings(frame, state) +
+      applySavedMSAAnnotations(frame, state) +
+      applySavedMSAFeatures(frame, state) +
+      applySavedMSAGroups(frame, state);
+    if (durableCount > 0 && applied === 0) return false;
+    window.__PHGOMSAStateRestoreSignature = signature;
+    if (applied > 0) {
+      repaintRestoredMSA(frame);
+      debug("msa-state-restored", { applied });
+    }
+    return true;
+  }
+
+  function scheduleSavedMSAStateRestore(delay, attempt) {
+    window.setTimeout(async () => {
+      try {
+        const state = await loadSavedMSAState();
+        const done = applySavedMSAStateToJalview(state);
+        if (!done && (attempt || 0) < 6) scheduleSavedMSAStateRestore(500, (attempt || 0) + 1);
+      } catch (error) {
+        debug("msa-state-restore-load-failed", { message: formatValue(error) });
+      }
+    }, delay);
   }
 
   let msaStateSaveTimer = 0;
@@ -930,8 +1261,8 @@
     };
   }
 
-  function rowLengthStatsFromSequence(seq) {
-    const text = String(sequenceText(seq) || "");
+  function rowLengthStatsFromText(value) {
+    const text = String(value || "");
     let last = -1;
     for (let i = text.length - 1; i >= 0; i -= 1) {
       const ch = text.charAt(i);
@@ -953,20 +1284,38 @@
     return { residues, total, percent: total ? residues / total * 100 : 0 };
   }
 
-  function exportRowLabel(seq, index, settings) {
+  function rowLengthStatsFromSequence(seq) {
+    return rowLengthStatsFromText(sequenceText(seq));
+  }
+
+  function buildMSAExportLabel(taxonID, name, index, sequenceValue, settings) {
     const parts = [];
-    const name = sequenceName(seq) || `row ${index + 1}`;
+    const displayName = String(name || "").trim() || `row ${index + 1}`;
     if (settings.showPHgoCoordinates && window.__PHGOJalviewBridgeAPI && window.__PHGOJalviewBridgeAPI.displayPrefixForSequence) {
-      const prefix = window.__PHGOJalviewBridgeAPI.displayPrefixForSequence(sequenceTaxonID(seq), name, index);
+      const prefix = window.__PHGOJalviewBridgeAPI.displayPrefixForSequence(taxonID, displayName, index);
       if (prefix) parts.push(prefix);
     }
-    parts.push(name);
+    parts.push(displayName);
     if (settings.showLengthRatio || settings.showLengthPercent) {
-      const stats = rowLengthStatsFromSequence(seq);
+      const stats = rowLengthStatsFromText(sequenceValue);
       if (settings.showLengthRatio) parts.push(`${stats.residues}/${stats.total}`);
       if (settings.showLengthPercent) parts.push(`${stats.percent.toFixed(1)}%`);
     }
     return parts.filter(Boolean).join(" ");
+  }
+
+  function exportLabelForSequence(taxonID, name, index, sequenceValue, settings) {
+    return buildMSAExportLabel(
+      String(taxonID || ""),
+      name,
+      Number.isFinite(Number(index)) ? Number(index) : 0,
+      sequenceValue,
+      normalizeMSAExportSettings(settings || {})
+    );
+  }
+
+  function exportRowLabel(seq, index, settings) {
+    return buildMSAExportLabel(sequenceTaxonID(seq), sequenceName(seq), index, sequenceText(seq), settings);
   }
 
   function residueNumberAtExportEnd(seq, startBoundary, endBoundary) {
@@ -1022,6 +1371,195 @@
     return { width, height };
   }
 
+  function escapeXML(value) {
+    return String(value == null ? "" : value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&apos;");
+  }
+
+  function numberAttr(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "0";
+    return String(Math.round(n * 1000) / 1000);
+  }
+
+  function javaColorToHex(color, fallback) {
+    if (!color) return fallback || "";
+    try {
+      const red = Number(primitiveValue(callValue(color, ["getRed$"])));
+      const green = Number(primitiveValue(callValue(color, ["getGreen$"])));
+      const blue = Number(primitiveValue(callValue(color, ["getBlue$"])));
+      if ([red, green, blue].every((value) => Number.isFinite(value))) {
+        return `#${[red, green, blue].map((value) => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, "0")).join("")}`;
+      }
+    } catch (_error) {
+      // Fall through to CSS/string extraction below.
+    }
+    const text = String(primitiveValue(color) || "");
+    const match = text.match(/#([0-9a-f]{6})/i);
+    return match ? `#${match[1].toLowerCase()}` : (fallback || "");
+  }
+
+  function colorIsVisibleCellFill(hex) {
+    const value = String(hex || "").toLowerCase();
+    return !!value && value !== "#ffffff" && value !== "#fff" && value !== "transparent";
+  }
+
+  function sequenceCharAt(seq, index) {
+    if (!seq || index < 0) return "";
+    try {
+      if (typeof seq.getCharAt$I === "function" && index < (Number(primitiveValue(callValue(seq, ["getLength$"]))) || 0)) {
+        return String(seq.getCharAt$I(index) || "");
+      }
+    } catch (_error) {
+      // Fallback to the serialized sequence text.
+    }
+    return String(sequenceText(seq) || "").charAt(index);
+  }
+
+  function sequenceRenderer(seqCanvas) {
+    if (!seqCanvas) return null;
+    try {
+      if (typeof seqCanvas.getSequenceRenderer$ === "function") return seqCanvas.getSequenceRenderer$();
+    } catch (_error) {
+      // Fall through.
+    }
+    return seqCanvas.seqRdr || seqCanvas.sequenceRenderer || null;
+  }
+
+  function featureRenderer(seqCanvas, alignPanel, enabled) {
+    if (!enabled) return null;
+    try {
+      if (seqCanvas && typeof seqCanvas.getFeatureRenderer$ === "function") return seqCanvas.getFeatureRenderer$();
+    } catch (_error) {
+      // Fall through.
+    }
+    try {
+      if (alignPanel && typeof alignPanel.getFeatureRenderer$ === "function") return alignPanel.getFeatureRenderer$();
+    } catch (_error) {
+      // Fall through.
+    }
+    return seqCanvas && seqCanvas.fr || null;
+  }
+
+  function residueCellColour(seqCanvas, alignPanel, viewport, seq, column, exportSettings) {
+    const finder = featureRenderer(seqCanvas, alignPanel, exportSettings.showFeatures);
+    const renderer = sequenceRenderer(seqCanvas);
+    try {
+      if (renderer && typeof renderer.getResidueColour$jalview_datamodel_SequenceI$I$jalview_renderer_seqfeatures_FeatureColourFinder === "function") {
+        return javaColorToHex(renderer.getResidueColour$jalview_datamodel_SequenceI$I$jalview_renderer_seqfeatures_FeatureColourFinder(seq, column, finder), "");
+      }
+      if (renderer && typeof renderer.getResidueColour$ === "function") {
+        return javaColorToHex(renderer.getResidueColour$(seq, column, finder), "");
+      }
+    } catch (_error) {
+      // Fall through to viewport residue shading.
+    }
+    try {
+      const shading = viewport && typeof viewport.getResidueShading$ === "function" ? viewport.getResidueShading$() : null;
+      const ch = sequenceCharAt(seq, column);
+      if (shading && typeof shading.findColour$C$I$jalview_datamodel_SequenceI === "function") {
+        return javaColorToHex(shading.findColour$C$I$jalview_datamodel_SequenceI(ch, column, seq), "");
+      }
+      if (shading && typeof shading.findColour$ === "function") {
+        return javaColorToHex(shading.findColour$(ch, column, seq), "");
+      }
+    } catch (_error) {
+      return "";
+    }
+    return "";
+  }
+
+  function viewportTextColour(viewport) {
+    try {
+      if (viewport && typeof viewport.getTextColour$ === "function") return javaColorToHex(viewport.getTextColour$(), "#111111");
+    } catch (_error) {
+      // Fall through.
+    }
+    return "#111111";
+  }
+
+  function viewportFontSpec(viewport) {
+    let size = 12;
+    let family = "Consolas, 'Courier New', monospace";
+    try {
+      const font = viewport && typeof viewport.getFont$ === "function" ? viewport.getFont$() : null;
+      const rawSize = Number(primitiveValue(callValue(font, ["getSize$"])));
+      const rawFamily = String(primitiveValue(callValue(font, ["getFamily$", "getName$"])) || "").trim();
+      if (Number.isFinite(rawSize) && rawSize > 0) size = rawSize;
+      if (rawFamily) family = `${rawFamily}, Consolas, 'Courier New', monospace`;
+    } catch (_error) {
+      // Defaults are fine.
+    }
+    return { size, family };
+  }
+
+  function addSVGText(parts, text, x, y, options) {
+    if (text == null || text === "") return;
+    const opts = options || {};
+    const attrs = [
+      `x="${numberAttr(x)}"`,
+      `y="${numberAttr(y)}"`,
+      opts.anchor ? `text-anchor="${escapeXML(opts.anchor)}"` : "",
+      opts.fill ? `fill="${escapeXML(opts.fill)}"` : "",
+      opts.className ? `class="${escapeXML(opts.className)}"` : ""
+    ].filter(Boolean).join(" ");
+    parts.push(`<text ${attrs}>${escapeXML(text)}</text>`);
+  }
+
+  function addSVGRect(parts, x, y, width, height, options) {
+    if (width <= 0 || height <= 0) return;
+    const opts = options || {};
+    const attrs = [
+      `x="${numberAttr(x)}"`,
+      `y="${numberAttr(y)}"`,
+      `width="${numberAttr(width)}"`,
+      `height="${numberAttr(height)}"`,
+      opts.fill ? `fill="${escapeXML(opts.fill)}"` : "fill=\"none\"",
+      opts.stroke ? `stroke="${escapeXML(opts.stroke)}"` : "",
+      opts.strokeWidth ? `stroke-width="${numberAttr(opts.strokeWidth)}"` : "",
+      opts.opacity ? `opacity="${numberAttr(opts.opacity)}"` : ""
+    ].filter(Boolean).join(" ");
+    parts.push(`<rect ${attrs}/>`);
+  }
+
+  function groupContainsSequence(group, seq) {
+    if (!group || !seq) return false;
+    try {
+      const map = typeof group.getSequences$java_util_Map === "function" ? group.getSequences$java_util_Map(null) : null;
+      if (map && typeof map.contains$O === "function" && map.contains$O(seq)) return true;
+    } catch (_error) {
+      // Fall through to sequence list.
+    }
+    const sequences = javaListToArray(callValue(group, ["getSequences$"]), 5000);
+    return sequences.some((candidate) => candidate === seq);
+  }
+
+  function addGroupOutlines(parts, alignment, indexes, start, endExclusive, gridX, rowStartY, charWidth, charHeight) {
+    const groups = javaListToArray(callValue(alignment, ["getGroups$"]), 5000);
+    if (!groups.length) return;
+    for (const group of groups) {
+      const startRes = Number(primitiveValue(callValue(group, ["getStartRes$"])));
+      const endRes = Number(primitiveValue(callValue(group, ["getEndRes$"])));
+      if (!Number.isFinite(startRes) || !Number.isFinite(endRes) || endRes < start || startRes >= endExclusive) continue;
+      const x1 = Math.max(start, startRes);
+      const x2 = Math.min(endExclusive - 1, endRes);
+      const stroke = javaColorToHex(callValue(group, ["getOutlineColour$"]), "#404040");
+      for (let row = 0; row < indexes.length; row += 1) {
+        const seq = alignment.getSequenceAt$I(indexes[row]);
+        if (!groupContainsSequence(group, seq)) continue;
+        addSVGRect(parts, gridX + (x1 - start) * charWidth, rowStartY + row * charHeight, (x2 - x1 + 1) * charWidth, charHeight, {
+          stroke,
+          strokeWidth: 1,
+          fill: "none"
+        });
+      }
+    }
+  }
+
   function renderMSAExportScene(settings, layout) {
     const frame = mainAlignmentFrame(null);
     const alignPanel = frame && frame.alignPanel;
@@ -1037,8 +1575,6 @@
     if (!seqCanvas || !idCanvas) {
       throw new Error("Jalview sequence and ID canvases are not ready for MSA export rendering.");
     }
-    const imageClass = clazzClass("java.awt.image.BufferedImage");
-    if (!imageClass) throw new Error("SwingJS BufferedImage is not available for MSA export rendering.");
     const exportSettings = normalizeMSAExportSettings(settings);
     const blocks = Array.isArray(layout && layout.blocks) ? layout.blocks : [];
     if (blocks.length === 0) throw new Error("No layout blocks to render.");
@@ -1061,71 +1597,57 @@
     const blockGap = 12;
     const margin = 14;
     const rightNumberWidth = exportSettings.showRightResidueNumbers ? 52 : 0;
+    const imageClass = clazzClass("java.awt.image.BufferedImage");
     let scratch = null;
     let scratchGraphics = null;
     let fontMetrics = null;
-    try {
-      scratch = clazzNew(imageClass.c$$I$I$I, [16, 16, 1]);
-      scratchGraphics = scratch && scratch.getGraphics$();
-      if (scratchGraphics) {
-        scratchGraphics.setFont$java_awt_Font(viewport.getFont$());
-        fontMetrics = scratchGraphics.getFontMetrics$();
-      }
-    } catch (_error) {
-      fontMetrics = null;
-    } finally {
-      if (scratchGraphics && typeof scratchGraphics.dispose$ === "function") {
-        try { scratchGraphics.dispose$(); } catch (_error) {}
+    if (imageClass) {
+      try {
+        scratch = clazzNew(imageClass.c$$I$I$I, [16, 16, 1]);
+        scratchGraphics = scratch && scratch.getGraphics$();
+        if (scratchGraphics) {
+          scratchGraphics.setFont$java_awt_Font(viewport.getFont$());
+          fontMetrics = scratchGraphics.getFontMetrics$();
+        }
+      } catch (_error) {
+        fontMetrics = null;
+      } finally {
+        if (scratchGraphics && typeof scratchGraphics.dispose$ === "function") {
+          try { scratchGraphics.dispose$(); } catch (_error) {}
+        }
       }
     }
-    let leftLabelWidth = 96;
+    let maxLabelTextWidth = 72;
     for (const entry of renderedBlocks) {
       for (const index of entry.indexes) {
         const seq = alignment.getSequenceAt$I(index);
         const label = exportRowLabel(seq, index, exportSettings);
         const measured = fontMetrics && typeof fontMetrics.stringWidth$S === "function" ? fontMetrics.stringWidth$S(label) : label.length * 7;
-        leftLabelWidth = Math.max(leftLabelWidth, measured + 12);
+        maxLabelTextWidth = Math.max(maxLabelTextWidth, measured);
       }
     }
-    leftLabelWidth = Math.min(420, Math.ceil(leftLabelWidth));
+    const leftLabelPadding = Math.max(24, Math.ceil(charWidth * 3));
+    const leftLabelWidth = Math.ceil(Math.max(96, maxLabelTextWidth + leftLabelPadding));
     const maxBlockColumns = Math.max(1, ...renderedBlocks.map((entry) => Number(entry.block.alignmentWidthForNumbering || entry.block.visibleColumnCount || 0)));
     const gridWidth = maxBlockColumns * charWidth;
     const width = Math.ceil(margin * 2 + leftLabelWidth + gridWidth + rightNumberWidth);
     const height = Math.ceil(margin * 2 + renderedBlocks.reduce((sum, entry) => {
       return sum + topNumberHeight + entry.indexes.length * charHeight + blockGap;
     }, 0) - blockGap);
-    const pixelWidth = Math.ceil(width * exportSettings.scale);
-    const pixelHeight = Math.ceil(height * exportSettings.scale);
-    const maxPixels = 160000000;
-    if (pixelWidth * pixelHeight > maxPixels) {
-      throw new Error(`MSA export is too large: ${pixelWidth} x ${pixelHeight} pixels.`);
-    }
     const bridge = window.__PHGOJalviewBridgeAPI || {};
     const previousExportSettings = bridge.__msaexporRenderSettings;
     const previousExportActive = window.__PHGO_MSAEXPOR_RENDER_ACTIVE__;
-    const previousIdSize = componentSize(idCanvas);
-    const previousSeqSize = componentSize(seqCanvas);
-    const image = clazzNew(imageClass.c$$I$I$I, [pixelWidth, pixelHeight, 1]);
-    if (!image) throw new Error("Unable to allocate SwingJS export image.");
-    let graphics = null;
+    const font = viewportFontSpec(viewport);
+    const textFill = viewportTextColour(viewport);
+    const showText = primitiveValue(callValue(viewport, ["getShowText$"])) !== false;
+    const renderGaps = primitiveValue(callValue(viewport, ["isRenderGaps$"])) !== false;
+    const parts = [
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${numberAttr(width)}" height="${numberAttr(height)}" viewBox="0 0 ${numberAttr(width)} ${numberAttr(height)}" data-msaexpor="1" data-msaexpor-renderer="jalview-vector">`,
+      `<g font-family="${escapeXML(font.family)}" font-size="${numberAttr(font.size)}" dominant-baseline="alphabetic" letter-spacing="0">`
+    ];
     try {
       bridge.__msaexporRenderSettings = exportSettings;
       window.__PHGO_MSAEXPOR_RENDER_ACTIVE__ = true;
-      graphics = image.getGraphics$();
-      if (!graphics) throw new Error("Unable to create SwingJS export graphics.");
-      if (exportSettings.scale !== 1 && typeof graphics.scale$D$D === "function") {
-        graphics.scale$D$D(exportSettings.scale, exportSettings.scale);
-      }
-      if (viewport.antiAlias && clazzClass("java.awt.RenderingHints")) {
-        // SeqCanvas applies the exact Jalview anti-aliasing hints during its own draw call.
-      }
-      graphics.setFont$java_awt_Font(viewport.getFont$());
-      const white = awtColor(255, 255, 255);
-      const black = awtColor(0, 0, 0);
-      if (white) graphics.setColor$java_awt_Color(white);
-      graphics.fillRect$I$I$I$I(0, 0, width, height);
-      setComponentSize(idCanvas, leftLabelWidth, height);
-      setComponentSize(seqCanvas, gridWidth, height);
       let y = margin;
       for (const entry of renderedBlocks) {
         const block = entry.block;
@@ -1134,70 +1656,66 @@
         const start = Math.max(0, Math.floor(Number(block.columnStartBoundary) || 0));
         const visibleCount = Math.max(0, Math.floor(Number(block.visibleColumnCount) || 0));
         const endExclusive = Math.max(start, Math.floor(Number(block.columnEndBoundary) || (start + visibleCount)));
-        const drawEnd = Math.max(start, endExclusive - 1);
         const gridX = margin + leftLabelWidth;
-        if (black) graphics.setColor$java_awt_Color(black);
         if (exportSettings.showAlignmentColumnNumbers) {
           const numberingColumns = Math.max(visibleCount, Math.floor(Number(block.alignmentWidthForNumbering) || visibleCount));
           for (let col = start + 1; col <= start + numberingColumns; col += 1) {
             if (col % exportSettings.columnNumberInterval !== 0) continue;
             const text = String(col);
-            const textWidth = fontMetrics && typeof fontMetrics.stringWidth$S === "function" ? fontMetrics.stringWidth$S(text) : text.length * 7;
-            const x = gridX + Math.round((col - start - 0.5) * charWidth) - Math.round(textWidth / 2);
-            graphics.drawString$S$I$I(text, x, y + charHeight);
+            const x = gridX + (col - start - 0.5) * charWidth;
+            addSVGText(parts, text, x, y + charHeight, { anchor: "middle", fill: textFill, className: "msaexpor-colnum" });
           }
         }
         const rowStartY = y + topNumberHeight;
         for (let rowIndex = 0; rowIndex < indexes.length; rowIndex += 1) {
           const seqIndex = indexes[rowIndex];
           const rowY = rowStartY + rowIndex * charHeight;
-          graphics.translate$I$I(margin, rowY);
-          idCanvas.drawIds$java_awt_Graphics2D$jalview_gui_AlignViewport$I$I$java_util_List(graphics, viewport, seqIndex, seqIndex, null);
-          graphics.translate$I$I(-margin, -rowY);
-          if (endExclusive > start) {
-            graphics.translate$I$I(gridX, rowY);
-            seqCanvas.drawPanel$java_awt_Graphics$I$I$I$I$I(graphics, start, drawEnd, seqIndex, seqIndex, 0);
-            graphics.translate$I$I(-gridX, -rowY);
-          }
-          if (exportSettings.showRightResidueNumbers) {
-            const seq = alignment.getSequenceAt$I(seqIndex);
-            const text = residueNumberAtExportEnd(seq, start, endExclusive);
-            if (text) {
-              if (black) graphics.setColor$java_awt_Color(black);
-              const textWidth = fontMetrics && typeof fontMetrics.stringWidth$S === "function" ? fontMetrics.stringWidth$S(text) : text.length * 7;
-              const x = gridX + Math.max(visibleCount, Number(block.alignmentWidthForNumbering) || visibleCount) * charWidth + rightNumberWidth - textWidth - 8;
-              graphics.drawString$S$I$I(text, Math.round(x), rowY + charHeight - Math.max(2, Math.floor(charHeight / 5)));
+          const seq = alignment.getSequenceAt$I(seqIndex);
+          const label = exportRowLabel(seq, seqIndex, exportSettings);
+          const baseline = rowY + charHeight - Math.max(2, Math.floor(charHeight / 5));
+          addSVGText(parts, label, margin, baseline, { fill: textFill, className: "msaexpor-row-label" });
+          for (let col = start; col < endExclusive; col += 1) {
+            const ch = sequenceCharAt(seq, col);
+            if (!ch) continue;
+            const cellX = gridX + (col - start) * charWidth;
+            const fill = residueCellColour(seqCanvas, alignPanel, viewport, seq, col, exportSettings);
+            if (colorIsVisibleCellFill(fill)) {
+              addSVGRect(parts, cellX, rowY, charWidth, charHeight, { fill });
+            }
+            if (showText && (renderGaps || (ch !== "-" && ch !== "."))) {
+              addSVGText(parts, ch, cellX + charWidth / 2, baseline, { anchor: "middle", fill: textFill, className: "msaexpor-residue" });
             }
           }
+          if (exportSettings.showRightResidueNumbers) {
+            const text = residueNumberAtExportEnd(seq, start, endExclusive);
+            if (text) {
+              const textWidth = fontMetrics && typeof fontMetrics.stringWidth$S === "function" ? fontMetrics.stringWidth$S(text) : text.length * 7;
+              const x = gridX + Math.max(visibleCount, Number(block.alignmentWidthForNumbering) || visibleCount) * charWidth + rightNumberWidth - textWidth - 8;
+              addSVGText(parts, text, x, baseline, { fill: textFill, className: "msaexpor-right-number" });
+            }
+          }
+        }
+        if (exportSettings.showGroups) {
+          addGroupOutlines(parts, alignment, indexes, start, endExclusive, gridX, rowStartY, charWidth, charHeight);
         }
         y += topNumberHeight + indexes.length * charHeight + blockGap;
       }
     } finally {
       bridge.__msaexporRenderSettings = previousExportSettings;
-      if (previousExportActive) {
+      if (typeof previousExportActive !== "undefined") {
         window.__PHGO_MSAEXPOR_RENDER_ACTIVE__ = previousExportActive;
       } else {
         delete window.__PHGO_MSAEXPOR_RENDER_ACTIVE__;
       }
-      if (graphics && typeof graphics.dispose$ === "function") {
-        try { graphics.dispose$(); } catch (_error) {}
-      }
       try {
         if (typeof viewport.setCharWidth$I === "function") viewport.setCharWidth$I(charWidthBefore);
         if (typeof viewport.setCharHeight$I === "function") viewport.setCharHeight$I(charHeightBefore);
-        if (previousIdSize.width > 0 && previousIdSize.height > 0) setComponentSize(idCanvas, previousIdSize.width, previousIdSize.height);
-        if (previousSeqSize.width > 0 && previousSeqSize.height > 0) setComponentSize(seqCanvas, previousSeqSize.width, previousSeqSize.height);
       } catch (error) {
         debug("msaexpor-char-restore-failed", { message: formatValue(error) });
       }
     }
-    const canvas = image._canvas || image._imgNode;
-    if (!canvas || typeof canvas.toDataURL !== "function") {
-      throw new Error("SwingJS export image did not expose a canvas.");
-    }
-    const dataURL = canvas.toDataURL("image/png");
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" data-msaexpor="1" data-msaexpor-renderer="jalview-native"><image href="${dataURL}" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="none"/></svg>`;
-    return { svg, width, height, raster: true, source: "jalview-native", blocks: blocks.length };
+    parts.push("</g></svg>");
+    return { svg: parts.join(""), width, height, raster: false, source: "jalview-vector", blocks: blocks.length };
   }
 
   function createSwingChildWindow(title, width, height) {
@@ -1338,6 +1856,54 @@
     return { iframe, host };
   }
 
+  function msaExportWindowRuntimeLooksReady(entry) {
+    if (!entry || !entry.hostParent || !document.contains(entry.hostParent)) return false;
+    const iframe = entry.hostParent.querySelector("iframe.phgo-msaexpor-frame");
+    if (!iframe || !iframe.contentWindow) return false;
+    const doc = iframe.contentDocument || iframe.contentWindow.document;
+    return !!(doc && doc.querySelector(".phgo-msaexpor-root .msaexpor-app") && iframe.contentWindow.PHGOmsaexpor);
+  }
+
+  async function ensureMSAExportWindowMounted(reason) {
+    const entry = window.__PHGOMSAExportWindow;
+    if (!entry || entry.__remounting || !entry.hostParent || !document.contains(entry.hostParent)) return;
+    if (msaExportWindowRuntimeLooksReady(entry)) return;
+    entry.__remounting = true;
+    try {
+      const mounted = await mountMSAExportHost(entry.hostParent, currentSession(), window.__PHGOJalviewBridgeAPI);
+      entry.host = mounted.host;
+      entry.iframe = mounted.iframe;
+      debug("msaexpor-remounted", { reason: reason || "unknown" });
+    } catch (error) {
+      debug("msaexpor-remount-failed", { reason: reason || "unknown", message: formatValue(error) });
+    } finally {
+      entry.__remounting = false;
+    }
+  }
+
+  function startMSAExportMountWatch() {
+    const entry = window.__PHGOMSAExportWindow;
+    if (!entry || entry.__watchStarted) return;
+    entry.__watchStarted = true;
+    entry.__watchTimer = window.setInterval(() => ensureMSAExportWindowMounted("interval"), 750);
+    if (window.MutationObserver) {
+      entry.__watchObserver = new MutationObserver(() => {
+        if (entry.__watchQueued) return;
+        entry.__watchQueued = true;
+        window.setTimeout(() => {
+          entry.__watchQueued = false;
+          ensureMSAExportWindowMounted("mutation");
+        }, 60);
+      });
+      try {
+        entry.__watchObserver.observe(document.body, { childList: true, subtree: true });
+      } catch (_error) {
+        // The interval watcher remains active.
+      }
+    }
+    window.addEventListener("focus", () => ensureMSAExportWindowMounted("focus"));
+  }
+
   async function openMSAExportImageWindow() {
     const session = currentSession();
     if (!session) throw new Error("MSA export requires an active PHgo session.");
@@ -1349,6 +1915,7 @@
       const mounted = await mountMSAExportHost(window.__PHGOMSAExportWindow.hostParent, session, window.__PHGOJalviewBridgeAPI);
       window.__PHGOMSAExportWindow.host = mounted.host;
       window.__PHGOMSAExportWindow.iframe = mounted.iframe;
+      startMSAExportMountWatch();
       return window.__PHGOMSAExportWindow;
     }
     let frame;
@@ -1364,6 +1931,7 @@
     if (!hostParent) throw new Error("Unable to locate the Jalview/SwingJS child window host required by msaexpor.");
     const mounted = await mountMSAExportHost(hostParent, session, window.__PHGOJalviewBridgeAPI);
     window.__PHGOMSAExportWindow = { frame, host: mounted.host, iframe: mounted.iframe, hostParent };
+    startMSAExportMountWatch();
     return window.__PHGOMSAExportWindow;
   }
 
@@ -1387,7 +1955,9 @@
     installMSAEvents();
     window.setTimeout(requestMSARepaint, 200);
     window.setTimeout(requestMSARepaint, 1000);
-    window.setTimeout(() => scheduleMSAStateSave("startup", 200, true), 1200);
+    scheduleSavedMSAStateRestore(350, 0);
+    scheduleSavedMSAStateRestore(1200, 0);
+    window.setTimeout(() => scheduleMSAStateSave("startup", 200, true), 1800);
   }
 
   function resizeMainAlignmentFrame() {
@@ -1509,6 +2079,111 @@
     if (event && event.key === "Escape") closeAllSwingMenus("escape");
   }
 
+  const colourSwatchComponents = new Set();
+
+  function swingComponentDOMNode(component) {
+    const candidates = [
+      component && component._j2sNode,
+      component && component._j2sObject,
+      component && component.domNode,
+      component && component.html5Applet,
+      component && component.ui && component.ui.domNode,
+      component && component.ui && component.ui.jqNode && component.ui.jqNode[0],
+      component && component.peer && component.peer.domNode
+    ];
+    for (const candidate of candidates) {
+      if (candidate instanceof HTMLElement) return candidate;
+    }
+    return null;
+  }
+
+  function isSwingColourSwatchComponent(component) {
+    if (!component) return false;
+    let tip = "";
+    try {
+      tip = String(primitiveValue(callValue(component, ["getToolTipText$"])) || "");
+    } catch (_error) {
+      tip = "";
+    }
+    if (/colour|color/i.test(tip) && /(min|max|minimum|maximum|gap|hidden|value|set)/i.test(tip)) return true;
+    try {
+      const preferred = typeof component.getPreferredSize$ === "function" ? component.getPreferredSize$() : null;
+      const width = Number(primitiveValue(callValue(preferred, ["getWidth$"])));
+      const height = Number(primitiveValue(callValue(preferred, ["getHeight$"])));
+      return Number.isFinite(width) && Number.isFinite(height) && width <= 64 && height <= 32 && /colour|color/i.test(tip);
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function syncSwingColourSwatchComponent(component, color) {
+    if (!isSwingColourSwatchComponent(component)) return;
+    colourSwatchComponents.add(component);
+    const node = swingComponentDOMNode(component);
+    if (!node) return;
+    const actual = color || callValue(component, ["getBackground$"]);
+    const css = javaColorToHex(actual, "");
+    if (!css) return;
+    node.dataset.phgoColourSwatch = "true";
+    node.style.setProperty("background-color", css, "important");
+    node.style.setProperty("background-image", "none", "important");
+    node.style.setProperty("border", "1px solid #323130", "important");
+    node.style.setProperty("min-width", "40px", "important");
+    node.style.setProperty("min-height", "20px", "important");
+    node.style.setProperty("box-sizing", "border-box", "important");
+    node.style.setProperty("opacity", primitiveValue(callValue(component, ["isEnabled$"])) === false ? "0.45" : "1", "important");
+  }
+
+  function resyncSwingColourSwatches() {
+    for (const component of Array.from(colourSwatchComponents)) {
+      try {
+        syncSwingColourSwatchComponent(component, callValue(component, ["getBackground$"]));
+      } catch (_error) {
+        colourSwatchComponents.delete(component);
+      }
+    }
+  }
+
+  function installSwingColourSwatchFix() {
+    const componentClass = clazzClass("javax.swing.JComponent");
+    const proto = componentClass && componentClass.prototype;
+    if (!proto || proto.__phgoColourSwatchFixInstalled) return !!(proto && proto.__phgoColourSwatchFixInstalled);
+    proto.__phgoColourSwatchFixInstalled = true;
+    const originalSetBackground = proto.setBackground$java_awt_Color;
+    if (typeof originalSetBackground === "function") {
+      proto.setBackground$java_awt_Color = function(bg) {
+        const result = originalSetBackground.apply(this, arguments);
+        window.setTimeout(() => syncSwingColourSwatchComponent(this, bg), 0);
+        return result;
+      };
+    }
+    const originalSetEnabled = proto.setEnabled$Z;
+    if (typeof originalSetEnabled === "function") {
+      proto.setEnabled$Z = function(enabled) {
+        const result = originalSetEnabled.apply(this, arguments);
+        window.setTimeout(() => syncSwingColourSwatchComponent(this, callValue(this, ["getBackground$"])), 0);
+        return result;
+      };
+    }
+    if (window.MutationObserver && !window.__PHGOColourSwatchObserver) {
+      window.__PHGOColourSwatchObserver = new MutationObserver(() => {
+        if (window.__PHGOColourSwatchQueued) return;
+        window.__PHGOColourSwatchQueued = true;
+        window.setTimeout(() => {
+          window.__PHGOColourSwatchQueued = false;
+          resyncSwingColourSwatches();
+        }, 50);
+      });
+      try {
+        window.__PHGOColourSwatchObserver.observe(document.body, { childList: true, subtree: true });
+      } catch (_error) {
+        // Timed resyncs still cover ordinary dialog creation.
+      }
+    }
+    window.setInterval(resyncSwingColourSwatches, 1000);
+    return true;
+  }
+
   function installLayoutBridge() {
     window.addEventListener("resize", scheduleResize);
     window.addEventListener("load", scheduleResize);
@@ -1529,6 +2204,9 @@
     window.setTimeout(adaptLayout, 0);
     window.setTimeout(adaptLayout, 250);
     window.setTimeout(adaptLayout, 1000);
+    window.setTimeout(installSwingColourSwatchFix, 0);
+    window.setTimeout(installSwingColourSwatchFix, 500);
+    window.setTimeout(installSwingColourSwatchFix, 1500);
     installMSASelectionBridge();
   }
 
@@ -1570,6 +2248,7 @@
       closeAllSwingMenus,
       invalidateIdCanvas,
       checkboxColumnWidth: () => 16,
+      exportLabelForSequence,
       displayPrefixForSequence: (taxonID, name, index) => {
         const entry = selectionEntryForSequence(taxonID, name, index);
         return entry && entry.displayPrefix ? entry.displayPrefix : "";

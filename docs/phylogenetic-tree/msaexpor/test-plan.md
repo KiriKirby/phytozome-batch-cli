@@ -89,7 +89,10 @@ Use bridge-contract tests and deterministic fake bridge outputs:
 - empty rows fail with `No MSA rows to export`
 - zero aligned width fails with `No aligned MSA columns to export`
 - bridge output exists and has expected width/height
-- bridge SVG contains `data-msaexpor-renderer="jalview-native"`
+- bridge SVG contains `data-msaexpor-renderer="jalview-vector"`
+- bridge SVG contains vector residue/label elements and does not contain `<image href=` or `data:image/png`
+- SVG and PDF export ignore Scale; PNG export alone uses Scale
+- SVG/PDF output scenes have no page/background rectangle
 - annotation text/panels are not emitted by the native export context
 - checkbox glyphs or PHgo checkbox styling are not emitted by the native export context
 - current selection/cursor markers are not emitted by the native export context
@@ -128,8 +131,10 @@ Required behavior:
 - missing save bridge and missing save picker report an in-window error instead of triggering browser download
 - `Cancel` closes the child window without exporting
 - exporting SVG writes a valid SVG
+- exported SVG is vector and transparent, not a raster image embedded in SVG
 - exporting PNG writes a non-empty PNG
 - exporting PDF writes a non-empty PDF
+- exported PDF is produced from the vector SVG path, not from a rasterized PNG scene
 - invalid generated SVG causes PDF export to fail with a clear SVG/XML validation error
 
 Automated browser-harness checks should additionally verify:
@@ -138,6 +143,8 @@ Automated browser-harness checks should additionally verify:
 - `Generate` calls `showSaveFilePicker` with a numbered filename such as `1.1.svg`
 - saved SVG blobs are non-empty and have `image/svg+xml` type
 - `Cancel` closes the native SwingJS child window
+- left labels are left-aligned and the grid starts after the longest exported left label plus a safety gap; no fixed-width cap may clip long labels
+- opening another SwingJS child window does not leave the export iframe blank; the bridge remount watcher restores the iframe runtime if SwingJS replaces the host DOM
 
 ## Non-Mutation Tests
 

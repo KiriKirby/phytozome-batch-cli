@@ -7,6 +7,7 @@ tree-viewer/dist/
 tmp/
 .cache/
 .codex/
+.codex-tmp/
 .phgo-init-state.json
 output/
 _mega_source/*

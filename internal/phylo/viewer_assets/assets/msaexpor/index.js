@@ -401,6 +401,11 @@
       if (interval) interval.disabled = !state.settings.showAlignmentColumnNumbers;
       const rightNumbers = form.elements.showRightResidueNumbers;
       if (rightNumbers) rightNumbers.disabled = state.settings.useAdvancedLayoutScript;
+      const scale = form.elements.scale;
+      if (scale) {
+        scale.disabled = state.settings.format !== "png";
+        scale.title = state.settings.format === "png" ? "PNG raster scale" : "Scale is only used for PNG export";
+      }
     }
     function readSettings() {
       const data = {};
@@ -492,6 +497,12 @@
       } else {
         host.innerHTML = "";
       }
+      if (win.__watchTimer) {
+        try { parentWindow.clearInterval(win.__watchTimer); } catch (_error) {}
+      }
+      if (win.__watchObserver && typeof win.__watchObserver.disconnect === "function") {
+        try { win.__watchObserver.disconnect(); } catch (_error) {}
+      }
       if (parentWindow) delete parentWindow.__PHGOMSAExportWindow;
       delete window.__PHGOMSAExportWindow;
     });
@@ -525,24 +536,24 @@
     return `
       <div class="msaexpor-app">
         <form class="msaexpor-settings">
-          <section>
+          <section class="msaexpor-primary">
             <label>Format<select name="format"><option value="svg">SVG</option><option value="png">PNG</option><option value="pdf">PDF</option></select></label>
             <label>Scale<select name="scale"><option value="1">1x</option><option value="2">2x</option><option value="5">5x</option><option value="10">10x</option></select></label>
             <label>Cell width<input name="cellWidth" type="number" min="1" step="0.5"></label>
             <label>Cell height<input name="cellHeight" type="number" min="1" step="0.5"></label>
+            <label>Column interval<input name="columnNumberInterval" type="number" min="1" step="1"></label>
           </section>
-          <section class="msaexpor-checks">
+          <section class="msaexpor-checks" aria-label="Export content">
             <label><input name="showPHgoCoordinates" type="checkbox"> Show PHgo coordinates</label>
             <label><input name="showLengthRatio" type="checkbox"> Show length ratio</label>
             <label><input name="showLengthPercent" type="checkbox"> Show length percent</label>
             <label><input name="showAlignmentColumnNumbers" type="checkbox"> Show alignment column numbers</label>
-            <label>Column number interval<input name="columnNumberInterval" type="number" min="1" step="1"></label>
             <label><input name="showRightResidueNumbers" type="checkbox"> Show right residue numbers</label>
             <label><input name="showGroups" type="checkbox"> Show groups</label>
             <label><input name="showFeatures" type="checkbox"> Show features</label>
             <label><input name="useAdvancedLayoutScript" type="checkbox"> Use advanced layout script</label>
           </section>
-          <label class="msaexpor-script">Advanced layout script<textarea name="advancedLayoutScript" spellcheck="false" placeholder=">1,4/1,3\\10,100/~,~,~"></textarea></label>
+          <label class="msaexpor-script">Advanced layout script <span>Use rows/range\\blocks, for example &gt;1,4/1,3\\10,100/~,~,~</span><textarea name="advancedLayoutScript" spellcheck="false" placeholder=">1,4/1,3\\10,100/~,~,~"></textarea></label>
         </form>
         <div class="msaexpor-actions"><button type="button" data-action="refresh-preview">Refresh preview</button><span data-role="dirty" hidden></span><button type="button" data-action="export">Generate</button><button type="button" data-action="cancel">Cancel</button><span data-role="status"></span></div>
         <div class="msaexpor-preview" data-role="preview"></div>
@@ -550,21 +561,16 @@
   }
 
   async function exportScene(scene, settings, basename, target) {
+    if (!target || typeof target.save !== "function") {
+      throw new Error("MSA export requires a prepared save target.");
+    }
     if (settings.format === "svg") {
       const blob = new Blob([scene.svg], { type: "image/svg+xml;charset=utf-8" });
-      const options = {
-        description: "SVG image",
-        accept: { "image/svg+xml": [".svg"] }
-      };
-      return target ? target.save(blob) : saveBlob(`${basename}.svg`, blob, options);
+      return target.save(blob);
     }
     if (settings.format === "png") {
       const png = await svgToPNGBlob(scene.svg, scene.width, scene.height, settings.scale);
-      const options = {
-        description: "PNG image",
-        accept: { "image/png": [".png"] }
-      };
-      return target ? target.save(png) : saveBlob(`${basename}.png`, png, options);
+      return target.save(png);
     }
     if (settings.format === "pdf") {
       if (!window.PHGOmsaexporPDF || typeof window.PHGOmsaexporPDF.exportPDFBlob !== "function") {
@@ -575,11 +581,7 @@
         width: scene.width,
         height: scene.height
       });
-      const options = {
-        description: "PDF document",
-        accept: { "application/pdf": [".pdf"] }
-      };
-      return target ? target.save(blob) : saveBlob(`${basename}.pdf`, blob, options);
+      return target.save(blob);
     }
     throw new Error(`Unsupported export format: ${settings.format}`);
   }
@@ -720,8 +722,6 @@
           if (!ctx) {
             throw new Error("PNG export failed: 2D canvas context is unavailable.");
           }
-          ctx.fillStyle = "#ffffff";
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
           ctx.drawImage(image, 0, 0, pixelWidth, pixelHeight);
           canvas.toBlob((blob) => {
             if (blob) {
@@ -758,7 +758,6 @@
     prepareSaveTargetForSettings,
     prepareSaveTarget,
     exportScene,
-    saveBlob,
     loadModel,
     renderApp,
     appShell,

@@ -20,7 +20,7 @@
 .phgo-msaexpor-frame {
   display: block;
   border: 0;
-  background: #f8f8f8;
+  background: #f5f5f5;
   pointer-events: auto;
 }
 
@@ -32,26 +32,29 @@
   box-sizing: border-box;
   display: grid;
   grid-template-rows: auto auto 1fr;
-  gap: 8px;
+  gap: 7px;
   width: 100%;
   height: 100%;
   min-width: 0;
   min-height: 0;
-  padding: 10px;
-  background: #f8f8f8;
-  color: #1f1f1f;
+  padding: 8px;
+  background: #f5f5f5;
+  color: #242424;
   font: 12px/1.35 "Segoe UI", Tahoma, sans-serif;
 }
 
 .msaexpor-settings {
   display: grid;
-  gap: 8px;
+  gap: 7px;
 }
 
 .msaexpor-settings section {
   display: grid;
-  grid-template-columns: repeat(4, minmax(90px, 1fr));
-  gap: 8px;
+  gap: 7px 10px;
+}
+
+.msaexpor-primary {
+  grid-template-columns: minmax(112px, 1.1fr) minmax(86px, 0.8fr) repeat(3, minmax(86px, 0.8fr));
 }
 
 .msaexpor-settings label {
@@ -67,27 +70,44 @@
   box-sizing: border-box;
   min-width: 0;
   border: 1px solid #8a8886;
-  border-radius: 2px;
+  border-radius: 4px;
   background: #ffffff;
-  color: #1f1f1f;
+  color: #242424;
   font: inherit;
   pointer-events: auto;
   user-select: text;
 }
 
+.msaexpor-settings input:focus,
+.msaexpor-settings select:focus,
+.msaexpor-settings textarea:focus,
+.msaexpor-actions button:focus {
+  outline: 1px solid #005fb8;
+  outline-offset: 1px;
+}
+
+.msaexpor-settings input:disabled,
+.msaexpor-settings select:disabled,
+.msaexpor-settings textarea:disabled {
+  background: #edebe9;
+  color: #605e5c;
+}
+
 .msaexpor-settings input,
 .msaexpor-settings select {
-  height: 24px;
+  height: 28px;
   padding: 2px 6px;
 }
 
 .msaexpor-checks {
-  grid-template-columns: repeat(3, minmax(150px, 1fr)) !important;
+  grid-template-columns: repeat(4, minmax(138px, 1fr)) !important;
 }
 
 .msaexpor-checks label {
   grid-template-columns: auto 1fr;
   align-items: center;
+  gap: 6px;
+  min-height: 22px;
 }
 
 .msaexpor-checks input[type="checkbox"] {
@@ -98,43 +118,52 @@
 }
 
 .msaexpor-script textarea {
-  min-height: 74px;
+  min-height: 58px;
   padding: 6px;
   resize: vertical;
   font: 12px/1.35 Consolas, "Courier New", monospace;
 }
 
-.msaexpor-script textarea:disabled {
-  background: #edebe9;
+.msaexpor-script span {
   color: #605e5c;
+  font-size: 11px;
 }
 
 .msaexpor-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 28px;
+  gap: 8px;
+  min-height: 30px;
 }
 
 .msaexpor-actions button {
-  height: 26px;
-  padding: 2px 12px;
+  height: 28px;
+  padding: 3px 12px;
   background: #ffffff;
   cursor: pointer;
   user-select: none;
 }
 
 .msaexpor-actions button[data-action="export"] {
-  border-color: #605e5c;
-  background: #f3f2f1;
+  border-color: #005fb8;
+  background: #0078d4;
+  color: #ffffff;
 }
 
 .msaexpor-actions button:hover {
   background: #f3f2f1;
 }
 
+.msaexpor-actions button[data-action="export"]:hover {
+  background: #106ebe;
+}
+
 .msaexpor-actions [data-role="status"] {
   color: #605e5c;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .msaexpor-actions [data-role="dirty"] {
@@ -151,8 +180,15 @@
   min-height: 0;
   overflow: scroll;
   border: 1px solid #c8c6c4;
-  border-radius: 2px;
-  background: #ffffff;
+  border-radius: 4px;
+  background-color: #ffffff;
+  background-image:
+    linear-gradient(45deg, #f3f2f1 25%, transparent 25%),
+    linear-gradient(-45deg, #f3f2f1 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #f3f2f1 75%),
+    linear-gradient(-45deg, transparent 75%, #f3f2f1 75%);
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-size: 16px 16px;
   contain: strict;
 }
 

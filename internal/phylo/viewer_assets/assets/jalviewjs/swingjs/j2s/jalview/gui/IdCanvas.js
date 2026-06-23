@@ -112,9 +112,17 @@ if (total < 1) {
 return "";
 }
 var residues=0;
+var last=-1;
+for (var j=total - 1; j >= 0; j--) {
+var terminal=String(text).charAt(j);
+if (terminal !== "-" && terminal !== "." && terminal !== " " && terminal !== "\t" && terminal !== "\r" && terminal !== "\n") {
+last=j;
+break;
+}
+}
 for (var i=0; i < total; i++) {
 var ch=String(text).charAt(i);
-if (ch !== "-" && ch !== "." && ch !== " " && ch !== "\t" && ch !== "\r" && ch !== "\n" && ch !== "*") {
+if (ch !== "-" && ch !== "." && ch !== " " && ch !== "\t" && ch !== "\r" && ch !== "\n" && !(ch === "*" && i === last)) {
 residues++;
 }
 }
@@ -130,6 +138,14 @@ Clazz.newMeth(C$, 'phgoDisplayLabel$jalview_datamodel_SequenceI$I', function (se
 var bridge=window.__PHGOJalviewBridgeAPI;
 var settings=bridge && bridge.__msaexporRenderSettings;
 if (settings) {
+if (bridge && bridge.exportLabelForSequence) {
+try {
+var exportName=this.phgoDisplayName$jalview_datamodel_SequenceI(seq);
+var exportText=seq == null  ? "" : seq.getSequenceAsString$();
+return bridge.exportLabelForSequence(seq && seq.phgoTaxonID || "", exportName, index, exportText, settings);
+} catch (e) {
+}
+}
 var exportParts=[];
 var exportPrefix=this.phgoDisplayPrefix$jalview_datamodel_SequenceI$I(seq, index);
 var exportName=this.phgoDisplayName$jalview_datamodel_SequenceI(seq);
@@ -192,7 +208,7 @@ var panelWidth=this.getWidth$();
 var charHeight=this.av.getCharHeight$();
 var y=((i - starty) * charHeight) + ypos;
 var string=this.phgoDisplayLabel$jalview_datamodel_SequenceI$I(s, i);
-if ((this.searchResults != null ) && this.searchResults.contains$O(s) ) {
+if (!this.phgoIsMSAExportRenderActive$() && (this.searchResults != null ) && this.searchResults.contains$O(s) ) {
 g.setColor$java_awt_Color($I$(3).black);
 g.fillRect$I$I$I$I(0, y, this.getWidth$(), charHeight);
 g.setColor$java_awt_Color($I$(3).white);
@@ -286,7 +302,7 @@ if (sequence == null ) {
 continue;
 }if (hasHiddenRows || alignViewport.isDisplayReferenceSeq$() ) {
 g.setFont$java_awt_Font(p$1.getHiddenFont$jalview_datamodel_SequenceI$jalview_gui_AlignViewport.apply(this, [sequence, alignViewport]));
-}if (selection != null  && selection.contains$O(sequence) ) {
+}if (!this.phgoIsMSAExportRenderActive$() && selection != null  && selection.contains$O(sequence) ) {
 currentColor=$I$(3).black;
 currentTextColor=$I$(3).white;
 } else if (!this.phgoIsMSAExportRenderActive$() && (alignViewport.getSelectionGroup$() != null ) && alignViewport.getSelectionGroup$().getSequences$java_util_Map(null).contains$O(sequence) ) {

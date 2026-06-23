@@ -366,6 +366,7 @@ func dominantRecordSequenceKind(records []InputRecord) SequenceKind {
 func (v *ViewerServer) handleAlignedFASTAGet(w http.ResponseWriter, r *http.Request, sessionID string) {
 	v.state.mu.RLock()
 	payload, ok := v.msaPayloadLocked(sessionID)
+	state := cloneMSAState(v.state.msaStates[sessionID])
 	seq := v.state.sessions[sessionID]
 	v.state.mu.RUnlock()
 	if !ok || strings.TrimSpace(payload.AlignedFASTA) == "" {
@@ -375,10 +376,14 @@ func (v *ViewerServer) handleAlignedFASTAGet(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("ETag", strconv.FormatUint(seq, 10))
 	setViewerNoStoreHeaders(w)
-	_, _ = w.Write([]byte(jalviewAlignedFASTA(payload)))
+	_, _ = w.Write([]byte(jalviewAlignedFASTAWithState(payload, state)))
 }
 
 func jalviewAlignedFASTA(payload ViewerPayload) string {
+	return jalviewAlignedFASTAWithState(payload, MSAState{})
+}
+
+func jalviewAlignedFASTAWithState(payload ViewerPayload, state MSAState) string {
 	if len(payload.Metadata.Records) == 0 || strings.TrimSpace(payload.AlignedFASTA) == "" {
 		return payload.AlignedFASTA
 	}
@@ -393,15 +398,28 @@ func jalviewAlignedFASTA(payload ViewerPayload) string {
 	if len(names) == 0 {
 		return payload.AlignedFASTA
 	}
+	stateByTaxon, stateByName := msaSequenceStateIndexes(state.Sequences)
 	var b strings.Builder
+	var overrideSequence string
+	overrideWritten := false
 	for _, line := range strings.SplitAfter(payload.AlignedFASTA, "\n") {
 		content := strings.TrimRight(line, "\r\n")
 		eol := line[len(content):]
 		if strings.HasPrefix(content, ">") {
+			overrideSequence = ""
+			overrideWritten = false
 			header := strings.TrimSpace(strings.TrimPrefix(content, ">"))
 			if record, ok := names[fastaHeaderID(header)]; ok {
-				content = ">" + jalviewPHgoHeader(record)
+				sequenceState, _ := msaSequenceStateForRecord(record, stateByTaxon, stateByName)
+				content = ">" + jalviewPHgoHeaderWithState(record, sequenceState)
+				overrideSequence = fastaSequenceText(sequenceState.Sequence)
 			}
+		} else if overrideSequence != "" {
+			if !overrideWritten {
+				writeWrappedFASTASequence(&b, overrideSequence, eol)
+				overrideWritten = true
+			}
+			continue
 		}
 		b.WriteString(content)
 		b.WriteString(eol)
@@ -422,13 +440,73 @@ func fastaHeaderID(header string) string {
 }
 
 func jalviewPHgoHeader(record InputRecord) string {
+	return jalviewPHgoHeaderWithState(record, MSASequenceState{})
+}
+
+func jalviewPHgoHeaderWithState(record InputRecord, state MSASequenceState) string {
 	displayName := strings.TrimSpace(jalviewRecordDisplayName(record))
+	if savedName := strings.TrimSpace(state.DisplayName); savedName != "" {
+		displayName = savedName
+	}
 	name := base64.RawURLEncoding.EncodeToString([]byte(displayName))
-	taxonID := base64.RawURLEncoding.EncodeToString([]byte(strings.TrimSpace(record.TaxonID)))
+	taxonIDValue := strings.TrimSpace(record.TaxonID)
+	if taxonIDValue == "" {
+		taxonIDValue = strings.TrimSpace(state.TaxonID)
+	}
+	taxonID := base64.RawURLEncoding.EncodeToString([]byte(taxonIDValue))
 	if taxonID == "" {
 		return "phgo_name64:" + name
 	}
 	return "phgo_name64:" + name + " phgo_taxon_id64:" + taxonID
+}
+
+func msaSequenceStateIndexes(sequences []MSASequenceState) (map[string]MSASequenceState, map[string]MSASequenceState) {
+	byTaxon := make(map[string]MSASequenceState, len(sequences))
+	byName := make(map[string]MSASequenceState, len(sequences))
+	for _, seq := range sequences {
+		seq.TaxonID = strings.TrimSpace(seq.TaxonID)
+		seq.DisplayName = strings.TrimSpace(seq.DisplayName)
+		seq.Description = strings.TrimSpace(seq.Description)
+		seq.Sequence = strings.TrimSpace(seq.Sequence)
+		if seq.TaxonID != "" {
+			byTaxon[seq.TaxonID] = seq
+		}
+		if seq.DisplayName != "" {
+			byName[seq.DisplayName] = seq
+		}
+	}
+	return byTaxon, byName
+}
+
+func msaSequenceStateForRecord(record InputRecord, byTaxon map[string]MSASequenceState, byName map[string]MSASequenceState) (MSASequenceState, bool) {
+	if seq, ok := byTaxon[strings.TrimSpace(record.TaxonID)]; ok {
+		return seq, true
+	}
+	if seq, ok := byName[jalviewRecordDisplayName(record)]; ok {
+		return seq, true
+	}
+	return MSASequenceState{}, false
+}
+
+func fastaSequenceText(sequence string) string {
+	return strings.Join(strings.Fields(sequence), "")
+}
+
+func writeWrappedFASTASequence(b *strings.Builder, sequence string, eol string) {
+	if sequence == "" {
+		return
+	}
+	if eol == "" {
+		eol = "\n"
+	}
+	const width = 80
+	for len(sequence) > width {
+		b.WriteString(sequence[:width])
+		b.WriteString(eol)
+		sequence = sequence[width:]
+	}
+	b.WriteString(sequence)
+	b.WriteString(eol)
 }
 
 func jalviewRecordDisplayName(record InputRecord) string {

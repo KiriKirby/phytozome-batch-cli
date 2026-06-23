@@ -26,7 +26,7 @@ Implemented and covered by automated tests:
 
 Release-signoff validation guidance:
 
-- Browser smoke testing has been exercised against a real JalviewJS MSA page: `File -> Export image...` opens the `msaexpor` UI inside a native SwingJS `JInternalFrame`, the frame can be dragged through the native title bar, native resize handles are present, the UI shows `Generate` and `Cancel`, default format/scale are SVG/2x, and the preview renders a non-empty Jalview-native SVG container scene.
+- Browser smoke testing has been exercised against a real JalviewJS MSA page: `File -> Export image...` opens the `msaexpor` UI inside a native SwingJS `JInternalFrame`, the frame can be dragged through the native title bar, native resize handles are present, the UI shows `Generate` and `Cancel`, default format/scale are SVG/2x, and the preview renders a non-empty Jalview-native vector SVG scene.
 - Save-picker suggested filenames and abort behavior are covered by JavaScript unit tests because the in-app browser validation context does not allow overriding `window.showSaveFilePicker`.
 - Do one large-alignment PDF visual review before release candidates that include renderer or PDF dependency changes.
 - A future React + Fluent rewrite is optional only; it is not required for this implementation to be complete. If done later, it must preserve the same child-window, settings, renderer, export, and test contracts.
@@ -141,22 +141,22 @@ Implement the bridge renderer:
 
 - accepts normalized settings and resolved layout blocks
 - temporarily sets Jalview viewport cell geometry for export
-- draws left labels with `IdCanvas.drawIds`
-- draws residue blocks with `SeqCanvas.drawPanel`
-- draws top alignment column labels and right residue numbers in the same offscreen scene
+- emits left labels as SVG text using the same PHgo/Jalview label rules
+- emits residue blocks as SVG cell rectangles and text using Jalview's active renderer state
+- emits top alignment column labels and right residue numbers in the same vector scene
 - disables PHgo row checkboxes, selection/cursor UI, annotations, and unrelated window/page UI
 - gates group and feature rendering according to settings
-- restores viewport/component state in `finally`
+- restores viewport state in `finally`
 
-The bridge returns the canonical SVG container. There is no PHgo-owned renderer fallback.
+The bridge returns the canonical transparent vector SVG. There is no screenshot, DOM capture, or raster-image-in-SVG fallback.
 
 ## Phase 8: PNG and PDF Export
 
 Mirror the tree viewer's save/export approach:
 
-- SVG: save the bridge-generated SVG container string
-- PNG: rasterize the bridge-generated SVG container to canvas at selected scale
-- PDF: convert/embed the bridge-generated SVG container using the bundled PDF path
+- SVG: save the bridge-generated vector SVG string
+- PNG: rasterize the bridge-generated vector SVG to canvas at selected scale
+- PDF: convert the bridge-generated vector SVG using the bundled PDF path
 - save picker: sanitize suggested filenames, default to the numbered title prefix when available, and close partial writable handles in `finally`
 
 The implementation may share or duplicate only small browser-save helpers from `tree-viewer/src/pgv.js`. `msaexpor` must not depend on tree-specific snapshot logic.
@@ -165,7 +165,7 @@ If neither the PHgo save bridge nor `showSaveFilePicker` is available, saving fa
 
 ## Phase 9: Preview
 
-The preview renders the same Jalview-native SVG container scene in a scrollable preview region inside the child window.
+The preview renders the same Jalview-native vector SVG scene in a scrollable preview region inside the child window.
 
 Preview updates are manual:
 
@@ -173,8 +173,8 @@ Preview updates are manual:
 - editing any setting marks the preview dirty and shows `Preview needs refresh`
 - `Refresh preview` regenerates the preview
 - changing final format or export scale must not switch the preview renderer to PNG/PDF or use the final export scale
-- preview rendering uses a fixed `1x` Jalview-native scene for responsiveness
-- final `Generate` always regenerates the canonical Jalview-native SVG container scene from current settings before saving
+- preview rendering uses the logical Jalview-native vector scene for responsiveness
+- final `Generate` always regenerates the canonical Jalview-native vector SVG scene from current settings before saving
 
 Preview viewport clipping and scrollbars may depend on child-window size. The generated SVG scene, PNG dimensions, PDF page size, block wrapping, label content, and cell geometry must not depend on child-window size.
 

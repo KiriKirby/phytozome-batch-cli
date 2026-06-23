@@ -6,7 +6,7 @@
 
 The existing Jalview image path is centered on painting the current `AlignmentPanel` through `ImageExporter` and `ImageMaker`. In the vendored JalviewJS source this path appears around `AlignFrame.createPNG`, `AlignFrame.createSVG`, `AlignmentPanel.makeAlignmentImage`, `AlignmentPanel.printUnwrapped`, `AlignmentPanel.printWrappedAlignment`, `ScalePanel.drawScale`, `IdCanvas.drawIds`, and `SeqCanvas.drawPanelForPrinting`.
 
-PHgo's export requirements are different from Jalview's visible menu path, but the residue, feature, group, font, and colour rendering must match the current Jalview view. Therefore the primary `msaexpor` renderer reuses Jalview's native SwingJS drawing primitives (`IdCanvas.drawIds` and `SeqCanvas.drawPanel`) on an offscreen `BufferedImage`, with PHgo export settings applied as a temporary bridge context.
+PHgo's export requirements are different from Jalview's visible menu path, but the residue, feature, group, font, and colour rendering must match the current Jalview view. Therefore the primary `msaexpor` renderer reads Jalview's native SwingJS renderer/model objects and emits a transparent vector SVG scene, with PHgo export settings applied as a temporary bridge context.
 
 ## Forbidden Export Strategy
 
@@ -24,7 +24,7 @@ Screenshot or visible panel-paint export is forbidden because it can include:
 - current viewport clipping
 - stale offscreen image-cache artifacts
 
-The export must be generated from explicit settings and Jalview's current model/renderers instead. Offscreen `BufferedImage` rendering is allowed only through the controlled `msaexpor` bridge path because it suppresses forbidden UI state and does not capture browser/window pixels.
+The export must be generated from explicit settings and Jalview's current model/renderers instead. Small offscreen `BufferedImage` use is allowed only for font-metric measurement in the controlled `msaexpor` bridge path; final SVG/PDF output must not embed a rasterized `BufferedImage`.
 
 ## Export Content Boundary
 
@@ -81,7 +81,7 @@ The required primary render bridge is:
 window.__PHGOJalviewBridgeAPI.renderMSAExportScene(settings, layout)
 ```
 
-It returns a scene object with `{ svg, width, height, source: "jalview-native" }`. The SVG embeds the offscreen Jalview-rendered PNG as an `<image>` element. This is intentional: in this path SVG and PDF are publication/export containers for Jalview-identical raster content, not independent vector reimplementations of Jalview residue/feature/group styling.
+It returns a scene object with `{ svg, width, height, source: "jalview-vector" }`. The SVG is the canonical transparent vector scene and must not embed a raster `<image>` or `data:image/png`. PNG is the only format that rasterizes the scene, and PDF is generated from the same vector SVG.
 
 ## Ownership
 
@@ -109,7 +109,7 @@ It returns a scene object with `{ svg, width, height, source: "jalview-native" }
 - requesting the Jalview-native export scene through the bridge
 - failing explicitly when the Jalview-native render bridge is unavailable
 - saving the bridge-produced container SVG
-- deriving PNG and PDF from the generated SVG
+- deriving PNG and PDF from the generated vector SVG
 - saving exported files
 
 `msaexpor` is currently implemented as PHgo-owned browser JavaScript and CSS mounted inside a same-origin iframe within the Jalview/SwingJS child-window host. The outer native child window remains Jalview/SwingJS-managed for drag, resize, z-order, focus, and close behavior. The iframe exists to keep input, select, textarea, and button interactions from being intercepted by SwingJS page-level event handlers.
@@ -123,6 +123,8 @@ The iframe is also the JavaScript runtime boundary for the export UI. The bridge
 The parent page must not execute `PHGOmsaexpor.renderApp` directly against iframe DOM. Running parent-realm functions against iframe DOM makes `window`, `document`, `Blob`, `Image`, `URL`, PDF export, save picker, and cancel behavior ambiguous and can leave Refresh/Generate buttons wired to the wrong browser realm.
 
 When no real parent save bridge exists, the iframe must call its own `showSaveFilePicker` directly from the Generate button handler. The parent page must not wrap its own `showSaveFilePicker` as an iframe save bridge, because browsers require the file picker to be opened in the same user-activation chain as the clicked iframe button.
+
+Generate must prepare the save target before starting the native Jalview render, PNG conversion, or PDF conversion. This preserves the browser user-activation chain for `showSaveFilePicker`; after the save target is acquired, the export may run asynchronous rendering/conversion work and then write to the prepared handle. Picker cancellation returns to the window as `Export canceled.` and must not be reported as a render failure.
 
 The controls intentionally follow Fluent UI interaction/layout conventions and are restyled to the MSA palette, but the implementation does not require a React runtime inside the MSA page. If the UI is later migrated to React + Fluent components, it must preserve the same exported globals, iframe mount/event-isolation contract, settings contract, renderer contract, and tests.
 
@@ -140,6 +142,8 @@ Opening, editing settings, previewing, or exporting must not:
 - update runtime artifacts
 
 If `msaexpor` UI defaults are persisted later, they must be stored under a dedicated `msaexpor` viewer-state key and must remain separate from biological MSA state.
+
+Jalview `File -> Save` is biological/durable MSA state, not export state. It writes the current rows, sequence edits, settings, groups, annotations, features, and markers to `PUT /sessions/<id>/msa/state`. The MSA aligned-FASTA endpoint merges saved sequence state when the MSA page is opened again, so a refresh sees the last saved sequence names and sequence text. Canvas `.pgo` snapshots include the same `MSAState` through the Canvas MSA snapshot path; saving `.pgo` after Jalview `Save` must use the latest stored MSA state.
 
 ## Asset Strategy
 
@@ -179,4 +183,4 @@ internal/phylo/viewer_assets/assets/msaexpor/
   style.css
 ```
 
-The build path must use local repository or vendored dependencies. The implementation must not depend on a remote CDN or runtime download. `pdf.js` is built as a single browser-global IIFE from `tree-viewer/src/msaexpor-pdf.js` through `tree-viewer/vite.msaexpor.config.js`; it must expose `window.PHGOmsaexporPDF.exportPDFBlob` and must not require ESM module loading from the MSA bootstrap page.
+The build path must use local repository or vendored dependencies. The implementation must not depend on a remote CDN or runtime download. `pdf.js` is built as a single browser-global IIFE from `tree-viewer/src/msaexpor-pdf.js` through `tree-viewer/vite.msaexpor.config.js`; it must expose `window.PHGOmsaexporPDF.exportPDFBlob`, convert the vector SVG without adding a page background, and must not require ESM module loading from the MSA bootstrap page.

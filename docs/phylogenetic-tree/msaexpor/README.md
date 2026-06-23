@@ -2,7 +2,7 @@
 
 `msaexpor` is the PHgo-owned replacement for MSA image export in the JalviewJS MSA page.
 
-The module does not export screenshots of the current UI and does not contain an independent MSA renderer. It asks the PHgo Jalview bridge to render a clean offscreen scene through Jalview/SwingJS drawing code, then writes SVG, PNG, or PDF from that scene.
+The module does not export screenshots of the current UI. It asks the PHgo Jalview bridge to render a clean vector scene from Jalview/SwingJS renderer state, then writes SVG, PNG, or PDF from that scene.
 
 ## Core Decisions
 
@@ -15,9 +15,9 @@ The module does not export screenshots of the current UI and does not contain an
 - Preview uses a manual `Refresh preview` action and a dirty-state indicator instead of rerendering on every form edit.
 - Residue, group, feature, font, and label styling come from Jalview's current renderer state through the native export bridge.
 - Export output must not include temporary UI such as the current cursor/selection rectangle, PHgo row checkboxes, menus, scrollbars, dialogs, or annotations.
-- Jalview-native offscreen rendering is the only export renderer. If the bridge is unavailable, export fails explicitly.
-- SVG is the canonical container representation. It embeds the Jalview-rendered scene; PNG and PDF are derived from the same scene.
-- Export scaling is content-relative. The selected scale changes physical output resolution, not layout proportions.
+- The Jalview-native vector bridge is the only export renderer. If the bridge is unavailable, export fails explicitly.
+- SVG is the canonical transparent vector representation. PNG and PDF are derived from the same scene.
+- Export scaling is content-relative and affects PNG only. SVG and PDF keep vector logical geometry regardless of Scale.
 
 ## Document Map
 

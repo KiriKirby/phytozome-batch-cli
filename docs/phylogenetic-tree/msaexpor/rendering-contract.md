@@ -14,9 +14,9 @@ The renderer input is:
 
 The renderer output is:
 
-- one SVG container document that embeds the offscreen Jalview-rendered scene
+- one transparent SVG document made from vector `<rect>` and `<text>` elements
 - optional PNG derived by rasterizing that SVG
-- optional PDF derived from that SVG
+- optional transparent PDF derived from that SVG through `svg2pdf`
 
 `window.__PHGOJalviewBridgeAPI.renderMSAExportScene(settings, layout)` is the only supported renderer. If it is missing or cannot render, preview/export fails explicitly.
 
@@ -93,6 +93,8 @@ If `Show PHgo coordinates` is disabled, the coordinate prefix is omitted even th
 
 If `Show length ratio` and `Show length percent` are both disabled, no residue ratio suffix is exported.
 
+Left labels are always left-aligned. The export renderer must measure every exported left-label string with Jalview's active ID-list font, take the widest measured label, and add a safety gap of at least `24` logical pixels and at least three residue-cell widths before the residue grid starts. The left-label area must not use a fixed maximum width such as `420px`; long labels expand the exported logical width instead of being clipped or overlapped by the MSA grid.
+
 ## Cell Rendering
 
 Each MSA character renders into one grid cell.
@@ -109,19 +111,22 @@ Required behavior:
 
 Color and style are not independently computed by `msaexpor`.
 
-The bridge temporarily applies export settings to Jalview's current viewport and then invokes Jalview/SwingJS drawing primitives:
+The bridge temporarily applies export settings to Jalview's current viewport and then reads Jalview/SwingJS renderer objects to build vector SVG:
 
-- `IdCanvas.drawIds` draws the exported left-label area
-- `SeqCanvas.drawPanel` draws the exported residue grid, residue text, group boundaries, and feature overlays
-- bridge context sets `window.__PHGO_MSAEXPOR_RENDER_ACTIVE__` for the entire offscreen draw
+- the left-label area is built from the same PHgo/Jalview label helper used by `IdCanvas`
+- residue cell fills come from Jalview's active `SequenceRenderer`/residue shading path
+- residue, label, column-number, and right-number text is emitted as SVG `<text>`
+- group outlines are emitted as SVG `<rect fill="none">` from real Jalview alignment groups
+- bridge context sets `window.__PHGO_MSAEXPOR_RENDER_ACTIVE__` during vector scene construction
 - `IdCanvas` must return checkbox column width `0` and must no-op `drawPHgoCheckbox` while that export flag is active
+- `IdCanvas` must suppress left-label search highlights and any selection-list highlight while that export flag is active, even if a caller accidentally passes a live search/selection list
 - `SeqCanvas` must suppress search highlights, cursor drawing, selection-group outlines, and all current mouse/selection transient UI while that export flag is active
 - bridge context gates group and feature drawing through `showGroups` and `showFeatures`
 - group boundaries in export must come only from real Jalview alignment groups; the current selection group is not a group for export purposes
 
-No fallback color table, hash color, PHgo SVG cell painter, DOM pixel sampling, browser screenshot, or Jalview visible-panel capture is allowed. If Jalview cannot provide the required drawing objects, export fails.
+No fallback color table, hash color, DOM pixel sampling, browser screenshot, or Jalview visible-panel capture is allowed. If Jalview cannot provide the required renderer objects, export fails.
 
-For performance, the model-loading path must not precompute per-cell style arrays. Row order and sequence identity are collected for layout, but residue colors, text colors, group drawing, and feature drawing remain inside Jalview's renderer and are resolved during the offscreen draw call.
+For performance, the model-loading path must not precompute per-cell style arrays. Row order and sequence identity are collected for layout, but residue colors and group drawing are resolved from Jalview's live renderer/model during vector scene construction.
 
 ## Annotation Exclusion
 
@@ -175,19 +180,25 @@ width = leftLabelWidth + alignedBlockWidth + rightNumberWidth + margins
 height = topNumberHeight + blockRowsAndGaps + margins
 ```
 
-Scale choices (`1x`, `2x`, `5x`, `10x`) multiply output resolution. They must not change logical cell counts, row counts, wrapping, or label content.
+Scale choices (`1x`, `2x`, `5x`, `10x`) multiply PNG output resolution only. They must not change SVG/PDF logical size, cell counts, row counts, wrapping, or label content.
+
+For SVG:
+
+- write the canonical vector SVG directly
+- do not include a page/background rectangle
+- do not embed a raster `<image>` or `data:image/png`
 
 For PNG:
 
-- rasterize the canonical Jalview-native SVG container at the selected scale
+- rasterize the canonical vector SVG at the selected scale
 - respect a maximum pixel budget to avoid browser memory failure
 - report an actionable error if the requested scale/content is too large
 
 For PDF:
 
-- embed or convert the canonical SVG container into a PDF
-- preserve the visible Jalview-rendered scene geometry and placement
-- selectable residue text is not required because SVG/PDF carry the Jalview-native raster scene rather than a separate vector text reimplementation
+- convert the canonical vector SVG into a PDF
+- preserve transparent page background where the PDF renderer allows it
+- keep residue/label text as vector text where `svg2pdf` supports the emitted SVG
 
 ## Determinism
 

@@ -193,8 +193,10 @@ func TestViewerAssetsIncludePHgoJalviewBridge(t *testing.T) {
 		!strings.Contains(js, `attachPanelToFrame`) ||
 		!strings.Contains(js, `renderMSAExportScene`) ||
 		!strings.Contains(js, `java.awt.image.BufferedImage`) ||
-		!strings.Contains(js, `graphics.scale$D$D`) ||
-		!strings.Contains(js, `data-msaexpor-renderer="jalview-native"`) ||
+		!strings.Contains(js, `data-msaexpor-renderer="jalview-vector"`) ||
+		!strings.Contains(js, `installSwingColourSwatchFix`) ||
+		!strings.Contains(js, `ensureMSAExportWindowMounted`) ||
+		!strings.Contains(js, `const leftLabelPadding = Math.max(24, Math.ceil(charWidth * 3));`) ||
 		!strings.Contains(js, `SwingJS child-window content pane is not available for msaexpor`) ||
 		!strings.Contains(js, `frameDOMNodeByTitle`) ||
 		!strings.Contains(js, `addFrameToJalviewDesktop`) ||
@@ -244,7 +246,8 @@ func TestViewerAssetsIncludePHgoJalviewBridge(t *testing.T) {
 		strings.Contains(js, `msaexpor-direct-desktop-add`) ||
 		strings.Contains(js, `collectResidueStyleForSequence`) ||
 		strings.Contains(js, `residue_colors`) ||
-		strings.Contains(js, `collectMSAStyle`) {
+		strings.Contains(js, `collectMSAStyle`) ||
+		strings.Contains(js, `leftLabelWidth = Math.min(420`) {
 		t.Fatalf("PHgo JalviewJS bridge does not expose the expected PHgo integration contract: %s", js)
 	}
 }
@@ -290,6 +293,7 @@ func TestViewerAssetsIncludeMSAExporModule(t *testing.T) {
 		`columnNumberInterval: 20`,
 		`showRightResidueNumbers = true`,
 		`PDF export requires bundled jspdf and svg2pdf.js assets`,
+		`MSA export requires a prepared save target.`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("msaexpor index asset missing %q", want)
@@ -306,6 +310,9 @@ func TestViewerAssetsIncludeMSAExporModule(t *testing.T) {
 		`DEFAULT_STYLE`,
 		`renderSVG`,
 		`host.addEventListener(type, isolate, true)`,
+		`target ? target.save`,
+		`: saveBlob(`,
+		`saveBlob,`,
 	} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("msaexpor index asset contains forbidden screenshot/UI capture path %q", forbidden)
@@ -316,7 +323,7 @@ func TestViewerAssetsIncludeMSAExporModule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("msaexpor style asset missing: %v", err)
 	}
-	if !strings.Contains(string(css), `.msaexpor-app`) || !strings.Contains(string(css), `border-radius: 2px`) {
+	if !strings.Contains(string(css), `.msaexpor-app`) || !strings.Contains(string(css), `border-radius: 4px`) || !strings.Contains(string(css), `background-image:`) {
 		t.Fatalf("msaexpor style asset does not contain the expected PHgo/MSA theme")
 	}
 
@@ -329,6 +336,92 @@ func TestViewerAssetsIncludeMSAExporModule(t *testing.T) {
 		!strings.Contains(pdfBody, `PDF export failed: generated SVG is not valid XML`) ||
 		strings.Contains(pdfBody, `export{`) {
 		t.Fatalf("msaexpor PDF asset is not a browser global bundle")
+	}
+}
+
+func TestMSAExporGeneratePreparesSaveTargetBeforeRendering(t *testing.T) {
+	js, err := viewerAsset("assets/msaexpor/index.js")
+	if err != nil {
+		t.Fatalf("msaexpor index asset missing: %v", err)
+	}
+	body := string(js)
+	saveOffset := strings.Index(body, `const target = await prepareSaveTargetForSettings(state.settings, baseName);`)
+	renderOffset := strings.Index(body, `const { scene } = generateScene();`)
+	exportOffset := strings.Index(body, `await exportScene(scene, state.settings, baseName, target);`)
+	for name, offset := range map[string]int{
+		"save target preparation": saveOffset,
+		"native scene generation": renderOffset,
+		"targeted export":         exportOffset,
+	} {
+		if offset < 0 {
+			t.Fatalf("msaexpor Generate handler missing %s", name)
+		}
+	}
+	if !(saveOffset < renderOffset && renderOffset < exportOffset) {
+		t.Fatalf("msaexpor Generate must prepare save target before native rendering and write to that target")
+	}
+	if strings.Contains(body, `<a download`) || strings.Contains(body, `.click()`) {
+		t.Fatalf("msaexpor must not include an anchor-download save fallback")
+	}
+}
+
+func TestMSAExporNativeVectorBridgeRenderingContract(t *testing.T) {
+	bridge, err := viewerAsset("assets/jalviewjs/phgo-bridge.js")
+	if err != nil {
+		t.Fatalf("PHgo bridge asset missing: %v", err)
+	}
+	js := string(bridge)
+	for _, want := range []string{
+		`function renderMSAExportScene(settings, layout)`,
+		`const exportSettings = normalizeMSAExportSettings(settings);`,
+		`function rowLengthStatsFromText(value)`,
+		`function buildMSAExportLabel(taxonID, name, index, sequenceValue, settings)`,
+		`function exportLabelForSequence(taxonID, name, index, sequenceValue, settings)`,
+		`const renderedBlocks = blocks.map((block) => ({ block, indexes: blockRowsToIndexes(block, alignmentHeight) }));`,
+		`const label = exportRowLabel(seq, index, exportSettings);`,
+		`let maxLabelTextWidth = 72;`,
+		`const leftLabelPadding = Math.max(24, Math.ceil(charWidth * 3));`,
+		`const leftLabelWidth = Math.ceil(Math.max(96, maxLabelTextWidth + leftLabelPadding));`,
+		`const gridX = margin + leftLabelWidth;`,
+		`const previousExportSettings = bridge.__msaexporRenderSettings;`,
+		`const previousExportActive = window.__PHGO_MSAEXPOR_RENDER_ACTIVE__;`,
+		`bridge.__msaexporRenderSettings = exportSettings;`,
+		`window.__PHGO_MSAEXPOR_RENDER_ACTIVE__ = true;`,
+		`addSVGRect(parts, cellX, rowY, charWidth, charHeight, { fill });`,
+		`addSVGText(parts, ch, cellX + charWidth / 2, baseline, { anchor: "middle", fill: textFill, className: "msaexpor-residue" });`,
+		`addGroupOutlines(parts, alignment, indexes, start, endExclusive, gridX, rowStartY, charWidth, charHeight);`,
+		`bridge.__msaexporRenderSettings = previousExportSettings;`,
+		`if (typeof previousExportActive !== "undefined") {`,
+		`window.__PHGO_MSAEXPOR_RENDER_ACTIVE__ = previousExportActive;`,
+		`delete window.__PHGO_MSAEXPOR_RENDER_ACTIVE__;`,
+		`exportLabelForSequence,`,
+		`data-msaexpor-renderer="jalview-vector"`,
+	} {
+		if !strings.Contains(js, want) {
+			t.Fatalf("PHgo bridge native renderer missing contract fragment %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		`leftLabelWidth = Math.min`,
+		`drawAnnotation`,
+		`drawWrappedPanelForPrinting`,
+		`drawPanelForPrinting$java_awt_Graphics`,
+		`printWrappedAlignment`,
+		`makeAlignmentImage`,
+		`drawScale$`,
+		`html2canvas`,
+		`getDisplayMedia`,
+		`captureStream`,
+		`querySelector(".selection")`,
+		`collectResidueStyleForSequence`,
+		`collectMSAStyle`,
+		`residue_colors`,
+		`canvas.toDataURL("image/png")`,
+		`<image href=`,
+	} {
+		if strings.Contains(js, forbidden) {
+			t.Fatalf("PHgo bridge native renderer contains forbidden export path fragment %q", forbidden)
+		}
 	}
 }
 
@@ -465,6 +558,10 @@ func TestVendoredJalviewIdCanvasBundlesStayInSync(t *testing.T) {
 			`phgoDisplayName$jalview_datamodel_SequenceI`,
 			`phgoResidueRatio$jalview_datamodel_SequenceI`,
 			`phgoDisplayLabel$jalview_datamodel_SequenceI$I`,
+			`bridge.exportLabelForSequence`,
+			`return bridge.exportLabelForSequence(seq && seq.phgoTaxonID || "", exportName, index, exportText, settings);`,
+			`var last=-1;`,
+			`!(ch === "*" && i === last)`,
 			`drawPHgoCheckbox$java_awt_Graphics2D`,
 			`var checkboxWidth=this.phgoCheckboxColumnWidth$();`,
 			`var string=this.phgoDisplayLabel$jalview_datamodel_SequenceI$I`,
@@ -472,6 +569,8 @@ func TestVendoredJalviewIdCanvasBundlesStayInSync(t *testing.T) {
 			`residues + "/" + total`,
 			`if (this.phgoIsMSAExportRenderActive$()) return 0;`,
 			`if (this.phgoIsMSAExportRenderActive$()) return;`,
+			`if (!this.phgoIsMSAExportRenderActive$() && (this.searchResults != null ) && this.searchResults.contains$O(s) )`,
+			`}if (!this.phgoIsMSAExportRenderActive$() && selection != null  && selection.contains$O(sequence) )`,
 			`this.drawPHgoCheckbox$java_awt_Graphics2D$jalview_datamodel_SequenceI$I$I$I$I$java_awt_Color`,
 			`getDisplayId$Z(false)`,
 		} {
@@ -486,6 +585,9 @@ func TestVendoredJalviewIdCanvasBundlesStayInSync(t *testing.T) {
 			`if (alignViewport.isRightAlignIds$()) {`,
 			`if (bridge && bridge.__msaexporRenderSettings) return 0;`,
 			`} else if (!(window.__PHGOJalviewBridgeAPI && window.__PHGOJalviewBridgeAPI.__msaexporRenderSettings)`,
+			`if ((this.searchResults != null ) && this.searchResults.contains$O(s) )`,
+			`}if (selection != null  && selection.contains$O(sequence) )`,
+			`if (ch !== "-" && ch !== "." && ch !== " " && ch !== "\t" && ch !== "\r" && ch !== "\n" && ch !== "*")`,
 		} {
 			if strings.Contains(js, forbidden) {
 				t.Fatalf("%s still contains stale Jalview IdCanvas behavior %q", asset, forbidden)
@@ -811,6 +913,11 @@ func TestViewerServerMSAStateEndpointPreservesDurableJalviewState(t *testing.T) 
 	body := getViewerPayload(t, server.URL()+"/sessions/canvas/msa/state")
 	if !strings.Contains(body, `"show_annotations":false`) || !strings.Contains(body, `"state":"green"`) || !strings.Contains(body, `"description":"manual desc"`) || !strings.Contains(body, `"features"`) {
 		t.Fatalf("MSA state endpoint body missing durable state: %s", body)
+	}
+	fasta := getViewerPayload(t, server.URL()+"/sessions/canvas/aligned.fasta")
+	renamed := base64.RawURLEncoding.EncodeToString([]byte("Alpha Renamed"))
+	if !strings.Contains(fasta, "phgo_name64:"+renamed) || !strings.Contains(fasta, "mpep") || strings.Contains(fasta, "\nAAA\n") {
+		t.Fatalf("saved MSA sequence state should be restored through aligned FASTA, got: %s", fasta)
 	}
 }
 

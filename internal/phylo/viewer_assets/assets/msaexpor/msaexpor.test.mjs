@@ -156,6 +156,53 @@ const model = {
 }
 
 {
+  const settings = api.normalizeSettings({
+    format: "pdf",
+    scale: 10,
+    cellWidth: "17",
+    cellHeight: "21",
+    showPHgoCoordinates: true,
+    showLengthRatio: true,
+    showLengthPercent: true,
+    showAlignmentColumnNumbers: false,
+    columnNumberInterval: "37",
+    showRightResidueNumbers: true,
+    showGroups: false,
+    showFeatures: false
+  });
+  const layout = api.resolveLayout(settings, model);
+  api.renderScene(model, settings, layout, {
+    renderMSAExportScene(receivedSettings, receivedLayout) {
+      assert.equal(receivedSettings.format, "pdf");
+      assert.equal(receivedSettings.scale, 10);
+      assert.equal(receivedSettings.cellWidth, 17);
+      assert.equal(receivedSettings.cellHeight, 21);
+      assert.equal(receivedSettings.showPHgoCoordinates, true);
+      assert.equal(receivedSettings.showLengthRatio, true);
+      assert.equal(receivedSettings.showLengthPercent, true);
+      assert.equal(receivedSettings.showAlignmentColumnNumbers, false);
+      assert.equal(receivedSettings.columnNumberInterval, 37);
+      assert.equal(receivedSettings.showRightResidueNumbers, true);
+      assert.equal(receivedSettings.showGroups, false);
+      assert.equal(receivedSettings.showFeatures, false);
+      assert.equal(receivedLayout, layout);
+      return { svg: "<svg data-msaexpor=\"1\" data-msaexpor-renderer=\"jalview-native\"></svg>", width: 20, height: 10, source: "jalview-native" };
+    }
+  });
+}
+
+{
+  const settings = api.normalizeSettings({
+    showRightResidueNumbers: false,
+    useAdvancedLayoutScript: true,
+    advancedLayoutScript: ">1,4\\10,20"
+  });
+  assert.equal(settings.showRightResidueNumbers, true);
+  const layout = api.resolveLayout(settings, model);
+  assert.equal(layout.blocks.length, 1);
+}
+
+{
   const shell = api.appShell();
   assert.match(shell, /Refresh preview/);
   assert.match(shell, /data-role="dirty"/);
@@ -217,6 +264,20 @@ const model = {
   assert.equal(target, false);
   delete context.window.showSaveFilePicker;
   delete context.window.isSecureContext;
+}
+
+{
+  delete context.window.__PHGO_SAVE_BLOB__;
+  delete context.window.showSaveFilePicker;
+  delete context.window.isSecureContext;
+  await assert.rejects(
+    () => api.prepareSaveTargetForSettings(api.normalizeSettings({ format: "svg" }), "1.1"),
+    /requires the PHgo save bridge or the browser save-file picker/
+  );
+  await assert.rejects(
+    () => api.exportScene({ svg: "<svg data-msaexpor=\"1\"></svg>", width: 1, height: 1 }, api.normalizeSettings({ format: "svg" }), "1.1"),
+    /requires a prepared save target/
+  );
 }
 
 console.log("msaexpor tests passed");

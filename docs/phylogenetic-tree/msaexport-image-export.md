@@ -116,7 +116,7 @@ The first rewritten `msaexpor` implementation includes exactly these setting gro
 - advanced layout script for PHgo row selection, MSA boundary ranges, and per-block allocation
 - `>~\range[/allocation]` in the advanced layout script means all current MSA rows
 - automatic layout when the advanced layout script is off: all exportable rows, full aligned width, one full-width major block
-- in-window preview of the same Jalview-native SVG container scene used for final export, refreshed manually through `Refresh preview`
+- in-window preview of the same Jalview-native vector SVG scene used for final export, refreshed manually through `Refresh preview`
 - action buttons `Generate` and `Cancel`; `Generate` opens the save-location picker when available
 - default export filename base is the numbered prefix from the payload/page title, such as `1` or `1.1`
 
