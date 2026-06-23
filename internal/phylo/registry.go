@@ -128,7 +128,6 @@ func DefaultParamsForTree(method TreeMethod) map[string]string {
 
 func NormalizeTreeSettings(settings TreeSettings) TreeSettings {
 	settingsWasEmpty := strings.TrimSpace(settings.DisplayNameSource) == "" &&
-		!settings.ShowCanvasCoordinatesSet &&
 		strings.TrimSpace(string(settings.ConversionTarget)) == "" &&
 		!settings.ConversionSkipUnselect &&
 		strings.TrimSpace(string(settings.AlignmentMethod)) == "" &&
@@ -139,7 +138,7 @@ func NormalizeTreeSettings(settings TreeSettings) TreeSettings {
 		settings.DisplayNameSource = DefaultDisplayNameSource
 	}
 	if !settings.ShowCanvasCoordinatesSet {
-		settings.ShowCanvasCoordinates = true
+		settings.ShowCanvasCoordinates = false
 		settings.ShowCanvasCoordinatesSet = true
 	}
 	switch strings.ToLower(strings.TrimSpace(string(settings.ConversionTarget))) {

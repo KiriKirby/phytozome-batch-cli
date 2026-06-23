@@ -95,7 +95,7 @@ type MethodDefinition struct {
 func DefaultTreeSettings() TreeSettings {
 	return TreeSettings{
 		DisplayNameSource:        DefaultDisplayNameSource,
-		ShowCanvasCoordinates:    true,
+		ShowCanvasCoordinates:    false,
 		ShowCanvasCoordinatesSet: true,
 		ConversionTarget:         DefaultConversionTarget,
 		ConversionSkipUnselect:   true,

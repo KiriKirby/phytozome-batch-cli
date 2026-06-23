@@ -121220,9 +121220,17 @@ $I$(2).Register$java_awt_Component$S(this, av.getSequenceSetId$());
 av.getRanges$().addPropertyChangeListener$jalview_viewmodel_ViewportListenerI(this);
 }, 1);
 
+Clazz_newMeth(C$, 'phgoIsMSAExportRenderActive$', function () {
+{
+var bridge=window.__PHGOJalviewBridgeAPI;
+return !!(window.__PHGO_MSAEXPOR_RENDER_ACTIVE__ || (bridge && bridge.__msaexporRenderSettings));
+}
+});
+
 Clazz_newMeth(C$, 'phgoCheckboxColumnWidth$', function () {
 {
 var bridge=window.__PHGOJalviewBridgeAPI;
+if (this.phgoIsMSAExportRenderActive$()) return 0;
 return bridge && bridge.phgoState && bridge.phgoState.session ? bridge.checkboxColumnWidth() : 0;
 }
 });
@@ -121314,6 +121322,7 @@ return string + this.phgoResidueRatio$jalview_datamodel_SequenceI(seq);
 
 Clazz_newMeth(C$, 'drawPHgoCheckbox$java_awt_Graphics2D$jalview_datamodel_SequenceI$I$I$I$I$java_awt_Color', function (g, s, index, y, charHeight, width, textColor) {
 {
+if (this.phgoIsMSAExportRenderActive$()) return;
 if (!width) return;
 var state=this.phgoSelectionState$jalview_datamodel_SequenceI$I(s, index);
 if (!state) return;
@@ -125776,6 +125785,13 @@ this.setBackground$java_awt_Color($I$(5).white);
 this.av.getRanges$().addPropertyChangeListener$jalview_viewmodel_ViewportListenerI(this);
 }, 1);
 
+Clazz_newMeth(C$, 'phgoIsMSAExportRenderActive$', function () {
+{
+var bridge=window.__PHGOJalviewBridgeAPI;
+return !!(window.__PHGO_MSAEXPOR_RENDER_ACTIVE__ || (bridge && bridge.__msaexporRenderSettings));
+}
+});
+
 Clazz_newMeth(C$, 'getSequenceRenderer$', function () {
 return this.seqRdr;
 });
@@ -125904,7 +125920,9 @@ var vis;
 var clip;
 if (this.img != null  && (this.fastPaint || (vis=this.getVisibleRect$()).width != (clip=g.getClipBounds$()).width  || vis.height != clip.height ) ) {
 g.drawImage$java_awt_Image$I$I$java_awt_image_ImageObserver(this.img, 0, 0, this);
+if (!this.phgoIsMSAExportRenderActive$()) {
 p$1.drawSelectionGroup$java_awt_Graphics2D$I$I$I$I.apply(this, [g, startRes, endRes, startSeq, endSeq]);
+}
 this.fastPaint=false;
 } else {
 if (this.img == null  || width != this.img.getWidth$()  || height != this.img.getHeight$() ) {
@@ -125919,22 +125937,26 @@ if (this.av.getWrapAlignment$()) {
 this.drawWrappedPanel$java_awt_Graphics$I$I$I(gg, width, height, ranges.getStartRes$());
 } else {
 this.drawPanel$java_awt_Graphics$I$I$I$I$I(gg, startRes, endRes, startSeq, endSeq, 0);
-}p$1.drawSelectionGroup$java_awt_Graphics2D$I$I$I$I.apply(this, [gg, startRes, endRes, startSeq, endSeq]);
+}if (!this.phgoIsMSAExportRenderActive$()) {
+p$1.drawSelectionGroup$java_awt_Graphics2D$I$I$I$I.apply(this, [gg, startRes, endRes, startSeq, endSeq]);
+}
 g.drawImage$java_awt_Image$I$I$java_awt_image_ImageObserver(this.img, 0, 0, this);
 gg.dispose$();
-}if (this.av.cursorMode) {
+}if (!this.phgoIsMSAExportRenderActive$() && this.av.cursorMode) {
 p$1.drawCursor$java_awt_Graphics$I$I$I$I.apply(this, [g, startRes, endRes, startSeq, endSeq]);
 }});
 
 Clazz_newMeth(C$, 'drawPanelForPrinting$java_awt_Graphics$I$I$I$I', function (g1, startRes, endRes, startSeq, endSeq) {
 this.drawPanel$java_awt_Graphics$I$I$I$I$I(g1, startRes, endRes, startSeq, endSeq, 0);
+if (!this.phgoIsMSAExportRenderActive$()) {
 p$1.drawSelectionGroup$java_awt_Graphics2D$I$I$I$I.apply(this, [g1, startRes, endRes, startSeq, endSeq]);
+}
 });
 
 Clazz_newMeth(C$, 'drawWrappedPanelForPrinting$java_awt_Graphics$I$I$I', function (g, canvasWidth, canvasHeight, startRes) {
 this.drawWrappedPanel$java_awt_Graphics$I$I$I(g, canvasWidth, canvasHeight, startRes);
 var group=this.av.getSelectionGroup$();
-if (group != null ) {
+if (!this.phgoIsMSAExportRenderActive$() && group != null ) {
 p$1.drawWrappedSelection$java_awt_Graphics2D$jalview_datamodel_SequenceGroup$I$I$I.apply(this, [g, group, canvasWidth, canvasHeight, startRes]);
 }});
 
@@ -125987,7 +126009,7 @@ var charHeight=this.av.getCharHeight$();
 this.wrappedSpaceAboveAlignment=charHeight * (this.av.getScaleAboveWrapped$() ? 2 : 1);
 this.wrappedRepeatHeightPx=this.wrappedSpaceAboveAlignment;
 this.wrappedRepeatHeightPx+=this.av.getAlignment$().getHeight$() * charHeight;
-if (this.av.isShowAnnotation$()) {
+if (!this.phgoIsMSAExportRenderActive$() && this.av.isShowAnnotation$()) {
 this.wrappedRepeatHeightPx+=this.getAnnotationHeight$();
 this.wrappedRepeatHeightPx+=3;
 }var ranges=this.av.getRanges$();
@@ -126016,7 +126038,7 @@ g.setColor$java_awt_Color($I$(5).white);
 g.fillRect$I$I$I$I(0, ypos, (endx - startColumn + 1) * charWidth, this.wrappedRepeatHeightPx);
 this.drawPanel$java_awt_Graphics$I$I$I$I$I(g, startColumn, endx, 0, this.av.getAlignment$().getHeight$() - 1, ypos);
 var cHeight=this.av.getAlignment$().getHeight$() * this.av.getCharHeight$();
-if (this.av.isShowAnnotation$()) {
+if (!this.phgoIsMSAExportRenderActive$() && this.av.isShowAnnotation$()) {
 var yShift=cHeight + ypos + 3 ;
 g.translate$I$I(0, yShift);
 if (this.annotations == null ) {
@@ -126109,7 +126131,7 @@ g.setStroke$java_awt_Stroke(Clazz_new_($I$(11)));
 }, p$1);
 
 Clazz_newMeth(C$, 'getAnnotationHeight$', function () {
-if (!this.av.isShowAnnotation$()) {
+if (this.phgoIsMSAExportRenderActive$() || !this.av.isShowAnnotation$()) {
 return 0;
 }if (this.annotations == null ) {
 this.annotations=Clazz_new_($I$(10).c$$jalview_gui_AlignViewport,[this.av]);
@@ -126152,9 +126174,11 @@ nextSeq=this.av.getAlignment$().getSequenceAt$I(i);
 if (nextSeq == null ) {
 continue;
 }this.seqRdr.drawSequence$jalview_datamodel_SequenceI$jalview_datamodel_SequenceGroupA$I$I$I(nextSeq, this.av.getAlignment$().findAllGroups$jalview_datamodel_SequenceI(nextSeq), startRes, endRes, offset + ((i - startSeq) * charHeight));
-if (this.av.isShowSequenceFeatures$()) {
+var bridge=window.__PHGOJalviewBridgeAPI;
+var exportSettings=bridge && bridge.__msaexporRenderSettings;
+if (this.av.isShowSequenceFeatures$() && (!exportSettings || exportSettings.showFeatures !== false)) {
 this.fr.drawSequence$java_awt_Graphics$jalview_datamodel_SequenceI$I$I$I$Z(g, nextSeq, startRes, endRes, offset + ((i - startSeq) * charHeight), false);
-}if (this.av.hasSearchResults$()) {
+}if (!this.phgoIsMSAExportRenderActive$() && this.av.hasSearchResults$()) {
 var searchResults=this.av.getSearchResults$();
 var visibleResults=searchResults.getResults$jalview_datamodel_SequenceI$I$I(nextSeq, startRes, endRes);
 if (visibleResults != null ) {
@@ -126162,7 +126186,7 @@ for (var r=0; r < visibleResults.length; r+=2) {
 this.seqRdr.drawHighlightedText$jalview_datamodel_SequenceI$I$I$I$I(nextSeq, visibleResults[r], visibleResults[r + 1], (visibleResults[r] - startRes) * charWidth, offset + ((i - startSeq) * charHeight));
 }
 }}}
-if (this.av.getSelectionGroup$() != null  || this.av.getAlignment$().getGroups$().size$() > 0 ) {
+if ((!exportSettings || exportSettings.showGroups !== false) && this.av.getAlignment$().getGroups$().size$() > 0 ) {
 this.drawGroupsBoundaries$java_awt_Graphics$I$I$I$I$I(g, startRes, endRes, startSeq, endSeq, offset);
 }}, p$1);
 
@@ -126185,6 +126209,9 @@ break;
 }});
 
 Clazz_newMeth(C$, 'drawSelectionGroup$java_awt_Graphics2D$I$I$I$I', function (g, startRes, endRes, startSeq, endSeq) {
+if (this.phgoIsMSAExportRenderActive$()) {
+return;
+}
 var group=this.av.getSelectionGroup$();
 if (group == null ) {
 return;
@@ -126198,6 +126225,9 @@ p$1.drawWrappedSelection$java_awt_Graphics2D$jalview_datamodel_SequenceGroup$I$I
 }, p$1);
 
 Clazz_newMeth(C$, 'drawCursor$java_awt_Graphics$I$I$I$I', function (g, startRes, endRes, startSeq, endSeq) {
+if (this.phgoIsMSAExportRenderActive$()) {
+return;
+}
 var cursor_ypos=this.cursorY;
 if (cursor_ypos >= startSeq && cursor_ypos <= endSeq ) {
 var yoffset=0;
@@ -140497,6 +140527,17 @@ selectHighlighted.addActionListener$java_awt_event_ActionListener(al);
 var tooltipSettingsMenu=Clazz_new_($I$(3).c$$S,[$I$(11).getString$S("label.sequence_id_tooltip")]);
 var autoAnnMenu=Clazz_new_($I$(3).c$$S,[$I$(11).getString$S("label.autocalculated_annotation")]);
 var exportImageMenu=Clazz_new_($I$(3).c$$S,[$I$(11).getString$S("label.export_image")]);
+var phgoExportImageMenuItem=null;
+if ($I$(10).isJS$()) {
+phgoExportImageMenuItem=Clazz_new_($I$(2).c$$S,["Export image..."]);
+phgoExportImageMenuItem.addActionListener$java_awt_event_ActionListener({
+actionPerformed$: function(e) { this.actionPerformed$java_awt_event_ActionEvent(e); },
+actionPerformed$java_awt_event_ActionEvent: function(e) {
+var bridge=window.__PHGOJalviewBridgeAPI;
+if (bridge && bridge.openMSAExportImageWindowSafe) bridge.openMSAExportImageWindowSafe().catch(function(error){ if (bridge && bridge.debug) bridge.debug("msaexpor-open-failed", { message: bridge.formatValue ? bridge.formatValue(error) : String(error) }); });
+}
+});
+}
 var fileMenu=Clazz_new_($I$(3).c$$S,[$I$(11).getString$S("action.file")]);
 this.alignFrameMenuBar.add$javax_swing_JMenu(fileMenu);
 this.alignFrameMenuBar.add$javax_swing_JMenu(editMenu);
@@ -140528,7 +140569,11 @@ fileMenu.add$javax_swing_JMenuItem(pageSetup);
 }
 fileMenu.add$javax_swing_JMenuItem(printMenuItem);
 fileMenu.addSeparator$();
+if ($I$(10).isJS$() && phgoExportImageMenuItem != null) {
+fileMenu.add$javax_swing_JMenuItem(phgoExportImageMenuItem);
+} else {
 fileMenu.add$javax_swing_JMenuItem(exportImageMenu);
+}
 fileMenu.add$javax_swing_JMenuItem(exportFeatures);
 fileMenu.add$javax_swing_JMenuItem(exportAnnotations);
 if (!$I$(10).isJS$()) {

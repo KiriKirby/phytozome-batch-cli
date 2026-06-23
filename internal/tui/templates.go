@@ -382,20 +382,18 @@ type CanvasTreePanel struct {
 }
 
 type CanvasTreePanelState struct {
-	Expanded                 bool
-	Focused                  bool
-	EnabledEver              bool
-	CurrentControl           int
-	ScrollOffset             int
-	DisplayNameSource        string
-	ShowCanvasCoordinates    bool
-	ShowCanvasCoordinatesSet bool
-	ConversionTarget         string
-	ConversionSkipUnselect   bool
-	AlignmentMethod          string
-	AlignmentParams          map[string]string
-	TreeMethod               string
-	TreeParams               map[string]string
+	Expanded               bool
+	Focused                bool
+	EnabledEver            bool
+	CurrentControl         int
+	ScrollOffset           int
+	DisplayNameSource      string
+	ConversionTarget       string
+	ConversionSkipUnselect bool
+	AlignmentMethod        string
+	AlignmentParams        map[string]string
+	TreeMethod             string
+	TreeParams             map[string]string
 }
 
 type CanvasTreeMethod struct {
@@ -779,10 +777,6 @@ func (c *canvasTreePanelPrimitive) currentState() CanvasTreePanelState {
 	if state.TreeParams == nil {
 		state.TreeParams = map[string]string{}
 	}
-	if !state.ShowCanvasCoordinatesSet {
-		state.ShowCanvasCoordinates = true
-		state.ShowCanvasCoordinatesSet = true
-	}
 	return state
 }
 
@@ -797,10 +791,6 @@ func (c *canvasTreePanelPrimitive) applyState(state CanvasTreePanelState) {
 	}
 	if state.TreeParams == nil {
 		state.TreeParams = map[string]string{}
-	}
-	if !state.ShowCanvasCoordinatesSet {
-		state.ShowCanvasCoordinates = true
-		state.ShowCanvasCoordinatesSet = true
 	}
 	c.panel.State = state
 	c.syncUIState()
@@ -1501,17 +1491,6 @@ func (c *canvasTreePanelPrimitive) buildTreePage() (*buttonFlex, []canvasTreePan
 	})
 	module.AddItem(displayDropDown, 1, 0, true)
 	fields := []canvasTreePanelField{{primitive: displayDropDown, group: 0}}
-	coordinateCheckbox := newCheckboxModule("Show PHgo row coordinates", func() bool {
-		return c.currentState().ShowCanvasCoordinates
-	}, func() {
-		next := c.currentState()
-		next.ShowCanvasCoordinates = !next.ShowCanvasCoordinates
-		next.ShowCanvasCoordinatesSet = true
-		c.applyState(next)
-	})
-	coordinateCheckbox.SetBorder(false)
-	module.AddItem(coordinateCheckbox, 1, 0, false)
-	fields = append(fields, canvasTreePanelField{primitive: coordinateCheckbox, group: 0})
 	module.AddItem(sectionHeader("Inference"), 1, 0, false)
 	treeMethodDropDown := c.newChoiceDropDown("Tree method", c.panel.TreeMethods, state.TreeMethod, func(id string) {
 		next := c.currentState()
@@ -5044,10 +5023,6 @@ func RunBlastRunSelectionPage(page BlastRunSelectionPage) (BlastRunSelectionResu
 	}
 	if treePanelState.DisplayNameSource == "" && len(page.TreePanel.DisplayNameSources) > 0 {
 		treePanelState.DisplayNameSource = strings.TrimSpace(page.TreePanel.DisplayNameSources[0].Value)
-	}
-	if !treePanelState.ShowCanvasCoordinatesSet {
-		treePanelState.ShowCanvasCoordinates = true
-		treePanelState.ShowCanvasCoordinatesSet = true
 	}
 	page.TreePanel.State = treePanelState
 	var treePanel *canvasTreePanelPrimitive

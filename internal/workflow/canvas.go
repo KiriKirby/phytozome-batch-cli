@@ -751,7 +751,7 @@ func (w *BlastWizard) buildCanvasTreeArtifactsWithRuntime(ctx context.Context, s
 	if err != nil {
 		return phylo.RunResult{}, err
 	}
-	applyCanvasCoordinateDisplayNames(records, &meta, settings.ShowCanvasCoordinates)
+	applyCanvasCoordinateMetadata(records, &meta)
 	runID := canvasTreeRunID(now)
 	artifactDir := mustCanvasTreeArtifactDir(w.canvasTreeSessionID(), runID)
 	plan, err := phylo.BuildRunPlan(w.canvasTreeSessionID(), runID, artifactDir, settings, canvasTreeTargetSequenceKind(settings), records, meta, "", "", now)
@@ -2589,8 +2589,7 @@ func syncCanvasTreeSnapshotPreview(payload phylo.ViewerPayload, plan phylo.RunPl
 		records = append(records, record)
 		remaining = append(remaining[:match], remaining[match+1:]...)
 	}
-	previewSettings := treeSettingsFromSnapshotPanel(panelState)
-	applyCanvasCoordinateDisplayNames(records, nil, previewSettings.ShowCanvasCoordinates)
+	applyCanvasCoordinateMetadata(records, nil)
 	payload.Metadata.DisplayNameSource = displaySource
 	payload.Metadata.Records = records
 	payload.Metadata.GeneratedAt = time.Now()
@@ -2636,7 +2635,7 @@ func canvasTreeDisplayNameFromSource(row model.CanvasRow, fallback string, sourc
 	return canvasRowDisplayName(row, fallback)
 }
 
-func applyCanvasCoordinateDisplayNames(records []phylo.InputRecord, meta *phylo.Metadata, enabled bool) {
+func applyCanvasCoordinateMetadata(records []phylo.InputRecord, meta *phylo.Metadata) {
 	for i := range records {
 		name := strings.TrimSpace(records[i].BaseDisplayName)
 		if name == "" {
@@ -2646,18 +2645,8 @@ func applyCanvasCoordinateDisplayNames(records []phylo.InputRecord, meta *phylo.
 			name = strings.TrimSpace(records[i].TaxonID)
 		}
 		records[i].BaseDisplayName = name
-		records[i].DisplayPrefix = ""
-		records[i].DisplayName = name
-	}
-	if !enabled {
-		if meta != nil {
-			meta.Records = records
-		}
-		return
-	}
-	for i := range records {
 		records[i].DisplayPrefix = canvasCoordinatePrefix(records[i].CanvasItemIndex, records[i].CanvasRow)
-		records[i].DisplayName = canvasCoordinateDisplayName(records[i].CanvasItemIndex, records[i].CanvasRow, records[i].BaseDisplayName)
+		records[i].DisplayName = name
 	}
 	if meta != nil {
 		meta.Records = records
@@ -2666,15 +2655,6 @@ func applyCanvasCoordinateDisplayNames(records []phylo.InputRecord, meta *phylo.
 
 func canvasCoordinatePrefix(canvasItemIndex int, rowIndex int) string {
 	return fmt.Sprintf("[%d,%d]", canvasItemIndex+1, rowIndex+1)
-}
-
-func canvasCoordinateDisplayName(canvasItemIndex int, rowIndex int, displayName string) string {
-	displayName = strings.TrimSpace(displayName)
-	coord := canvasCoordinatePrefix(canvasItemIndex, rowIndex)
-	if displayName == "" {
-		return coord
-	}
-	return coord + " " + displayName
 }
 
 func canvasTreeRecordMatchesSelectedRow(record phylo.InputRecord, selected canvasSelectedRow) bool {

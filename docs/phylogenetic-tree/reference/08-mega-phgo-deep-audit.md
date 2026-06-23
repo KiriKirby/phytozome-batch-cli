@@ -154,12 +154,12 @@ and fixes applied.
   execution. Packaging scripts now probe the same way instead of trying to open
   the `.bin` directly.
 - 2026-06-20: Removed the old duplicate-label suffix mechanism that appended
-  hidden taxon IDs such as `[PHGOT000123]` to Reactree labels. Canvas tree/MSA
-  display now uses the default-on Show PHgo row coordinates option to prefix
-  metadata labels with `[canvas item,row]` without writing that prefix into the
-  Canvas `display_name` column. This option is preview-only and changes only
-  the preview fingerprint, so runtime alignment/tree artifacts are reused when
-  compute inputs are unchanged.
+  hidden taxon IDs such as `[PHGOT000123]` to Reactree labels. Canvas now always
+  emits PHgo row coordinates as separate `display_prefix` metadata without
+  writing that prefix into the Canvas `display_name` column. MSA draws the
+  prefix by default; Reactree tree labels show it only when the viewer-side
+  `Coord` toggle is enabled. The toggle is viewer state only and is not part of
+  PHgo runtime refresh or compute artifact reuse.
 - 2026-06-20: Tightened PHgo task-modal cancellation: Cancel/Esc cancels the
   task context and waits for the task goroutine to exit; the legacy task modal
   no longer queues a synchronous redraw from inside the input-event cancel path.

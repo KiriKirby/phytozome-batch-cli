@@ -11,6 +11,7 @@ import { relabelFasta, relabelNewick } from './labels.js';
 import { megaDefaultDisplayNewick } from './mega-display.js';
 import {
   buildViewerSnapshot,
+  defaultExportBaseName,
   installPHGOSaveBridge,
   PGV_VIEWER_STATE_SCHEMA_VERSION,
   saveTextFile,
@@ -124,18 +125,22 @@ function App() {
   const [error, setError] = useState('');
   const [splitPercent, setSplitPercent] = useState(42);
   const splitPercentRef = useRef(splitPercent);
+  const [showPhgoCoords, setShowPhgoCoords] = useState(false);
+  const showPhgoCoordsRef = useRef(showPhgoCoords);
   const viewerStageRef = useRef(null);
   const [viewerHeight, setViewerHeight] = useState(520);
   const viewerHeightRef = useRef(520);
   const loadedPayloadStampRef = useRef('');
   const hasLoadedPayloadRef = useRef(false);
   const hasTree = Boolean(payload?.newick?.trim());
-  const newick = useMemo(() => relabelNewick(megaDefaultDisplayNewick(payload?.newick, payload?.metadata), payload?.metadata), [payload]);
-  const fasta = useMemo(() => relabelFasta(payload?.aligned_fasta, payload?.metadata), [payload]);
+  const labelOptions = useMemo(() => ({ showPhgoCoords }), [showPhgoCoords]);
+  const newick = useMemo(() => relabelNewick(megaDefaultDisplayNewick(payload?.newick, payload?.metadata), payload?.metadata, labelOptions), [payload, labelOptions]);
+  const fasta = useMemo(() => relabelFasta(payload?.aligned_fasta, payload?.metadata, labelOptions), [payload, labelOptions]);
   const viewerTitle = useMemo(() => {
     const rawTitle = String(payload?.title || payload?.metadata?.title || sessionID || '').trim();
     return rawTitle ? `Phgotreer: ${rawTitle}` : 'Phgotreer';
   }, [payload, sessionID]);
+  const exportBaseName = useMemo(() => defaultExportBaseName(payload, sessionID || 'phgo-viewer'), [payload, sessionID]);
   const preventTextSelection = (event) => {
     event.preventDefault();
   };
@@ -163,6 +168,7 @@ function App() {
         if (typeof usableState?.phgo?.split_percent === 'number') {
           setSplitPercent(usableState.phgo.split_percent);
         }
+        setShowPhgoCoords(Boolean(usableState?.reactree?.showPhgoCoords));
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -234,7 +240,7 @@ function App() {
     return () => events.close();
   }, [sessionID]);
 
-  useEffect(() => installPHGOSaveBridge((message) => setError(message)), []);
+  useEffect(() => installPHGOSaveBridge((message) => setError(message), () => ({ payload, baseName: exportBaseName })), [payload, exportBaseName]);
 
   useEffect(() => {
     if (!hasTree) return undefined;
@@ -300,6 +306,10 @@ function App() {
       }, 250);
     }
   }, [splitPercent]);
+
+  useEffect(() => {
+    showPhgoCoordsRef.current = showPhgoCoords;
+  }, [showPhgoCoords]);
 
   useEffect(() => {
     if (!hasTree) return undefined;
@@ -391,6 +401,8 @@ function App() {
               initialState={initialViewerState?.reactree}
               onStateChange={handleViewerStateChange}
               onViewerSnapshot={handleViewerSnapshot}
+              showPhgoCoords={showPhgoCoords}
+              setShowPhgoCoords={setShowPhgoCoords}
             />
           </div>
         )}

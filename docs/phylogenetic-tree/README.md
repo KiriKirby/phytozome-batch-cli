@@ -29,6 +29,10 @@ The tree system is intentionally independent from keyword search, BLAST review, 
   Defines the alignment and tree-computation pipeline and cache/recompute rules.
 - [Reactree Viewer](./reactree-viewer.md)
   Defines the external viewer service, Reactree.js responsibilities, browser interaction, and live update model.
+- [MSA Image Export Rewrite](./msaexport-image-export.md)
+  Defines the `msaexpor` module that completely replaces the current PHgo MSA image-export workflow with a PHgo-owned export window inside the JalviewJS MSA page.
+- [MSA Export Implementation Library](./msaexpor/README.md)
+  Implementation-level documentation for the data-driven `msaexpor` renderer, settings, advanced group DSL, SVG/PNG/PDF export contract, and tests.
 - [Artifact Contract](./artifact-contract.md)
   Defines the files and JSON contracts exchanged between Canvas, `mega-phgo-runtime`, and the viewer.
 - [Implementation Plan](./implementation-plan.md)

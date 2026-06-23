@@ -1952,7 +1952,7 @@ ${viewerStateHelpers}`, 'Reactree viewer-state helpers', file);
   text = replaceRequired(
     text,
     'function Reactree({ newick, defaultHeight = 520, fasta }) {',
-    'function Reactree({ newick, defaultHeight = 520, fasta, initialState, onStateChange, onViewerSnapshot }) {',
+    'function Reactree({ newick, defaultHeight = 520, fasta, initialState, onStateChange, onViewerSnapshot, showPhgoCoords = false, setShowPhgoCoords }) {',
     'Reactree viewer-state props',
     file,
   );
@@ -2283,21 +2283,26 @@ function patchReactreeViewerPolishMJS(file) {
   const snapshotDepsRenderStyle = '  }, [treeData, history, layout, renderStyle, treeType, labelMode, alignLabels, truncateNames, showAlignment, containerH, hScale, vScale, fontScale, strokeWidth, colorOverrides, collapsedNodes, collapseLabels, activeColor, colorMode, rerootMode, flipMode, swapMode, searchOpen, searchQuery, searchMatchIdx, downloadOpen, downloadMenuPos, palettePos, cladeEditor, nodeInfo, theme]);';
   const snapshotDepsRuntimeFont = '  }, [treeData, history, layout, renderStyle, treeType, labelMode, alignLabels, truncateNames, showAlignment, containerH, hScale, vScale, fontScale, fontFamily, strokeWidth, colorOverrides, collapsedNodes, collapseLabels, activeColor, colorMode, rerootMode, flipMode, swapMode, searchOpen, searchQuery, searchMatchIdx, downloadOpen, downloadMenuPos, palettePos, cladeEditor, nodeInfo, theme]);';
   const snapshotDepsExportSize = '  }, [treeData, history, layout, renderStyle, treeType, labelMode, alignLabels, truncateNames, showAlignment, containerH, hScale, vScale, fontScale, fontFamily, strokeWidth, exportLongEdge, colorOverrides, collapsedNodes, collapseLabels, activeColor, colorMode, rerootMode, flipMode, swapMode, searchOpen, searchQuery, searchMatchIdx, downloadOpen, downloadMenuPos, palettePos, cladeEditor, nodeInfo, theme]);';
-  if (!text.includes(snapshotDepsRuntimeFont) && !text.includes(snapshotDepsExportSize)) {
+  const snapshotDepsPHgoCoords = '  }, [treeData, history, layout, renderStyle, treeType, labelMode, alignLabels, truncateNames, showAlignment, showPhgoCoords, containerH, hScale, vScale, fontScale, fontFamily, strokeWidth, exportLongEdge, colorOverrides, collapsedNodes, collapseLabels, activeColor, colorMode, rerootMode, flipMode, swapMode, searchOpen, searchQuery, searchMatchIdx, downloadOpen, downloadMenuPos, palettePos, cladeEditor, nodeInfo, theme]);';
+  const snapshotDepsPHgoCoordsDuplicate = '  }, [treeData, history, layout, renderStyle, treeType, labelMode, alignLabels, truncateNames, showAlignment, showPhgoCoords, showPhgoCoords, containerH, hScale, vScale, fontScale, fontFamily, strokeWidth, exportLongEdge, colorOverrides, collapsedNodes, collapseLabels, activeColor, colorMode, rerootMode, flipMode, swapMode, searchOpen, searchQuery, searchMatchIdx, downloadOpen, downloadMenuPos, palettePos, cladeEditor, nodeInfo, theme]);';
+  if (text.includes(snapshotDepsPHgoCoordsDuplicate)) {
+    replaceOnce(snapshotDepsPHgoCoordsDuplicate, snapshotDepsPHgoCoords, 'Reactree coordinate snapshot dependency dedupe');
+  }
+  if (!text.includes(snapshotDepsRuntimeFont) && !text.includes(snapshotDepsExportSize) && !text.includes(snapshotDepsPHgoCoords)) {
     if (text.includes(snapshotDepsOriginal)) {
       replaceOnce(snapshotDepsOriginal, snapshotDepsRenderStyle, 'Reactree style snapshot dependencies');
     }
     if (text.includes(snapshotDepsRenderStyle)) {
       replaceOnce(snapshotDepsRenderStyle, snapshotDepsRuntimeFont, 'Reactree font snapshot dependencies');
     }
-    if (!text.includes(snapshotDepsRuntimeFont) && !text.includes(snapshotDepsExportSize)) {
+    if (!text.includes(snapshotDepsRuntimeFont) && !text.includes(snapshotDepsExportSize) && !text.includes(snapshotDepsPHgoCoords)) {
       throw new Error(`Reactree snapshot dependencies anchor not found in ${file}`);
     }
   }
-  if (text.includes(snapshotDepsRuntimeFont) && !text.includes(snapshotDepsExportSize)) {
+  if (text.includes(snapshotDepsRuntimeFont) && !text.includes(snapshotDepsExportSize) && !text.includes(snapshotDepsPHgoCoords)) {
     replaceOnce(snapshotDepsRuntimeFont, snapshotDepsExportSize, 'Reactree export size snapshot dependencies');
   }
-  if (!text.includes(snapshotDepsExportSize)) {
+  if (!text.includes(snapshotDepsExportSize) && !text.includes(snapshotDepsPHgoCoords)) {
     throw new Error(`Reactree export size snapshot dependencies anchor not found in ${file}`);
   }
   const snapshotRestoreOriginal = '    setLayout(stringOr(snapshot.layout, "rectangular"));\n    setTreeType(stringOr(snapshot.treeType, "phylogram"));';
@@ -2566,6 +2571,32 @@ patchReactreeViewerPolishMJS(join(packageRoot, 'dist', 'index.mjs'));
 function patchReactreeOfficeRibbonMJS(file) {
   let text = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
   const originalText = text;
+  text = text
+    .replace(
+      'function Reactree({ newick, defaultHeight = 520, fasta, initialState, onStateChange, onViewerSnapshot }) {',
+      'function Reactree({ newick, defaultHeight = 520, fasta, initialState, onStateChange, onViewerSnapshot, showPhgoCoords = false, setShowPhgoCoords }) {',
+    )
+    .replace(
+      '      showAlignment,\n      containerH,',
+      '      showAlignment,\n      showPhgoCoords,\n      containerH,',
+    )
+    .replace(
+      '  }, [treeData, history, layout, renderStyle, treeType, labelMode, alignLabels, truncateNames, showAlignment,',
+      '  }, [treeData, history, layout, renderStyle, treeType, labelMode, alignLabels, truncateNames, showAlignment, showPhgoCoords,',
+    )
+    .replace(
+      '      setShowAlignment,\n      alignLabels,\n      collapsedNodes,',
+      '      setShowAlignment,\n      alignLabels,\n      showPhgoCoords,\n      setShowPhgoCoords,\n      collapsedNodes,',
+    );
+  text = text
+    .replace(
+      '  }, [treeData, history, layout, renderStyle, treeType, labelMode, alignLabels, truncateNames, showAlignment, showPhgoCoords, showPhgoCoords,',
+      '  }, [treeData, history, layout, renderStyle, treeType, labelMode, alignLabels, truncateNames, showAlignment, showPhgoCoords,',
+    )
+    .replace(
+      '      setShowAlignment,\n      alignLabels,\n      showPhgoCoords,\n      setShowPhgoCoords,\n      showPhgoCoords,\n      setShowPhgoCoords,\n      collapsedNodes,',
+      '      setShowAlignment,\n      alignLabels,\n      showPhgoCoords,\n      setShowPhgoCoords,\n      collapsedNodes,',
+    );
   const importAnchor = 'import { createPortal } from "react-dom";';
   text = text
     .replace(/^import \{[^}]*\} from "@fluentui\/react-components";\n?/m, '')
@@ -2747,11 +2778,11 @@ function OfficeOverflow({ label = "More", items, icon }) {
     ] }, item.key)) }) })
   ] });
 }
-function OfficeTabOverflow({ tabs, setActiveRibbonTab }) {
+function OfficeTabOverflow({ tabs, onSelectTab }) {
   if (!tabs.length) return null;
   return /* @__PURE__ */ jsxs2(Menu, { children: [
     /* @__PURE__ */ jsx2(MenuTrigger, { disableButtonEnhancement: true, children: /* @__PURE__ */ jsx2(MenuButton, { size: "small", appearance: "subtle", icon: /* @__PURE__ */ jsx2(MoreHorizontalRegular, {}) }) }),
-    /* @__PURE__ */ jsx2(MenuPopover, { children: /* @__PURE__ */ jsx2(MenuList, { children: tabs.map((tab) => /* @__PURE__ */ jsx2(MenuItem, { onClick: () => setActiveRibbonTab(tab.key), children: tab.label }, tab.key)) }) })
+    /* @__PURE__ */ jsx2(MenuPopover, { children: /* @__PURE__ */ jsx2(MenuList, { children: tabs.map((tab) => /* @__PURE__ */ jsx2(MenuItem, { onClick: () => onSelectTab(tab.key), children: tab.label }, tab.key)) }) })
   ] });
 }
 function OfficeMeasureLayer({ tabs, items, measureRef }) {
@@ -2794,6 +2825,8 @@ function OfficeRibbon({
   showAlignment,
   setShowAlignment,
   alignLabels,
+  showPhgoCoords,
+  setShowPhgoCoords,
   collapsedNodes,
   setCollapsedNodes,
   history,
@@ -2839,7 +2872,9 @@ function OfficeRibbon({
   const tabRowRef = useRef(null);
   const toolbarRef = useRef(null);
   const measureRef = useRef(null);
+  const expandFromCollapsedTabClickRef = useRef(false);
   const [officeLayout, setOfficeLayout] = useState({ visibleTabKeys: OFFICE_TABS.map((tab) => tab.key), visibleGroupKeys: [] });
+  const [ribbonCollapsed, setRibbonCollapsed] = useState(false);
   const labelCycle = ["none", ...hasBootstraps ? ["bootstrap"] : [], ...hasBranchLengths ? ["branchlength"] : []];
   const nextLabelMode = labelCycle[(labelCycle.indexOf(labelMode) + 1) % labelCycle.length] ?? "none";
   const labelCaption = labelMode === "bootstrap" ? "Bootstrap" : labelMode === "branchlength" ? "Length" : "No labels";
@@ -2848,6 +2883,36 @@ function OfficeRibbon({
     setSearchQuery(value);
     setSearchMatchIdx(0);
     setTimeout(() => searchInputRef.current?.focus(), 20);
+  };
+  const handleRibbonTabSelect = (_, data) => {
+    setActiveRibbonTab(data.value);
+    if (ribbonCollapsed) {
+      expandFromCollapsedTabClickRef.current = true;
+      setRibbonCollapsed(false);
+      window.setTimeout(() => {
+        expandFromCollapsedTabClickRef.current = false;
+      }, 360);
+    }
+  };
+  const handleRibbonTabClick = () => {
+    if (!ribbonCollapsed) return;
+    expandFromCollapsedTabClickRef.current = true;
+    setRibbonCollapsed(false);
+    window.setTimeout(() => {
+      expandFromCollapsedTabClickRef.current = false;
+    }, 360);
+  };
+  const handleRibbonTabDoubleClick = () => {
+    if (expandFromCollapsedTabClickRef.current) {
+      expandFromCollapsedTabClickRef.current = false;
+      setRibbonCollapsed(false);
+      return;
+    }
+    setRibbonCollapsed((collapsed) => !collapsed);
+  };
+  const handleRibbonOverflowTabSelect = (value) => {
+    setActiveRibbonTab(value);
+    if (ribbonCollapsed) setRibbonCollapsed(false);
   };
   const openItem = { key: "open", label: "Open", node: /* @__PURE__ */ jsx2(OfficeCommand, { command: { key: "open", label: "Open", icon: /* @__PURE__ */ jsx2(FolderOpenRegular, {}), disabled: true, title: "Tree file is provided by the current PHgo session" } }) };
   const snapshotItem = { key: "snapshot", label: "Snapshot", node: /* @__PURE__ */ jsx2(OfficeCommand, { command: { key: "snapshot", label: "Snapshot", icon: /* @__PURE__ */ jsx2(DocumentSaveRegular, {}), disabled: !onViewerSnapshot, onClick: () => onViewerSnapshot?.(snapshotStateRef.current?.()), title: "PHgo Viewer Snapshot" } }) };
@@ -2907,12 +2972,17 @@ function OfficeRibbon({
   const heightItem = { key: "height", label: "Height", node: layout === "rectangular" ? /* @__PURE__ */ jsx2(OfficeNumber, { label: "Height", icon: /* @__PURE__ */ jsx2(AutoFitHeightRegular, {}), value: vScale, min: 0, step: 0.1, decimals: 1, onChange: setVScale }) : null };
   const alignmentItem = { key: "alignment", label: "Alignment", node: /* @__PURE__ */ jsx2(OfficeCommand, { command: { key: "alignment", label: "Alignment", icon: /* @__PURE__ */ jsx2(IconAlnTrack, {}), disabled: !fasta || layout !== "rectangular", active: showAlignment, onClick: () => setShowAlignment((mode) => !mode) } }) };
   const alignItem = { key: "alignLabels", label: "Align", node: /* @__PURE__ */ jsx2(OfficeCommand, { command: { key: "alignLabels", label: "Align", icon: /* @__PURE__ */ jsx2(IconAlignLabels, {}), disabled: treeType !== "phylogram", active: alignLabels, onClick: () => setAlignLabels((mode) => !mode) } }) };
+  const coordIcon = /* @__PURE__ */ jsxs2("svg", { width: "16", height: "16", viewBox: "0 0 16 16", fill: "none", children: [
+    /* @__PURE__ */ jsx2("path", { d: "M3 4.25h10M3 8h10M3 11.75h10", stroke: "currentColor", strokeWidth: "1.35", strokeLinecap: "round" }),
+    /* @__PURE__ */ jsx2("path", { d: "M4.2 2.8 2.8 4.25 4.2 5.7M11.8 2.8l1.4 1.45-1.4 1.45M4.2 6.55 2.8 8l1.4 1.45M11.8 6.55 13.2 8l-1.4 1.45M4.2 10.3l-1.4 1.45 1.4 1.45M11.8 10.3l1.4 1.45-1.4 1.45", stroke: "currentColor", strokeWidth: "1.1", strokeLinecap: "round", strokeLinejoin: "round" })
+  ] });
+  const coordItem = { key: "phgoCoords", label: "Coord", node: /* @__PURE__ */ jsx2(OfficeCommand, { command: { key: "phgoCoords", label: "Coord", icon: coordIcon, active: showPhgoCoords, onClick: () => setShowPhgoCoords?.((mode) => !mode), title: "Show PHgo row coordinates" } }) };
   const labelItem = { key: "labels", label: labelCaption, node: /* @__PURE__ */ jsx2(OfficeCommand, { command: { key: "labels", label: labelCaption, icon: labelMode === "bootstrap" ? /* @__PURE__ */ jsx2(IconBootstrap, {}) : labelMode === "branchlength" ? /* @__PURE__ */ jsx2(IconBranchLen, {}) : /* @__PURE__ */ jsx2(IconLabelsOff, {}), disabled: !hasBootstraps && !hasBranchLengths, onClick: () => setLabelMode(nextLabelMode) } }) };
   const expandItem = { key: "expand", label: collapsedNodes.size > 0 ? \`Expand all \${collapsedNodes.size}\` : "Expand all", node: /* @__PURE__ */ jsx2(OfficeCommand, { command: { key: "expand", label: collapsedNodes.size > 0 ? \`Expand all \${collapsedNodes.size}\` : "Expand all", disabled: collapsedNodes.size === 0, onClick: () => setCollapsedNodes(/* @__PURE__ */ new Set()) } }) };
   const viewGroups = [
     { key: "zoom", label: "Zoom", hideLabel: true, wrapClass: "phgo-office-button-group", node: /* @__PURE__ */ jsx2(OfficeGroup, { label: "Zoom", hideLabel: true, children: /* @__PURE__ */ jsxs2(OfficeButtonGroup, { children: [/* @__PURE__ */ jsx2(Fragment, { children: fitItem.node }), /* @__PURE__ */ jsx2(Fragment, { children: zoomItem.node })] }) }), items: [fitItem, zoomItem] },
     { key: "size", label: "Size", hideLabel: true, wrapClass: "phgo-office-inline-fields", node: /* @__PURE__ */ jsx2(OfficeGroup, { label: "Size", hideLabel: true, children: /* @__PURE__ */ jsxs2("div", { className: "phgo-office-inline-fields", children: [/* @__PURE__ */ jsx2(Fragment, { children: widthItem.node }), heightItem.node && /* @__PURE__ */ jsx2(Fragment, { children: heightItem.node })] }) }), items: [widthItem, ...(heightItem.node ? [heightItem] : [])] },
-    { key: "labels", label: "Labels", wrapClass: "phgo-office-button-group", node: /* @__PURE__ */ jsx2(OfficeGroup, { label: "Labels", children: /* @__PURE__ */ jsxs2(OfficeButtonGroup, { children: [alignmentItem.node, alignItem.node, labelItem.node, expandItem.node] }) }), items: [alignmentItem, alignItem, labelItem, expandItem] }
+    { key: "labels", label: "Labels", wrapClass: "phgo-office-button-group", node: /* @__PURE__ */ jsx2(OfficeGroup, { label: "Labels", children: /* @__PURE__ */ jsxs2(OfficeButtonGroup, { children: [alignmentItem.node, alignItem.node, coordItem.node, labelItem.node, expandItem.node] }) }), items: [alignmentItem, alignItem, coordItem, labelItem, expandItem] }
   ];
   const rectItem = { key: "rect", label: "Rectangular", node: /* @__PURE__ */ jsx2(OfficeCommand, { command: { key: "rect", label: "Rectangular", icon: /* @__PURE__ */ jsx2(IconRect, {}), active: layout === "rectangular", className: "phgo-office-toggle-command", onClick: () => {
       setLayout("rectangular");
@@ -2992,13 +3062,13 @@ function OfficeRibbon({
     measure();
     const frame = requestAnimationFrame(measure);
     return () => cancelAnimationFrame(frame);
-  }, [ribbonWidth, activeRibbonTab, allItems.length, layout, fontFamily, fontScale, strokeWidth, hScale, vScale, viewportScale, labelCaption, collapsedNodes.size, showAlignment, alignLabels, renderStyle, treeType, history.length, colorMode, rerootMode, flipMode, swapMode]);
-  return /* @__PURE__ */ jsx2(FluentProvider, { theme: webLightTheme, children: /* @__PURE__ */ jsxs2("div", { className: "phgo-office-ribbon", ref: ribbonRef, children: [
+  }, [ribbonWidth, activeRibbonTab, ribbonCollapsed, allItems.length, layout, fontFamily, fontScale, strokeWidth, hScale, vScale, viewportScale, labelCaption, collapsedNodes.size, showAlignment, alignLabels, showPhgoCoords, renderStyle, treeType, history.length, colorMode, rerootMode, flipMode, swapMode]);
+  return /* @__PURE__ */ jsx2(FluentProvider, { theme: webLightTheme, children: /* @__PURE__ */ jsxs2("div", { className: \`phgo-office-ribbon \${ribbonCollapsed ? "phgo-office-ribbon-collapsed" : ""}\`, ref: ribbonRef, children: [
     /* @__PURE__ */ jsx2(OfficeMeasureLayer, { tabs: OFFICE_TABS, items: allItems, measureRef }),
     /* @__PURE__ */ jsxs2("div", { className: "phgo-office-tab-row", ref: tabRowRef, children: [
       /* @__PURE__ */ jsxs2("div", { className: "phgo-office-tabs", children: [
-        /* @__PURE__ */ jsx2(TabList, { size: "small", selectedValue: activeRibbonTab, onTabSelect: (_, data) => setActiveRibbonTab(data.value), children: visibleTabs.map((tab) => /* @__PURE__ */ jsx2(Tab, { value: tab.key, children: tab.label }, tab.key)) }),
-        /* @__PURE__ */ jsx2(OfficeTabOverflow, { tabs: hiddenTabs, setActiveRibbonTab })
+        /* @__PURE__ */ jsx2(TabList, { size: "small", selectedValue: activeRibbonTab, onTabSelect: handleRibbonTabSelect, children: visibleTabs.map((tab) => /* @__PURE__ */ jsx2(Tab, { value: tab.key, onClick: handleRibbonTabClick, onDoubleClick: handleRibbonTabDoubleClick, children: tab.label }, tab.key)) }),
+        /* @__PURE__ */ jsx2(OfficeTabOverflow, { tabs: hiddenTabs, onSelectTab: handleRibbonOverflowTabSelect })
       ] }),
       /* @__PURE__ */ jsx2("div", { className: "phgo-office-search phgo-office-search-button", children: /* @__PURE__ */ jsx2(Tooltip, { content: "Search taxa", relationship: "label", children: /* @__PURE__ */ jsx2(Button, { appearance: "subtle", size: "small", icon: /* @__PURE__ */ jsx2(SearchRegular, {}), onClick: () => {
         setSearchOpen(true);
@@ -3190,11 +3260,15 @@ for (const file of ['index.d.ts', 'index.d.mts'].map((name) => join(packageRoot,
   let text = readFileSync(file, 'utf8');
   if (!text.includes('onViewerSnapshot')) {
     text = text
-      .replace('    fasta?: string;\n', '    fasta?: string;\n    initialState?: Record<string, unknown>;\n    onStateChange?: (state: Record<string, unknown>) => void;\n    onViewerSnapshot?: (state: Record<string, unknown>) => void;\n')
-      .replace('declare function Reactree({ newick, defaultHeight, fasta }: ReactreeProps)', 'declare function Reactree({ newick, defaultHeight, fasta, initialState, onStateChange, onViewerSnapshot }: ReactreeProps)');
+      .replace('    fasta?: string;\n', '    fasta?: string;\n    initialState?: Record<string, unknown>;\n    onStateChange?: (state: Record<string, unknown>) => void;\n    onViewerSnapshot?: (state: Record<string, unknown>) => void;\n    showPhgoCoords?: boolean;\n    setShowPhgoCoords?: (updater: boolean | ((value: boolean) => boolean)) => void;\n')
+      .replace('declare function Reactree({ newick, defaultHeight, fasta }: ReactreeProps)', 'declare function Reactree({ newick, defaultHeight, fasta, initialState, onStateChange, onViewerSnapshot, showPhgoCoords, setShowPhgoCoords }: ReactreeProps)');
     writeFileSync(file, text);
     console.log(`Patched Reactree viewer-state types: ${file}`);
   } else {
+    text = text
+      .replace('    onViewerSnapshot?: (state: Record<string, unknown>) => void;\n', '    onViewerSnapshot?: (state: Record<string, unknown>) => void;\n    showPhgoCoords?: boolean;\n    setShowPhgoCoords?: (updater: boolean | ((value: boolean) => boolean)) => void;\n')
+      .replace('declare function Reactree({ newick, defaultHeight, fasta, initialState, onStateChange, onViewerSnapshot }: ReactreeProps)', 'declare function Reactree({ newick, defaultHeight, fasta, initialState, onStateChange, onViewerSnapshot, showPhgoCoords, setShowPhgoCoords }: ReactreeProps)');
+    writeFileSync(file, text);
     console.log(`Reactree viewer-state types already present: ${file}`);
   }
 }

@@ -2060,6 +2060,17 @@ selectHighlighted.addActionListener$java_awt_event_ActionListener(al);
 var tooltipSettingsMenu=Clazz.new_($I$(3).c$$S,[$I$(11).getString$S("label.sequence_id_tooltip")]);
 var autoAnnMenu=Clazz.new_($I$(3).c$$S,[$I$(11).getString$S("label.autocalculated_annotation")]);
 var exportImageMenu=Clazz.new_($I$(3).c$$S,[$I$(11).getString$S("label.export_image")]);
+var phgoExportImageMenuItem=null;
+if ($I$(10).isJS$()) {
+phgoExportImageMenuItem=Clazz.new_($I$(2).c$$S,["Export image..."]);
+phgoExportImageMenuItem.addActionListener$java_awt_event_ActionListener({
+actionPerformed$: function(e) { this.actionPerformed$java_awt_event_ActionEvent(e); },
+actionPerformed$java_awt_event_ActionEvent: function(e) {
+var bridge=window.__PHGOJalviewBridgeAPI;
+if (bridge && bridge.openMSAExportImageWindowSafe) bridge.openMSAExportImageWindowSafe().catch(function(error){ if (bridge && bridge.debug) bridge.debug("msaexpor-open-failed", { message: bridge.formatValue ? bridge.formatValue(error) : String(error) }); });
+}
+});
+}
 var fileMenu=Clazz.new_($I$(3).c$$S,[$I$(11).getString$S("action.file")]);
 this.alignFrameMenuBar.add$javax_swing_JMenu(fileMenu);
 this.alignFrameMenuBar.add$javax_swing_JMenu(editMenu);
@@ -2091,7 +2102,11 @@ fileMenu.add$javax_swing_JMenuItem(pageSetup);
 }
 fileMenu.add$javax_swing_JMenuItem(printMenuItem);
 fileMenu.addSeparator$();
+if ($I$(10).isJS$() && phgoExportImageMenuItem != null) {
+fileMenu.add$javax_swing_JMenuItem(phgoExportImageMenuItem);
+} else {
 fileMenu.add$javax_swing_JMenuItem(exportImageMenu);
+}
 fileMenu.add$javax_swing_JMenuItem(exportFeatures);
 fileMenu.add$javax_swing_JMenuItem(exportAnnotations);
 if (!$I$(10).isJS$()) {

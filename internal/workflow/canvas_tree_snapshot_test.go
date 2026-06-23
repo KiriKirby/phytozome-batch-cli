@@ -216,7 +216,7 @@ func TestSnapshotCanvasTreeStateSyncsCurrentDisplayNamesWithoutRecompute(t *test
 	if err != nil {
 		t.Fatalf("snapshotCanvasTreeState returned error: %v", err)
 	}
-	if tree.LastPayload.Metadata.Records[0].DisplayName != "[1,1] New PAL" {
+	if tree.LastPayload.Metadata.Records[0].DisplayName != "New PAL" || tree.LastPayload.Metadata.Records[0].DisplayPrefix != "[1,1]" {
 		t.Fatalf("snapshot payload did not sync latest display name: %#v", tree.LastPayload.Metadata.Records)
 	}
 	if tree.Fingerprints.Alignment != "align" || tree.Fingerprints.Tree != "tree" {
@@ -227,7 +227,7 @@ func TestSnapshotCanvasTreeStateSyncsCurrentDisplayNamesWithoutRecompute(t *test
 	}
 }
 
-func TestShowCanvasCoordinatesOnlyChangesPreviewFingerprint(t *testing.T) {
+func TestLegacyShowCanvasCoordinatesDoesNotChangeFingerprints(t *testing.T) {
 	now := time.Now()
 	records := []phylo.InputRecord{{
 		TaxonID:         "PHGOT000001",
@@ -252,14 +252,14 @@ func TestShowCanvasCoordinatesOnlyChangesPreviewFingerprint(t *testing.T) {
 		t.Fatalf("BuildRunPlan no coords: %v", err)
 	}
 	if planWithCoords.Fingerprints.Alignment != planWithoutCoords.Fingerprints.Alignment || planWithCoords.Fingerprints.Tree != planWithoutCoords.Fingerprints.Tree {
-		t.Fatalf("coordinate display option should not affect compute fingerprints: with=%#v without=%#v", planWithCoords.Fingerprints, planWithoutCoords.Fingerprints)
+		t.Fatalf("legacy coordinate setting should not affect compute fingerprints: with=%#v without=%#v", planWithCoords.Fingerprints, planWithoutCoords.Fingerprints)
 	}
-	if planWithCoords.Fingerprints.Preview == planWithoutCoords.Fingerprints.Preview {
-		t.Fatalf("coordinate display option should affect preview fingerprint")
+	if planWithCoords.Fingerprints.Preview != planWithoutCoords.Fingerprints.Preview {
+		t.Fatalf("legacy coordinate display option should not affect preview fingerprint")
 	}
 }
 
-func TestApplyCanvasCoordinateDisplayNamesDoesNotMutateCanvasDisplayNameColumn(t *testing.T) {
+func TestApplyCanvasCoordinateMetadataDoesNotMutateCanvasDisplayNameColumn(t *testing.T) {
 	item := model.CanvasItem{
 		Title:    "family A",
 		Selected: []bool{true},
@@ -281,8 +281,11 @@ func TestApplyCanvasCoordinateDisplayNamesDoesNotMutateCanvasDisplayNameColumn(t
 	if state.Items[0].Rows[0].DisplayName != "PAL display" {
 		t.Fatalf("Canvas display_name column was mutated: %#v", state.Items[0].Rows[0])
 	}
-	if got := result.Plan.Metadata.Records[0].DisplayName; got != "[1,1] PAL display" {
-		t.Fatalf("metadata display name = %q, want coordinate-prefixed display name", got)
+	if got := result.Plan.Metadata.Records[0].DisplayName; got != "PAL display" {
+		t.Fatalf("metadata display name = %q, want raw display name", got)
+	}
+	if got := result.Plan.Metadata.Records[0].DisplayPrefix; got != "[1,1]" {
+		t.Fatalf("metadata display prefix = %q, want coordinate prefix", got)
 	}
 
 	settings.ShowCanvasCoordinates = false
@@ -292,7 +295,10 @@ func TestApplyCanvasCoordinateDisplayNamesDoesNotMutateCanvasDisplayNameColumn(t
 		t.Fatalf("buildCanvasTreeArtifactsWithRuntime without coords returned error: %v", err)
 	}
 	if got := result.Plan.Metadata.Records[0].DisplayName; got != "PAL display" {
-		t.Fatalf("metadata display name with coordinates off = %q, want original display name", got)
+		t.Fatalf("metadata display name with legacy coordinates off = %q, want raw display name", got)
+	}
+	if got := result.Plan.Metadata.Records[0].DisplayPrefix; got != "[1,1]" {
+		t.Fatalf("metadata display prefix with legacy coordinates off = %q, want coordinate prefix", got)
 	}
 }
 
@@ -368,7 +374,8 @@ func TestSnapshotCanvasTreeStateUsesVisibleCanvasSortOrder(t *testing.T) {
 	if len(tree.LastPayload.Metadata.Records) != 2 {
 		t.Fatalf("snapshot payload records = %#v, want 2", tree.LastPayload.Metadata.Records)
 	}
-	if tree.LastPayload.Metadata.Records[0].DisplayName != "[1,2] alpha" || tree.LastPayload.Metadata.Records[1].DisplayName != "[1,1] beta" {
+	if tree.LastPayload.Metadata.Records[0].DisplayName != "alpha" || tree.LastPayload.Metadata.Records[0].DisplayPrefix != "[1,2]" ||
+		tree.LastPayload.Metadata.Records[1].DisplayName != "beta" || tree.LastPayload.Metadata.Records[1].DisplayPrefix != "[1,1]" {
 		t.Fatalf("snapshot payload order should follow visible canvas sort: %#v", tree.LastPayload.Metadata.Records)
 	}
 }
@@ -508,9 +515,9 @@ func TestReuseLastCanvasTreePlanRejectsComputeInputChanges(t *testing.T) {
 	if reused, ok, err := w.reuseLastCanvasTreePlan(noCoordsPlan, records, meta, now); err != nil {
 		t.Fatalf("reuse no-coords returned error: %v", err)
 	} else if !ok {
-		t.Fatalf("coordinate display toggle should reuse runtime artifacts")
+		t.Fatalf("legacy coordinate display toggle should reuse runtime artifacts")
 	} else if reused.Plan.Fingerprints.Alignment != last.Fingerprints.Alignment || reused.Plan.Fingerprints.Tree != last.Fingerprints.Tree {
-		t.Fatalf("coordinate display toggle should keep compute fingerprints: %#v", reused.Plan.Fingerprints)
+		t.Fatalf("legacy coordinate display toggle should keep compute fingerprints: %#v", reused.Plan.Fingerprints)
 	}
 
 	paramSettings := settings

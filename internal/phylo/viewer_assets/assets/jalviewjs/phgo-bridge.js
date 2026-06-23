@@ -851,6 +851,533 @@
     }
   }
 
+  function attachPanelToFrame(frame, panel) {
+    if (!frame || !panel) {
+      return false;
+    }
+    if (typeof frame.setContentPane$java_awt_Container === "function") {
+      frame.setContentPane$java_awt_Container(panel);
+      return true;
+    }
+    const rootPane = typeof frame.getRootPane$ === "function" ? frame.getRootPane$() : null;
+    if (rootPane && typeof rootPane.setContentPane$java_awt_Container === "function") {
+      rootPane.setContentPane$java_awt_Container(panel);
+      return true;
+    }
+    const contentPane = typeof frame.getContentPane$ === "function" ? frame.getContentPane$() : null;
+    if (contentPane && typeof contentPane.add$java_awt_Component$O === "function") {
+      contentPane.add$java_awt_Component$O(panel, "Center");
+      return true;
+    }
+    if (contentPane && typeof contentPane.add$java_awt_Component === "function") {
+      contentPane.add$java_awt_Component(panel);
+      return true;
+    }
+    if (typeof frame.add$java_awt_Component$O === "function") {
+      frame.add$java_awt_Component$O(panel, "Center");
+      return true;
+    }
+    if (typeof frame.add$java_awt_Component === "function") {
+      frame.add$java_awt_Component(panel);
+      return true;
+    }
+    return false;
+  }
+
+  function addFrameToJalviewDesktop(desktopClass, frame, title, width, height) {
+    if (desktopClass && typeof desktopClass.addInternalFrame$javax_swing_JInternalFrame$S$I$I === "function") {
+      desktopClass.addInternalFrame$javax_swing_JInternalFrame$S$I$I(frame, title, width, height);
+      return;
+    }
+    throw new Error("Jalview Desktop.addInternalFrame is required to register the msaexpor child window.");
+  }
+
+  function clazzClass(name) {
+    if (!window.Clazz || typeof window.Clazz._4Name !== "function") return null;
+    return window.Clazz._4Name(name, null, null, true) || window.Clazz._4Name(name);
+  }
+
+  function clazzNew(method, args) {
+    const ctor = window.Clazz && typeof window.Clazz.new_ === "function"
+      ? window.Clazz.new_.bind(window.Clazz)
+      : (typeof window.Clazz_new_ === "function" ? window.Clazz_new_ : null);
+    if (!ctor || !method) return null;
+    return ctor(method, args || []);
+  }
+
+  function awtColor(red, green, blue) {
+    const colorClass = clazzClass("java.awt.Color");
+    if (!colorClass) return null;
+    return clazzNew(colorClass.c$$I$I$I, [red, green, blue]);
+  }
+
+  function normalizeMSAExportSettings(settings) {
+    const raw = settings && typeof settings === "object" ? settings : {};
+    const scale = [1, 2, 5, 10].includes(Number(raw.scale)) ? Number(raw.scale) : 2;
+    return {
+      scale,
+      cellWidth: Math.max(1, Math.round(Number(raw.cellWidth) || 9)),
+      cellHeight: Math.max(1, Math.round(Number(raw.cellHeight) || 13)),
+      showPHgoCoordinates: !!raw.showPHgoCoordinates,
+      showLengthRatio: !!raw.showLengthRatio,
+      showLengthPercent: !!raw.showLengthPercent,
+      showAlignmentColumnNumbers: raw.showAlignmentColumnNumbers !== false,
+      columnNumberInterval: Math.max(1, Math.round(Number(raw.columnNumberInterval) || 20)),
+      showRightResidueNumbers: !!raw.showRightResidueNumbers || !!raw.useAdvancedLayoutScript,
+      showGroups: raw.showGroups !== false,
+      showFeatures: raw.showFeatures !== false,
+      useAdvancedLayoutScript: !!raw.useAdvancedLayoutScript
+    };
+  }
+
+  function rowLengthStatsFromSequence(seq) {
+    const text = String(sequenceText(seq) || "");
+    let last = -1;
+    for (let i = text.length - 1; i >= 0; i -= 1) {
+      const ch = text.charAt(i);
+      if (ch !== "-" && ch !== "." && !/\s/.test(ch)) {
+        last = i;
+        break;
+      }
+    }
+    let residues = 0;
+    let total = 0;
+    for (let i = 0; i < text.length; i += 1) {
+      const ch = text.charAt(i);
+      if (/\s/.test(ch)) continue;
+      total += 1;
+      if (ch === "-" || ch === ".") continue;
+      if (ch === "*" && i === last) continue;
+      residues += 1;
+    }
+    return { residues, total, percent: total ? residues / total * 100 : 0 };
+  }
+
+  function exportRowLabel(seq, index, settings) {
+    const parts = [];
+    const name = sequenceName(seq) || `row ${index + 1}`;
+    if (settings.showPHgoCoordinates && window.__PHGOJalviewBridgeAPI && window.__PHGOJalviewBridgeAPI.displayPrefixForSequence) {
+      const prefix = window.__PHGOJalviewBridgeAPI.displayPrefixForSequence(sequenceTaxonID(seq), name, index);
+      if (prefix) parts.push(prefix);
+    }
+    parts.push(name);
+    if (settings.showLengthRatio || settings.showLengthPercent) {
+      const stats = rowLengthStatsFromSequence(seq);
+      if (settings.showLengthRatio) parts.push(`${stats.residues}/${stats.total}`);
+      if (settings.showLengthPercent) parts.push(`${stats.percent.toFixed(1)}%`);
+    }
+    return parts.filter(Boolean).join(" ");
+  }
+
+  function residueNumberAtExportEnd(seq, startBoundary, endBoundary) {
+    if (!seq) return "";
+    const text = String(sequenceText(seq) || "");
+    const start = Math.max(0, Number(startBoundary) || 0);
+    const end = Math.min(text.length, Math.max(start, Number(endBoundary) || 0));
+    for (let column = end - 1; column >= start; column -= 1) {
+      const ch = text.charAt(column);
+      if (ch === "-" || ch === "." || /\s/.test(ch)) continue;
+      try {
+        if (typeof seq.findPosition$I === "function") return String(seq.findPosition$I(column));
+      } catch (_error) {
+        break;
+      }
+      return String(column + 1);
+    }
+    return "";
+  }
+
+  function blockRowsToIndexes(block, alignmentHeight) {
+    const rows = Array.isArray(block && block.rows) ? block.rows : [];
+    const out = [];
+    const seen = new Set();
+    for (const row of rows) {
+      const index = Number(row && row.index);
+      if (!Number.isInteger(index) || index < 0 || index >= alignmentHeight || seen.has(index)) continue;
+      seen.add(index);
+      out.push(index);
+    }
+    return out;
+  }
+
+  function setComponentSize(component, width, height) {
+    if (!component) return;
+    try {
+      if (typeof component.setSize$I$I === "function") component.setSize$I$I(width, height);
+    } catch (_error) {
+      // Component size is a drawing hint only; continue with the existing size if SwingJS rejects it.
+    }
+  }
+
+  function componentSize(component) {
+    if (!component) return { width: 0, height: 0 };
+    let width = 0;
+    let height = 0;
+    try {
+      if (typeof component.getWidth$ === "function") width = Number(component.getWidth$()) || 0;
+      if (typeof component.getHeight$ === "function") height = Number(component.getHeight$()) || 0;
+    } catch (_error) {
+      return { width: 0, height: 0 };
+    }
+    return { width, height };
+  }
+
+  function renderMSAExportScene(settings, layout) {
+    const frame = mainAlignmentFrame(null);
+    const alignPanel = frame && frame.alignPanel;
+    const viewport = mainViewport(frame);
+    const alignment = mainAlignment(frame);
+    if (!alignPanel || !viewport || !alignment) {
+      throw new Error("Jalview alignment is not ready for MSA export rendering.");
+    }
+    const seqPanel = typeof alignPanel.getSeqPanel$ === "function" ? alignPanel.getSeqPanel$() : alignPanel.seqPanel;
+    const seqCanvas = seqPanel && seqPanel.seqCanvas;
+    const idPanel = typeof alignPanel.getIdPanel$ === "function" ? alignPanel.getIdPanel$() : alignPanel.idPanel;
+    const idCanvas = idPanel && (typeof idPanel.getIdCanvas$ === "function" ? idPanel.getIdCanvas$() : idPanel.idCanvas);
+    if (!seqCanvas || !idCanvas) {
+      throw new Error("Jalview sequence and ID canvases are not ready for MSA export rendering.");
+    }
+    const imageClass = clazzClass("java.awt.image.BufferedImage");
+    if (!imageClass) throw new Error("SwingJS BufferedImage is not available for MSA export rendering.");
+    const exportSettings = normalizeMSAExportSettings(settings);
+    const blocks = Array.isArray(layout && layout.blocks) ? layout.blocks : [];
+    if (blocks.length === 0) throw new Error("No layout blocks to render.");
+    const alignmentHeight = Number(primitiveValue(callValue(alignment, ["getHeight$"]))) || alignmentSequences(frame).length;
+    const renderedBlocks = blocks.map((block) => ({ block, indexes: blockRowsToIndexes(block, alignmentHeight) }));
+    if (renderedBlocks.every((entry) => entry.indexes.length === 0)) {
+      throw new Error("No renderable MSA rows in the export layout.");
+    }
+    const charWidthBefore = Number(primitiveValue(callValue(viewport, ["getCharWidth$"]))) || exportSettings.cellWidth;
+    const charHeightBefore = Number(primitiveValue(callValue(viewport, ["getCharHeight$"]))) || exportSettings.cellHeight;
+    try {
+      if (typeof viewport.setCharWidth$I === "function") viewport.setCharWidth$I(exportSettings.cellWidth);
+      if (typeof viewport.setCharHeight$I === "function") viewport.setCharHeight$I(exportSettings.cellHeight);
+    } catch (error) {
+      debug("msaexpor-char-size-failed", { message: formatValue(error) });
+    }
+    const charWidth = Number(primitiveValue(callValue(viewport, ["getCharWidth$"]))) || exportSettings.cellWidth;
+    const charHeight = Number(primitiveValue(callValue(viewport, ["getCharHeight$"]))) || exportSettings.cellHeight;
+    const topNumberHeight = exportSettings.showAlignmentColumnNumbers ? Math.max(18, charHeight + 7) : 4;
+    const blockGap = 12;
+    const margin = 14;
+    const rightNumberWidth = exportSettings.showRightResidueNumbers ? 52 : 0;
+    let scratch = null;
+    let scratchGraphics = null;
+    let fontMetrics = null;
+    try {
+      scratch = clazzNew(imageClass.c$$I$I$I, [16, 16, 1]);
+      scratchGraphics = scratch && scratch.getGraphics$();
+      if (scratchGraphics) {
+        scratchGraphics.setFont$java_awt_Font(viewport.getFont$());
+        fontMetrics = scratchGraphics.getFontMetrics$();
+      }
+    } catch (_error) {
+      fontMetrics = null;
+    } finally {
+      if (scratchGraphics && typeof scratchGraphics.dispose$ === "function") {
+        try { scratchGraphics.dispose$(); } catch (_error) {}
+      }
+    }
+    let leftLabelWidth = 96;
+    for (const entry of renderedBlocks) {
+      for (const index of entry.indexes) {
+        const seq = alignment.getSequenceAt$I(index);
+        const label = exportRowLabel(seq, index, exportSettings);
+        const measured = fontMetrics && typeof fontMetrics.stringWidth$S === "function" ? fontMetrics.stringWidth$S(label) : label.length * 7;
+        leftLabelWidth = Math.max(leftLabelWidth, measured + 12);
+      }
+    }
+    leftLabelWidth = Math.min(420, Math.ceil(leftLabelWidth));
+    const maxBlockColumns = Math.max(1, ...renderedBlocks.map((entry) => Number(entry.block.alignmentWidthForNumbering || entry.block.visibleColumnCount || 0)));
+    const gridWidth = maxBlockColumns * charWidth;
+    const width = Math.ceil(margin * 2 + leftLabelWidth + gridWidth + rightNumberWidth);
+    const height = Math.ceil(margin * 2 + renderedBlocks.reduce((sum, entry) => {
+      return sum + topNumberHeight + entry.indexes.length * charHeight + blockGap;
+    }, 0) - blockGap);
+    const pixelWidth = Math.ceil(width * exportSettings.scale);
+    const pixelHeight = Math.ceil(height * exportSettings.scale);
+    const maxPixels = 160000000;
+    if (pixelWidth * pixelHeight > maxPixels) {
+      throw new Error(`MSA export is too large: ${pixelWidth} x ${pixelHeight} pixels.`);
+    }
+    const bridge = window.__PHGOJalviewBridgeAPI || {};
+    const previousExportSettings = bridge.__msaexporRenderSettings;
+    const previousExportActive = window.__PHGO_MSAEXPOR_RENDER_ACTIVE__;
+    const previousIdSize = componentSize(idCanvas);
+    const previousSeqSize = componentSize(seqCanvas);
+    const image = clazzNew(imageClass.c$$I$I$I, [pixelWidth, pixelHeight, 1]);
+    if (!image) throw new Error("Unable to allocate SwingJS export image.");
+    let graphics = null;
+    try {
+      bridge.__msaexporRenderSettings = exportSettings;
+      window.__PHGO_MSAEXPOR_RENDER_ACTIVE__ = true;
+      graphics = image.getGraphics$();
+      if (!graphics) throw new Error("Unable to create SwingJS export graphics.");
+      if (exportSettings.scale !== 1 && typeof graphics.scale$D$D === "function") {
+        graphics.scale$D$D(exportSettings.scale, exportSettings.scale);
+      }
+      if (viewport.antiAlias && clazzClass("java.awt.RenderingHints")) {
+        // SeqCanvas applies the exact Jalview anti-aliasing hints during its own draw call.
+      }
+      graphics.setFont$java_awt_Font(viewport.getFont$());
+      const white = awtColor(255, 255, 255);
+      const black = awtColor(0, 0, 0);
+      if (white) graphics.setColor$java_awt_Color(white);
+      graphics.fillRect$I$I$I$I(0, 0, width, height);
+      setComponentSize(idCanvas, leftLabelWidth, height);
+      setComponentSize(seqCanvas, gridWidth, height);
+      let y = margin;
+      for (const entry of renderedBlocks) {
+        const block = entry.block;
+        const indexes = entry.indexes;
+        if (indexes.length === 0) continue;
+        const start = Math.max(0, Math.floor(Number(block.columnStartBoundary) || 0));
+        const visibleCount = Math.max(0, Math.floor(Number(block.visibleColumnCount) || 0));
+        const endExclusive = Math.max(start, Math.floor(Number(block.columnEndBoundary) || (start + visibleCount)));
+        const drawEnd = Math.max(start, endExclusive - 1);
+        const gridX = margin + leftLabelWidth;
+        if (black) graphics.setColor$java_awt_Color(black);
+        if (exportSettings.showAlignmentColumnNumbers) {
+          const numberingColumns = Math.max(visibleCount, Math.floor(Number(block.alignmentWidthForNumbering) || visibleCount));
+          for (let col = start + 1; col <= start + numberingColumns; col += 1) {
+            if (col % exportSettings.columnNumberInterval !== 0) continue;
+            const text = String(col);
+            const textWidth = fontMetrics && typeof fontMetrics.stringWidth$S === "function" ? fontMetrics.stringWidth$S(text) : text.length * 7;
+            const x = gridX + Math.round((col - start - 0.5) * charWidth) - Math.round(textWidth / 2);
+            graphics.drawString$S$I$I(text, x, y + charHeight);
+          }
+        }
+        const rowStartY = y + topNumberHeight;
+        for (let rowIndex = 0; rowIndex < indexes.length; rowIndex += 1) {
+          const seqIndex = indexes[rowIndex];
+          const rowY = rowStartY + rowIndex * charHeight;
+          graphics.translate$I$I(margin, rowY);
+          idCanvas.drawIds$java_awt_Graphics2D$jalview_gui_AlignViewport$I$I$java_util_List(graphics, viewport, seqIndex, seqIndex, null);
+          graphics.translate$I$I(-margin, -rowY);
+          if (endExclusive > start) {
+            graphics.translate$I$I(gridX, rowY);
+            seqCanvas.drawPanel$java_awt_Graphics$I$I$I$I$I(graphics, start, drawEnd, seqIndex, seqIndex, 0);
+            graphics.translate$I$I(-gridX, -rowY);
+          }
+          if (exportSettings.showRightResidueNumbers) {
+            const seq = alignment.getSequenceAt$I(seqIndex);
+            const text = residueNumberAtExportEnd(seq, start, endExclusive);
+            if (text) {
+              if (black) graphics.setColor$java_awt_Color(black);
+              const textWidth = fontMetrics && typeof fontMetrics.stringWidth$S === "function" ? fontMetrics.stringWidth$S(text) : text.length * 7;
+              const x = gridX + Math.max(visibleCount, Number(block.alignmentWidthForNumbering) || visibleCount) * charWidth + rightNumberWidth - textWidth - 8;
+              graphics.drawString$S$I$I(text, Math.round(x), rowY + charHeight - Math.max(2, Math.floor(charHeight / 5)));
+            }
+          }
+        }
+        y += topNumberHeight + indexes.length * charHeight + blockGap;
+      }
+    } finally {
+      bridge.__msaexporRenderSettings = previousExportSettings;
+      if (previousExportActive) {
+        window.__PHGO_MSAEXPOR_RENDER_ACTIVE__ = previousExportActive;
+      } else {
+        delete window.__PHGO_MSAEXPOR_RENDER_ACTIVE__;
+      }
+      if (graphics && typeof graphics.dispose$ === "function") {
+        try { graphics.dispose$(); } catch (_error) {}
+      }
+      try {
+        if (typeof viewport.setCharWidth$I === "function") viewport.setCharWidth$I(charWidthBefore);
+        if (typeof viewport.setCharHeight$I === "function") viewport.setCharHeight$I(charHeightBefore);
+        if (previousIdSize.width > 0 && previousIdSize.height > 0) setComponentSize(idCanvas, previousIdSize.width, previousIdSize.height);
+        if (previousSeqSize.width > 0 && previousSeqSize.height > 0) setComponentSize(seqCanvas, previousSeqSize.width, previousSeqSize.height);
+      } catch (error) {
+        debug("msaexpor-char-restore-failed", { message: formatValue(error) });
+      }
+    }
+    const canvas = image._canvas || image._imgNode;
+    if (!canvas || typeof canvas.toDataURL !== "function") {
+      throw new Error("SwingJS export image did not expose a canvas.");
+    }
+    const dataURL = canvas.toDataURL("image/png");
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" data-msaexpor="1" data-msaexpor-renderer="jalview-native"><image href="${dataURL}" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="none"/></svg>`;
+    return { svg, width, height, raster: true, source: "jalview-native", blocks: blocks.length };
+  }
+
+  function createSwingChildWindow(title, width, height) {
+    const frameClass = clazzClass("javax.swing.JInternalFrame");
+    const panelClass = clazzClass("javax.swing.JPanel");
+    const desktopClass = clazzClass("jalview.gui.Desktop");
+    const newJavaObject = window.Clazz && typeof window.Clazz.new_ === "function"
+      ? window.Clazz.new_.bind(window.Clazz)
+      : (typeof window.Clazz_new_ === "function" ? window.Clazz_new_ : null);
+    if (!frameClass || !panelClass || !desktopClass || !newJavaObject) {
+      throw new Error("SwingJS internal-frame classes are not ready.");
+    }
+    const frame = newJavaObject(frameClass.c$$S$Z$Z$Z$Z, [title, true, true, true, true]);
+    const panel = newJavaObject(panelClass.c$, []);
+    panel.__phgoMSAExportPanel = true;
+    frame.__phgoMSAExportFrame = true;
+    const attached = attachPanelToFrame(frame, panel);
+    if (!attached) {
+      throw new Error("SwingJS child-window content pane is not available for msaexpor.");
+    }
+    addFrameToJalviewDesktop(desktopClass, frame, title, width, height);
+    return { frame, panel };
+  }
+
+  function frameDOMNodeByTitle(title) {
+    const wanted = String(title || "").trim();
+    const candidates = Array.from(document.querySelectorAll(".swingjs-window, [role='dialog'], [id*='InternalFrame'], [id*='FrameUI'], [id*='RootPaneUI'], [id*='LayeredPaneUI']"));
+    const visible = candidates.filter((node) => {
+      const rect = node.getBoundingClientRect();
+      const style = window.getComputedStyle(node);
+      return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+    });
+    const titled = visible.find((node) => !wanted || String(node.textContent || "").includes(wanted));
+    if (titled) return titled;
+    const textNodes = Array.from(document.querySelectorAll("body *")).filter((node) => {
+      const rect = node.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && String(node.textContent || "").trim() === wanted;
+    });
+    for (const node of textNodes) {
+      let parent = node.parentElement;
+      while (parent && parent !== document.body) {
+        if (parent.matches(".swingjs-window, [role='dialog'], [id*='InternalFrame'], [id*='FrameUI'], [id*='RootPaneUI'], [id*='LayeredPaneUI']")) {
+          return parent;
+        }
+        parent = parent.parentElement;
+      }
+    }
+    return null;
+  }
+
+  function panelDOMNode(panel, frame, title) {
+    const candidates = [
+      panel && panel._j2sNode,
+      panel && panel._j2sObject,
+      panel && panel.domNode,
+      panel && panel.html5Applet,
+      panel && panel.ui && panel.ui.domNode,
+      panel && panel.ui && panel.ui.jqNode && panel.ui.jqNode[0],
+      frame && frame._j2sNode,
+      frame && frame._j2sObject,
+      frame && frame.domNode,
+      frame && frame.ui && frame.ui.domNode,
+      frame && frame.ui && frame.ui.jqNode && frame.ui.jqNode[0],
+      frameDOMNodeByTitle(title)
+    ];
+    for (const candidate of candidates) {
+      if (candidate instanceof HTMLElement) return candidate;
+    }
+    const nodes = Array.from(document.querySelectorAll("[id*='JPanel'], .swingjs-component, [data-component]"));
+    return nodes.reverse().find((node) => node instanceof HTMLElement && node.id && node.offsetParent !== null) || null;
+  }
+
+  function configureMSAExportFrameWindow(frameWindow, bridge) {
+    if (!frameWindow) return;
+    frameWindow.__PHGO_MSAEXPOR_PARENT_WINDOW__ = window;
+    frameWindow.__PHGOJalviewBridgeAPI = bridge || window.__PHGOJalviewBridgeAPI;
+    if (typeof window.__PHGO_SAVE_BLOB__ === "function") {
+      frameWindow.__PHGO_SAVE_BLOB__ = (blob, filename, options) => window.__PHGO_SAVE_BLOB__(blob, filename, options);
+    } else {
+      delete frameWindow.__PHGO_SAVE_BLOB__;
+    }
+  }
+
+  function writeMSAExportIframeDocument(doc) {
+    doc.open();
+    doc.write("<!doctype html><html class=\"phgo-msaexpor-doc\"><head><meta charset=\"utf-8\"><link rel=\"stylesheet\" href=\"/assets/msaexpor/style.css\"><script>window.__PHGOmsaexporLoadError='';window.addEventListener('error',function(event){window.__PHGOmsaexporLoadError=(event&&event.message)||'MSA export iframe script error';});window.addEventListener('unhandledrejection',function(event){window.__PHGOmsaexporLoadError=(event&&event.reason&&event.reason.message)||String(event&&event.reason||'MSA export iframe rejected');});</script><script src=\"/assets/msaexpor/pdf.js\" onerror=\"window.__PHGOmsaexporLoadError='Failed to load /assets/msaexpor/pdf.js';\"></script><script src=\"/assets/msaexpor/index.js\" onerror=\"window.__PHGOmsaexporLoadError='Failed to load /assets/msaexpor/index.js';\"></script></head><body><div class=\"phgo-msaexpor-root\"></div></body></html>");
+    doc.close();
+  }
+
+  function waitForMSAExportFrameRuntime(iframe) {
+    return new Promise((resolve, reject) => {
+      const started = Date.now();
+      const tick = () => {
+        const frameWindow = iframe.contentWindow;
+        const doc = iframe.contentDocument || frameWindow && frameWindow.document;
+        if (frameWindow && frameWindow.PHGOmsaexpor && typeof frameWindow.PHGOmsaexpor.renderApp === "function" && doc && doc.querySelector(".phgo-msaexpor-root")) {
+          resolve({ frameWindow, doc });
+          return;
+        }
+        const loadError = frameWindow && frameWindow.__PHGOmsaexporLoadError;
+        if (loadError) {
+          reject(new Error(loadError));
+          return;
+        }
+        if (Date.now() - started > 8000) {
+          reject(new Error("Timed out loading the MSA export iframe runtime."));
+          return;
+        }
+        window.setTimeout(tick, 25);
+      };
+      tick();
+    });
+  }
+
+  async function mountMSAExportHost(hostParent, session, bridge) {
+    let iframe = hostParent.querySelector("iframe.phgo-msaexpor-frame");
+    if (!iframe) {
+      hostParent.innerHTML = "";
+      hostParent.classList.add("phgo-msaexpor-window-host");
+      iframe = document.createElement("iframe");
+      iframe.className = "phgo-msaexpor-frame";
+      iframe.title = "PHgo MSA export image settings";
+      iframe.setAttribute("src", "about:blank");
+      hostParent.appendChild(iframe);
+    }
+    const doc = iframe.contentDocument || iframe.contentWindow && iframe.contentWindow.document;
+    if (!doc) throw new Error("MSA export iframe is not ready.");
+    configureMSAExportFrameWindow(iframe.contentWindow, bridge);
+    if (!doc.body || !doc.querySelector(".phgo-msaexpor-root") || !iframe.contentWindow.PHGOmsaexpor || typeof iframe.contentWindow.PHGOmsaexpor.renderApp !== "function") {
+      writeMSAExportIframeDocument(doc);
+      configureMSAExportFrameWindow(iframe.contentWindow, bridge);
+    }
+    const runtime = await waitForMSAExportFrameRuntime(iframe);
+    configureMSAExportFrameWindow(runtime.frameWindow, bridge);
+    const host = runtime.doc.querySelector(".phgo-msaexpor-root");
+    if (!host) throw new Error("MSA export iframe host is not ready.");
+    runtime.frameWindow.PHGOmsaexpor.renderApp(host, { bridge, session, parentWindow: window });
+    return { iframe, host };
+  }
+
+  async function openMSAExportImageWindow() {
+    const session = currentSession();
+    if (!session) throw new Error("MSA export requires an active PHgo session.");
+    closeAllSwingMenus("msaexpor-open");
+    if (window.__PHGOMSAExportWindow && window.__PHGOMSAExportWindow.host && document.contains(window.__PHGOMSAExportWindow.host)) {
+      if (window.__PHGOMSAExportWindow.frame && typeof window.__PHGOMSAExportWindow.frame.toFront$ === "function") {
+        try { window.__PHGOMSAExportWindow.frame.toFront$(); } catch (_error) {}
+      }
+      const mounted = await mountMSAExportHost(window.__PHGOMSAExportWindow.hostParent, session, window.__PHGOJalviewBridgeAPI);
+      window.__PHGOMSAExportWindow.host = mounted.host;
+      window.__PHGOMSAExportWindow.iframe = mounted.iframe;
+      return window.__PHGOMSAExportWindow;
+    }
+    let frame;
+    let hostParent;
+    try {
+      const created = createSwingChildWindow("Export image...", 760, 620);
+      frame = created.frame;
+      hostParent = panelDOMNode(created.panel, frame, "Export image...");
+    } catch (error) {
+      debug("msaexpor-swing-window-failed", { message: formatValue(error) });
+      throw error;
+    }
+    if (!hostParent) throw new Error("Unable to locate the Jalview/SwingJS child window host required by msaexpor.");
+    const mounted = await mountMSAExportHost(hostParent, session, window.__PHGOJalviewBridgeAPI);
+    window.__PHGOMSAExportWindow = { frame, host: mounted.host, iframe: mounted.iframe, hostParent };
+    return window.__PHGOMSAExportWindow;
+  }
+
+  async function openMSAExportImageWindowSafe() {
+    try {
+      return await openMSAExportImageWindow();
+    } catch (error) {
+      const message = formatValue(error);
+      debug("msaexpor-open-failed", { message });
+      showToast(`MSA export window failed: ${message}`, false);
+      throw error;
+    }
+  }
+
   async function installMSASelectionBridge() {
     try {
       await loadMSASelection();
@@ -962,7 +1489,7 @@
         node.classList.remove("ui-state-active", "ui-state-focus");
       });
     } catch (error) {
-      debug("hide-menus-failed", { reason, method: "dom-menu-close-fallback", message: formatValue(error) });
+      debug("hide-menus-failed", { reason, method: "dom-menu-close-secondary", message: formatValue(error) });
     }
   }
 
@@ -1034,8 +1561,11 @@
       selectionStateForSequence,
       toggleSelectionForSequence,
       collectMSAState,
+      renderMSAExportScene,
       saveMSAStateNow,
       saveMSAStateManual,
+      openMSAExportImageWindow,
+      openMSAExportImageWindowSafe,
       scheduleMSAStateSave,
       closeAllSwingMenus,
       invalidateIdCanvas,

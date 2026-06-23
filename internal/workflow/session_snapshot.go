@@ -745,15 +745,13 @@ func readTreeSnapshotViewerPayload(baseDir string) (phylo.ViewerPayload, bool) {
 
 func treeSettingsFromSnapshotPanel(panel tui.CanvasTreePanelState) phylo.TreeSettings {
 	return phylo.NormalizeTreeSettings(phylo.TreeSettings{
-		DisplayNameSource:        strings.TrimSpace(panel.DisplayNameSource),
-		ShowCanvasCoordinates:    panel.ShowCanvasCoordinates,
-		ShowCanvasCoordinatesSet: panel.ShowCanvasCoordinatesSet,
-		ConversionTarget:         phylo.ConversionTarget(strings.TrimSpace(panel.ConversionTarget)),
-		ConversionSkipUnselect:   panel.ConversionSkipUnselect,
-		AlignmentMethod:          phylo.AlignmentMethod(strings.TrimSpace(panel.AlignmentMethod)),
-		AlignmentParams:          cloneTreeParamMap(panel.AlignmentParams),
-		TreeMethod:               phylo.TreeMethod(strings.TrimSpace(panel.TreeMethod)),
-		TreeParams:               cloneTreeParamMap(panel.TreeParams),
+		DisplayNameSource:      strings.TrimSpace(panel.DisplayNameSource),
+		ConversionTarget:       phylo.ConversionTarget(strings.TrimSpace(panel.ConversionTarget)),
+		ConversionSkipUnselect: panel.ConversionSkipUnselect,
+		AlignmentMethod:        phylo.AlignmentMethod(strings.TrimSpace(panel.AlignmentMethod)),
+		AlignmentParams:        cloneTreeParamMap(panel.AlignmentParams),
+		TreeMethod:             phylo.TreeMethod(strings.TrimSpace(panel.TreeMethod)),
+		TreeParams:             cloneTreeParamMap(panel.TreeParams),
 	})
 }
 

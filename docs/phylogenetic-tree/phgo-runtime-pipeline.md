@@ -140,9 +140,9 @@ The viewer uses this metadata to map `PHGOT...` Newick leaves to the current dis
 Canvas display names are built in two layers:
 
 - the base name comes from the selected Show column/display-name source or the editable Canvas `display_name` cell
-- the default-on `Show PHgo row coordinates` option prefixes tree/MSA metadata labels with `[canvas item number,row number within item]`
+- PHgo always emits a separate `display_prefix` value with `[canvas item number,row number within item]`
 
-The coordinate prefix is not written back to Canvas table cells. It exists only in the tree/MSA metadata payload. PHgo no longer appends duplicate-label suffixes such as `[PHGOT000123]`; when users leave coordinate display enabled, the coordinate prefix is the normal visible disambiguation. If users disable it, PHgo respects the raw display names even when two leaves have the same text.
+The coordinate prefix is not written back to Canvas table cells. It exists only in the shared tree/MSA metadata payload. MSA always draws the prefix in Jalview's left ID list. Tree labels default to raw display names; Reactree's View > Labels > `Coord` toggle can show the prefix in the browser viewer without changing PHgo payloads or runtime artifacts. PHgo no longer appends duplicate-label suffixes such as `[PHGOT000123]`, and it respects raw display names even when two leaves have the same text.
 
 ## Alignment Methods
 
@@ -177,7 +177,7 @@ Minimum Evolution bootstrap is wired through MEGA's `TBootstrapMEThread` path in
 - compute: prepare selected sequences, run `mega-phgo-runtime` for MEGA alignment and tree inference
 - render: push the current payload/metadata to Reactree
 
-The first refresh in a live Canvas session is always a full compute refresh. After a `.pgo` Canvas snapshot is opened, the restored payload may be shown, but the first user-triggered `Refresh tree` is also always a full compute refresh; it must not reuse snapshot-restored alignment/tree artifacts. Later refreshes may run render-only only when the sole change since the last successful compute is a display label change, including the Show PHgo row coordinates option.
+The first refresh in a live Canvas session is always a full compute refresh. After a `.pgo` Canvas snapshot is opened, the restored payload may be shown, but the first user-triggered `Refresh tree` is also always a full compute refresh; it must not reuse snapshot-restored alignment/tree artifacts. Later refreshes may run render-only only when the sole change since the last successful compute is a PHgo display label change, such as raw `display_name` edits or display-name source changes.
 
 The progress UI must make the active phase obvious: loading selected rows, preparing the runtime request, running `mega-phgo-runtime`, explicitly reporting render-only artifact reuse when applicable, and finally refreshing Reactree.
 
@@ -196,8 +196,8 @@ Recompute is not required when only these values change:
 
 - manual `display_name` edits
 - display-name bulk source changes that only relabel existing selected rows
-- the Show PHgo row coordinates display option
 - Reactree layout
+- Reactree `Coord` coordinate-label visibility
 - branch length visibility
 - bootstrap visibility
 - alignment panel visibility
@@ -218,9 +218,9 @@ The alignment fingerprint includes selected row identity, row order, sequence co
 
 The tree fingerprint includes the alignment output fingerprint, tree method, and tree parameters.
 
-The preview fingerprint includes display-name source, display names, the Show PHgo row coordinates option, and viewer options.
+The preview fingerprint includes display-name source, display names, display prefixes, and viewer options.
 
-The compute fingerprints deliberately exclude final `display_name` values, the display-name source selector, and the Show PHgo row coordinates option. This keeps the refresh rule aligned with the Canvas workflow: relabeling leaves should update the viewer payload and browser rendering without re-running the runtime.
+The compute fingerprints deliberately exclude final `display_name` values, the display-name source selector, display prefixes, and Reactree viewer-only options such as `Coord`. This keeps the refresh rule aligned with the Canvas workflow: relabeling leaves should update the viewer payload and browser rendering without re-running the runtime.
 
 Artifact reuse compares only computation settings and compute fingerprints. A run with the same selected rows, sequence content, target mode, alignment settings, tree settings, aligned FASTA, and Newick may be reused even when the metadata display names changed; the reused artifact set is rewritten with fresh metadata and viewer payload for the browser.
 

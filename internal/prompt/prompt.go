@@ -5961,7 +5961,6 @@ func buildCanvasTreePanel(items []tui.BlastRunItem, canvasItems []model.CanvasIt
 	treeMethods := treeByTarget[string(settings.ConversionTarget)]
 	hadPanelState := state.EnabledEver || state.Expanded || state.Focused || state.CurrentControl != 0 ||
 		strings.TrimSpace(state.DisplayNameSource) != "" ||
-		state.ShowCanvasCoordinatesSet ||
 		strings.TrimSpace(state.ConversionTarget) != "" ||
 		strings.TrimSpace(state.AlignmentMethod) != "" ||
 		strings.TrimSpace(state.TreeMethod) != "" ||
@@ -5969,10 +5968,6 @@ func buildCanvasTreePanel(items []tui.BlastRunItem, canvasItems []model.CanvasIt
 		len(state.TreeParams) > 0
 	if state.DisplayNameSource == "" {
 		state.DisplayNameSource = settings.DisplayNameSource
-	}
-	if !state.ShowCanvasCoordinatesSet {
-		state.ShowCanvasCoordinates = settings.ShowCanvasCoordinates
-		state.ShowCanvasCoordinatesSet = true
 	}
 	if strings.TrimSpace(state.ConversionTarget) == "" {
 		state.ConversionTarget = string(settings.ConversionTarget)
@@ -6015,10 +6010,6 @@ func buildCanvasTreePanel(items []tui.BlastRunItem, canvasItems []model.CanvasIt
 
 func treeSettingsWithPanelConversionState(settings phylo.TreeSettings, state tui.CanvasTreePanelState) phylo.TreeSettings {
 	settings = phylo.NormalizeTreeSettings(settings)
-	if state.ShowCanvasCoordinatesSet {
-		settings.ShowCanvasCoordinates = state.ShowCanvasCoordinates
-		settings.ShowCanvasCoordinatesSet = true
-	}
 	if strings.TrimSpace(state.ConversionTarget) != "" {
 		settings.ConversionTarget = phylo.ConversionTarget(strings.TrimSpace(state.ConversionTarget))
 	}
@@ -6214,15 +6205,13 @@ func canvasTreeMethodFromDefinition(def phylo.MethodDefinition, current map[stri
 
 func treeSettingsFromPanel(panel tui.CanvasTreePanelState) phylo.TreeSettings {
 	return phylo.NormalizeTreeSettings(phylo.TreeSettings{
-		DisplayNameSource:        strings.TrimSpace(panel.DisplayNameSource),
-		ShowCanvasCoordinates:    panel.ShowCanvasCoordinates,
-		ShowCanvasCoordinatesSet: panel.ShowCanvasCoordinatesSet,
-		ConversionTarget:         phylo.ConversionTarget(strings.TrimSpace(panel.ConversionTarget)),
-		ConversionSkipUnselect:   panel.ConversionSkipUnselect,
-		AlignmentMethod:          phylo.AlignmentMethod(strings.TrimSpace(panel.AlignmentMethod)),
-		AlignmentParams:          cloneStringMap(panel.AlignmentParams),
-		TreeMethod:               phylo.TreeMethod(strings.TrimSpace(panel.TreeMethod)),
-		TreeParams:               cloneStringMap(panel.TreeParams),
+		DisplayNameSource:      strings.TrimSpace(panel.DisplayNameSource),
+		ConversionTarget:       phylo.ConversionTarget(strings.TrimSpace(panel.ConversionTarget)),
+		ConversionSkipUnselect: panel.ConversionSkipUnselect,
+		AlignmentMethod:        phylo.AlignmentMethod(strings.TrimSpace(panel.AlignmentMethod)),
+		AlignmentParams:        cloneStringMap(panel.AlignmentParams),
+		TreeMethod:             phylo.TreeMethod(strings.TrimSpace(panel.TreeMethod)),
+		TreeParams:             cloneStringMap(panel.TreeParams),
 	})
 }
 

@@ -191,13 +191,7 @@ The tree viewer must use `display_name` as the base leaf label. It must not choo
 
 ## PHgo Row Coordinates
 
-The Tree settings page includes a checkbox directly under the `Show column` dropdown:
-
-```text
-Show PHgo row coordinates
-```
-
-This option is on by default. When enabled, the tree display label is:
+PHgo always sends row coordinate metadata with the shared tree/MSA payload. The payload keeps the raw/base `display_name` separate from `display_prefix`, where the prefix has this form:
 
 ```text
 [canvas item number,row number within item] display_name
@@ -209,9 +203,11 @@ Example:
 [1,13] Aco018382.1
 ```
 
-The coordinate prefix is display-only. For the tree viewer it is applied to the rendered display label. For the MSA viewer it is sent as separate `display_prefix` metadata and drawn only in Jalview's left sequence list; Jalview's real sequence name, right-click menu text, rename dialog value, and Apply name edit remain the raw base `display_name`. The PHgo MSA left sequence list always draws this text left-aligned immediately after the PHgo checkbox column, regardless of Jalview's right-align-ID setting, and it uses the raw sequence name instead of Jalview's sequence-limit display ID so generated suffixes such as `/1-564` are not shown. Turning the option off clears the prefix metadata and does not modify Canvas cells.
+The coordinate prefix is display-only and is not written back to Canvas cells. MSA always draws the prefix in Jalview's left sequence list; Jalview's real sequence name, right-click menu text, rename dialog value, and Apply name edit remain the raw base `display_name`. The PHgo MSA left sequence list always draws this text left-aligned immediately after the PHgo checkbox column, regardless of Jalview's right-align-ID setting, and it uses the raw sequence name instead of Jalview's sequence-limit display ID so generated suffixes such as `/1-564` are not shown.
 
-The Canvas left sidebar always prefixes each item title with `[item number]` independently of this option, so Canvas items remain identifiable even when the tree/MSA coordinate prefix is disabled.
+Tree labels default to the raw/base `display_name`. Reactree exposes a default-off `Coord` toggle in the View tab's Labels group, positioned between `Align` and the branch-label toggle. Enabling it renders tree labels with the `display_prefix`; disabling it leaves tree labels unprefixed. This is browser viewer state only and does not call PHgo refresh or change runtime artifacts.
+
+The Canvas left sidebar always prefixes each item title with `[item number]` independently of Reactree's `Coord` toggle, so Canvas items remain identifiable even when tree labels are unprefixed.
 
 ## Manual Display-Name Edits
 
@@ -233,7 +229,7 @@ The viewer should show an empty state for the current Canvas session until the f
 
 ## Refresh And Relabeling
 
-Changing the display-name source dropdown, manually editing the `display_name` column, or toggling `Show PHgo row coordinates` is a preview-only change. It updates the Canvas table and/or viewer payload metadata but must not rerun `mega-phgo-runtime` when the selected rows, sequence content, target mode, alignment method/parameters, and tree method/parameters are unchanged.
+Changing the display-name source dropdown or manually editing the `display_name` column is a preview-only change. It updates the Canvas table and/or viewer payload metadata but must not rerun `mega-phgo-runtime` when the selected rows, sequence content, target mode, alignment method/parameters, and tree method/parameters are unchanged. Toggling Reactree's `Coord` button is viewer state only and must not trigger PHgo refresh.
 
 Changing the selected rows, sequence content, target mode, skipped-row unselect behavior, alignment method/parameters, or tree method/parameters is a computation change and requires a runtime refresh.
 

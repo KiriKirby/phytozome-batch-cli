@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -118,6 +119,9 @@ func TestViewerAssetsIncludeJalviewBootstrapPage(t *testing.T) {
 	if !strings.Contains(html, `SwingJS.getApplet("JalviewJSEmbedded", window.Info)`) ||
 		!strings.Contains(html, `jalview_EMBEDDED: true`) ||
 		!strings.Contains(html, `/assets/jalviewjs/phgo-bridge.js`) ||
+		!strings.Contains(html, `/assets/msaexpor/style.css`) ||
+		!strings.Contains(html, `/assets/msaexpor/pdf.js`) ||
+		!strings.Contains(html, `/assets/msaexpor/index.js`) ||
 		!strings.Contains(html, `args: bridge.args`) ||
 		!strings.Contains(html, `window.__PHGOJalviewInitialState = null`) ||
 		!strings.Contains(html, `main: "jalview.bin.Jalview"`) ||
@@ -164,7 +168,7 @@ func TestViewerAssetsIncludePHgoJalviewBridge(t *testing.T) {
 		!strings.Contains(js, `function hideMenusFromOutsideEvent(event)`) ||
 		!strings.Contains(js, `function closeAllSwingMenus(reason)`) ||
 		!strings.Contains(js, `j2smenu.collapseAll`) ||
-		!strings.Contains(js, `dom-menu-close-fallback`) ||
+		!strings.Contains(js, `dom-menu-close-secondary`) ||
 		!strings.Contains(js, `node.style.removeProperty("visibility")`) ||
 		!strings.Contains(js, `document.addEventListener("mousedown", hideMenusFromOutsideEvent, true)`) ||
 		!strings.Contains(js, `document.addEventListener("keydown", hideMenusOnEscape, true)`) ||
@@ -182,6 +186,35 @@ func TestViewerAssetsIncludePHgoJalviewBridge(t *testing.T) {
 		!strings.Contains(js, `await saveTask`) ||
 		!strings.Contains(js, `saveMSAStateNow`) ||
 		!strings.Contains(js, `saveMSAStateManual`) ||
+		!strings.Contains(js, `openMSAExportImageWindow`) ||
+		!strings.Contains(js, `openMSAExportImageWindowSafe`) ||
+		!strings.Contains(js, `MSA export window failed`) ||
+		!strings.Contains(js, `createSwingChildWindow`) ||
+		!strings.Contains(js, `attachPanelToFrame`) ||
+		!strings.Contains(js, `renderMSAExportScene`) ||
+		!strings.Contains(js, `java.awt.image.BufferedImage`) ||
+		!strings.Contains(js, `graphics.scale$D$D`) ||
+		!strings.Contains(js, `data-msaexpor-renderer="jalview-native"`) ||
+		!strings.Contains(js, `SwingJS child-window content pane is not available for msaexpor`) ||
+		!strings.Contains(js, `frameDOMNodeByTitle`) ||
+		!strings.Contains(js, `addFrameToJalviewDesktop`) ||
+		!strings.Contains(js, `Jalview Desktop.addInternalFrame is required`) ||
+		!strings.Contains(js, `function clazzClass(name)`) ||
+		!strings.Contains(js, `window.Clazz._4Name(name, null, null, true)`) ||
+		!strings.Contains(js, `getRootPane$`) ||
+		!strings.Contains(js, `rootPane.setContentPane$java_awt_Container(panel)`) ||
+		!strings.Contains(js, `getContentPane$`) ||
+		!strings.Contains(js, `add$java_awt_Component$O(panel, "Center")`) ||
+		!strings.Contains(js, `javax.swing.JInternalFrame`) ||
+		!strings.Contains(js, `frameClass.c$$S$Z$Z$Z$Z, [title, true, true, true, true]`) ||
+		!strings.Contains(js, `__PHGOMSAExportWindow`) ||
+		!strings.Contains(js, `runtime.frameWindow.PHGOmsaexpor.renderApp`) ||
+		!strings.Contains(js, `writeMSAExportIframeDocument`) ||
+		!strings.Contains(js, `/assets/msaexpor/pdf.js`) ||
+		!strings.Contains(js, `/assets/msaexpor/index.js`) ||
+		!strings.Contains(js, `waitForMSAExportFrameRuntime`) ||
+		!strings.Contains(js, `configureMSAExportFrameWindow`) ||
+		!strings.Contains(js, `__PHGO_MSAEXPOR_PARENT_WINDOW__`) ||
 		!strings.Contains(js, `displayPrefixForSequence`) ||
 		!strings.Contains(js, `/msa/state`) ||
 		!strings.Contains(js, `payloadUpdatedAt`) ||
@@ -202,8 +235,153 @@ func TestViewerAssetsIncludePHgoJalviewBridge(t *testing.T) {
 		strings.Contains(js, `desktop.instance.setBounds$I$I$I$I`) ||
 		strings.Contains(js, `relayoutComponentTree`) ||
 		strings.Contains(js, `alignment.querySelectorAll(".swingjs-window")`) ||
-		strings.Contains(js, `hideAlignmentDecorations(alignment)`) {
+		strings.Contains(js, `hideAlignmentDecorations(alignment)`) ||
+		strings.Contains(js, `msaexpor-content-pane-fallback`) ||
+		strings.Contains(js, `mounting into generated frame DOM`) ||
+		strings.Contains(js, `window.PHGOmsaexpor.renderApp`) ||
+		strings.Contains(js, `msaexpor asset is not loaded`) ||
+		strings.Contains(js, `addFrameDirectlyToDesktop`) ||
+		strings.Contains(js, `msaexpor-direct-desktop-add`) ||
+		strings.Contains(js, `collectResidueStyleForSequence`) ||
+		strings.Contains(js, `residue_colors`) ||
+		strings.Contains(js, `collectMSAStyle`) {
 		t.Fatalf("PHgo JalviewJS bridge does not expose the expected PHgo integration contract: %s", js)
+	}
+}
+
+func TestViewerAssetsIncludeMSAExporModule(t *testing.T) {
+	js, err := viewerAsset("assets/msaexpor/index.js")
+	if err != nil {
+		t.Fatalf("msaexpor index asset missing: %v", err)
+	}
+	body := string(js)
+	for _, want := range []string{
+		`window.PHGOmsaexpor`,
+		`parseAdvancedLayout`,
+		`buildAutomaticLayout`,
+		`validateModel`,
+		`No MSA rows to export`,
+		`No aligned MSA columns to export`,
+		`renderScene`,
+		`bridge.renderMSAExportScene(settings, layout)`,
+		`MSA export requires the Jalview native render bridge`,
+		`all-row shorthand must be the only item token`,
+		`if (itemsText === "~")`,
+		`parseAlignedFasta`,
+		`const sourceRows = sequenceRows.length > 0 ? sequenceRows : metadataRows`,
+		`generateScene({ scale: 1 })`,
+		`Preview needs refresh`,
+		`showSaveFilePicker`,
+		`MSA export requires the PHgo save bridge or the browser save-file picker`,
+		`finally`,
+		`writable.close`,
+		`canvas.toBlob`,
+		`2D canvas context is unavailable`,
+		`Generate`,
+		`Cancel`,
+		`Export canceled.`,
+		`Export file written.`,
+		`host.addEventListener(type, isolate)`,
+		`host.innerHTML = ""`,
+		`titleNumberFilenameBase`,
+		`DEFAULT_SETTINGS`,
+		`cellWidth: 9`,
+		`cellHeight: 13`,
+		`columnNumberInterval: 20`,
+		`showRightResidueNumbers = true`,
+		`PDF export requires bundled jspdf and svg2pdf.js assets`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("msaexpor index asset missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		`html2canvas`,
+		`getDisplayMedia`,
+		`toDataURL`,
+		`querySelector(".selection")`,
+		`fallbackToDownloadOnError`,
+		`downloadURL`,
+		`RESIDUE_COLORS`,
+		`DEFAULT_STYLE`,
+		`renderSVG`,
+		`host.addEventListener(type, isolate, true)`,
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("msaexpor index asset contains forbidden screenshot/UI capture path %q", forbidden)
+		}
+	}
+
+	css, err := viewerAsset("assets/msaexpor/style.css")
+	if err != nil {
+		t.Fatalf("msaexpor style asset missing: %v", err)
+	}
+	if !strings.Contains(string(css), `.msaexpor-app`) || !strings.Contains(string(css), `border-radius: 2px`) {
+		t.Fatalf("msaexpor style asset does not contain the expected PHgo/MSA theme")
+	}
+
+	pdf, err := viewerAsset("assets/msaexpor/pdf.js")
+	if err != nil {
+		t.Fatalf("msaexpor PDF asset missing: %v", err)
+	}
+	pdfBody := string(pdf)
+	if !strings.Contains(pdfBody, `PHGOmsaexporPDF`) ||
+		!strings.Contains(pdfBody, `PDF export failed: generated SVG is not valid XML`) ||
+		strings.Contains(pdfBody, `export{`) {
+		t.Fatalf("msaexpor PDF asset is not a browser global bundle")
+	}
+}
+
+func TestMSAExporJavaScriptUnitTests(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is not available")
+	}
+	cmd := exec.Command("node", "viewer_assets/assets/msaexpor/msaexpor.test.mjs")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("msaexpor JavaScript tests failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "msaexpor tests passed") {
+		t.Fatalf("msaexpor JavaScript tests did not report success: %s", output)
+	}
+}
+
+func TestReactreeViewerJavaScriptUnitTests(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is not available")
+	}
+	cmd := exec.Command("node", "../../tree-viewer/src/pgv.test.mjs")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Reactree viewer JavaScript tests failed: %v\n%s", err, output)
+	}
+}
+
+func TestVendoredJalviewMSAExportImageRoutesToMSAExpor(t *testing.T) {
+	for _, asset := range []string{
+		"assets/jalviewjs/swingjs/j2s/jalview/jbgui/GAlignFrame.js",
+		"assets/jalviewjs/swingjs/j2s/core/core_jalview.js",
+		"assets/jalviewjs/swingjs/j2s/core/corejalview.js",
+		"assets/jalviewjs/swingjs/j2s/core/corejvexamplefile.js",
+	} {
+		body, err := viewerAsset(asset)
+		if err != nil {
+			t.Fatalf("%s missing: %v", asset, err)
+		}
+		js := string(body)
+		for _, want := range []string{
+			`phgoExportImageMenuItem`,
+			`Export image...`,
+			`openMSAExportImageWindowSafe`,
+			`fileMenu.add$javax_swing_JMenuItem(phgoExportImageMenuItem)`,
+		} {
+			if !strings.Contains(js, want) {
+				t.Fatalf("%s missing msaexpor menu route %q", asset, want)
+			}
+		}
+		if strings.Contains(js, `fileMenu.add$javax_swing_JMenuItem(exportImageMenu);`+"\n"+`fileMenu.add$javax_swing_JMenuItem(exportFeatures);`) {
+			t.Fatalf("%s still adds the legacy export image submenu unconditionally", asset)
+		}
 	}
 }
 
@@ -280,6 +458,8 @@ func TestVendoredJalviewIdCanvasBundlesStayInSync(t *testing.T) {
 		js := string(body)
 		for _, want := range []string{
 			`phgoCheckboxColumnWidth$`,
+			`phgoIsMSAExportRenderActive$`,
+			`__PHGO_MSAEXPOR_RENDER_ACTIVE__`,
 			`phgoSelectionState$jalview_datamodel_SequenceI$I`,
 			`phgoDisplayPrefix$jalview_datamodel_SequenceI$I`,
 			`phgoDisplayName$jalview_datamodel_SequenceI`,
@@ -290,6 +470,8 @@ func TestVendoredJalviewIdCanvasBundlesStayInSync(t *testing.T) {
 			`var string=this.phgoDisplayLabel$jalview_datamodel_SequenceI$I`,
 			`getSequenceAsString$()`,
 			`residues + "/" + total`,
+			`if (this.phgoIsMSAExportRenderActive$()) return 0;`,
+			`if (this.phgoIsMSAExportRenderActive$()) return;`,
 			`this.drawPHgoCheckbox$java_awt_Graphics2D$jalview_datamodel_SequenceI$I$I$I$I$java_awt_Color`,
 			`getDisplayId$Z(false)`,
 		} {
@@ -302,9 +484,56 @@ func TestVendoredJalviewIdCanvasBundlesStayInSync(t *testing.T) {
 			`var string=sequence.getDisplayId$Z(alignViewport.getShowJVSuffix$());`,
 			`if (this.av.isRightAlignIds$()) {`,
 			`if (alignViewport.isRightAlignIds$()) {`,
+			`if (bridge && bridge.__msaexporRenderSettings) return 0;`,
+			`} else if (!(window.__PHGOJalviewBridgeAPI && window.__PHGOJalviewBridgeAPI.__msaexporRenderSettings)`,
 		} {
 			if strings.Contains(js, forbidden) {
 				t.Fatalf("%s still contains stale Jalview IdCanvas behavior %q", asset, forbidden)
+			}
+		}
+	}
+}
+
+func TestVendoredJalviewMSAExportNativeRendererSuppressesTransientUI(t *testing.T) {
+	for _, asset := range []string{
+		"assets/jalviewjs/swingjs/j2s/jalview/gui/SeqCanvas.js",
+		"assets/jalviewjs/swingjs/j2s/core/core_jalview.js",
+		"assets/jalviewjs/swingjs/j2s/core/corejalview.js",
+		"assets/jalviewjs/swingjs/j2s/core/corejvexamplefile.js",
+	} {
+		body, err := viewerAsset(asset)
+		if err != nil {
+			t.Fatalf("%s missing: %v", asset, err)
+		}
+		js := string(body)
+		for _, want := range []string{
+			`phgoIsMSAExportRenderActive$`,
+			`__PHGO_MSAEXPOR_RENDER_ACTIVE__`,
+			`if (!this.phgoIsMSAExportRenderActive$()) {`,
+			`p$1.drawSelectionGroup$java_awt_Graphics2D$I$I$I$I.apply`,
+			`var exportSettings=bridge && bridge.__msaexporRenderSettings;`,
+			`if (this.av.isShowSequenceFeatures$() && (!exportSettings || exportSettings.showFeatures !== false)) {`,
+			`}if (!this.phgoIsMSAExportRenderActive$() && this.av.cursorMode) {`,
+			`if (this.phgoIsMSAExportRenderActive$()) {`,
+			`return;`,
+			`var group=this.av.getSelectionGroup$();`,
+			`var cursor_ypos=this.cursorY;`,
+			`}if (!this.phgoIsMSAExportRenderActive$() && this.av.hasSearchResults$()) {`,
+			`if ((!exportSettings || exportSettings.showGroups !== false) && this.av.getAlignment$().getGroups$().size$() > 0 ) {`,
+			`if (this.phgoIsMSAExportRenderActive$() || !this.av.isShowAnnotation$()) {`,
+			`if (!this.phgoIsMSAExportRenderActive$() && this.av.isShowAnnotation$()) {`,
+		} {
+			if !strings.Contains(js, want) {
+				t.Fatalf("%s is missing native MSA export transient-UI suppression %q", asset, want)
+			}
+		}
+		for _, forbidden := range []string{
+			`}if (this.av.hasSearchResults$()) {`,
+			`if ((!exportSettings || exportSettings.showGroups !== false) && (this.av.getSelectionGroup$() != null  || this.av.getAlignment$().getGroups$().size$() > 0 )) {`,
+			`if (this.av.getSelectionGroup$() != null  || this.av.getAlignment$().getGroups$().size$() > 0 ) {` + "\n" + `this.drawGroupsBoundaries$java_awt_Graphics$I$I$I$I$I`,
+		} {
+			if strings.Contains(js, forbidden) {
+				t.Fatalf("%s still allows transient UI in native MSA export path %q", asset, forbidden)
 			}
 		}
 	}

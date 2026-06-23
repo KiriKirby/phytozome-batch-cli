@@ -34,9 +34,17 @@ $I$(2).Register$java_awt_Component$S(this, av.getSequenceSetId$());
 av.getRanges$().addPropertyChangeListener$jalview_viewmodel_ViewportListenerI(this);
 }, 1);
 
+Clazz.newMeth(C$, 'phgoIsMSAExportRenderActive$', function () {
+{
+var bridge=window.__PHGOJalviewBridgeAPI;
+return !!(window.__PHGO_MSAEXPOR_RENDER_ACTIVE__ || (bridge && bridge.__msaexporRenderSettings));
+}
+});
+
 Clazz.newMeth(C$, 'phgoCheckboxColumnWidth$', function () {
 {
 var bridge=window.__PHGOJalviewBridgeAPI;
+if (this.phgoIsMSAExportRenderActive$()) return 0;
 return bridge && bridge.phgoState && bridge.phgoState.session ? bridge.checkboxColumnWidth() : 0;
 }
 });
@@ -118,6 +126,28 @@ return "";
 });
 
 Clazz.newMeth(C$, 'phgoDisplayLabel$jalview_datamodel_SequenceI$I', function (seq, index) {
+{
+var bridge=window.__PHGOJalviewBridgeAPI;
+var settings=bridge && bridge.__msaexporRenderSettings;
+if (settings) {
+var exportParts=[];
+var exportPrefix=this.phgoDisplayPrefix$jalview_datamodel_SequenceI$I(seq, index);
+var exportName=this.phgoDisplayName$jalview_datamodel_SequenceI(seq);
+if (settings.showPHgoCoordinates && String(exportPrefix).length > 0) {
+exportParts.push(exportPrefix);
+}
+exportParts.push(exportName);
+if (settings.showLengthRatio || settings.showLengthPercent) {
+var ratio=this.phgoResidueRatio$jalview_datamodel_SequenceI(seq);
+var match=String(ratio).match(/^\s*([0-9]+\/[0-9]+)\s+([0-9.]+%)\s*$/);
+if (match) {
+if (settings.showLengthRatio) exportParts.push(match[1]);
+if (settings.showLengthPercent) exportParts.push(match[2]);
+}
+}
+return exportParts.join(" ");
+}
+}
 var prefix=this.phgoDisplayPrefix$jalview_datamodel_SequenceI$I(seq, index);
 var string=this.phgoDisplayName$jalview_datamodel_SequenceI(seq);
 if (String(prefix).length > 0) {
@@ -128,6 +158,7 @@ return string + this.phgoResidueRatio$jalview_datamodel_SequenceI(seq);
 
 Clazz.newMeth(C$, 'drawPHgoCheckbox$java_awt_Graphics2D$jalview_datamodel_SequenceI$I$I$I$I$java_awt_Color', function (g, s, index, y, charHeight, width, textColor) {
 {
+if (this.phgoIsMSAExportRenderActive$()) return;
 if (!width) return;
 var state=this.phgoSelectionState$jalview_datamodel_SequenceI$I(s, index);
 if (!state) return;
@@ -165,7 +196,7 @@ if ((this.searchResults != null ) && this.searchResults.contains$O(s) ) {
 g.setColor$java_awt_Color($I$(3).black);
 g.fillRect$I$I$I$I(0, y, this.getWidth$(), charHeight);
 g.setColor$java_awt_Color($I$(3).white);
-} else if ((this.av.getSelectionGroup$() != null ) && this.av.getSelectionGroup$().getSequences$java_util_Map(null).contains$O(s) ) {
+} else if (!this.phgoIsMSAExportRenderActive$() && (this.av.getSelectionGroup$() != null ) && this.av.getSelectionGroup$().getSequences$java_util_Map(null).contains$O(s) ) {
 g.setColor$java_awt_Color($I$(3).lightGray);
 g.fillRect$I$I$I$I(0, y, this.getWidth$(), charHeight);
 g.setColor$java_awt_Color($I$(3).white);
@@ -258,7 +289,7 @@ g.setFont$java_awt_Font(p$1.getHiddenFont$jalview_datamodel_SequenceI$jalview_gu
 }if (selection != null  && selection.contains$O(sequence) ) {
 currentColor=$I$(3).black;
 currentTextColor=$I$(3).white;
-} else if ((alignViewport.getSelectionGroup$() != null ) && alignViewport.getSelectionGroup$().getSequences$java_util_Map(null).contains$O(sequence) ) {
+} else if (!this.phgoIsMSAExportRenderActive$() && (alignViewport.getSelectionGroup$() != null ) && alignViewport.getSelectionGroup$().getSequences$java_util_Map(null).contains$O(sequence) ) {
 currentColor=$I$(3).lightGray;
 currentTextColor=$I$(3).black;
 } else {

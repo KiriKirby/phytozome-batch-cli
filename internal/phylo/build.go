@@ -215,11 +215,12 @@ func BuildFingerprints(records []InputRecord, settings TreeSettings, alignedFAST
 	writeSortedMap(treeDigest, settings.TreeParams)
 
 	writeString(previewDigest, settings.DisplayNameSource)
-	writeString(previewDigest, strconv.FormatBool(settings.ShowCanvasCoordinates))
 	for _, record := range records {
 		previewDigest.Write([]byte(record.TaxonID))
 		previewDigest.Write([]byte("\n"))
 		previewDigest.Write([]byte(record.DisplayName))
+		previewDigest.Write([]byte("\n"))
+		previewDigest.Write([]byte(record.DisplayPrefix))
 		previewDigest.Write([]byte("\n"))
 	}
 

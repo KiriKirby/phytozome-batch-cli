@@ -67,6 +67,45 @@ function sanitizeFilename(filename, fallback = 'download') {
   return trimmed || fallback;
 }
 
+function sanitizeFilenameBase(value, fallback = 'download') {
+  return sanitizeFilename(value, fallback)
+    .replace(/[<>:"/\\|?*\x00-\x1F]+/g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    || fallback;
+}
+
+export function titleNumberFilenameBase(title, fallback = '') {
+  const text = String(title || '').trim();
+  const afterPrefix = text.includes(':') ? text.slice(text.indexOf(':') + 1).trim() : text;
+  const match = afterPrefix.match(/(?:^|[^\d])(\d+(?:\.\d+)*)(?=$|[^\d.])/u)
+    || text.match(/(?:^|[^\d])(\d+(?:\.\d+)*)(?=$|[^\d.])/u);
+  return match ? sanitizeFilenameBase(match[1], fallback) : fallback;
+}
+
+export function defaultExportBaseName(payload, fallback = 'phgo-viewer') {
+  const fromPayload = titleNumberFilenameBase(payload?.title || payload?.metadata?.title || '');
+  if (fromPayload) return sanitizeFilenameBase(fromPayload, fallback);
+  if (typeof document !== 'undefined') {
+    const fromDocument = titleNumberFilenameBase(document.title || '');
+    if (fromDocument) return sanitizeFilenameBase(fromDocument, fallback);
+  }
+  const session = sanitizeFilenameBase(payload?.session_id || '', '');
+  return session || fallback;
+}
+
+function defaultedFilename(filename, payload, fallbackBase) {
+  const raw = String(filename || '').trim();
+  const dot = raw.lastIndexOf('.');
+  const ext = dot >= 0 ? raw.slice(dot) : '';
+  const base = dot >= 0 ? raw.slice(0, dot) : raw;
+  const genericNames = new Set(['', 'tree', 'phylotree', 'phylo-tree', 'phgo-tree', 'phgo-viewer', 'snapshot']);
+  if (!genericNames.has(base.toLowerCase())) {
+    return sanitizeFilename(raw, `${fallbackBase}${ext}`);
+  }
+  return `${defaultExportBaseName(payload, fallbackBase)}${ext}`;
+}
+
 function legacyDownloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
@@ -106,13 +145,15 @@ function pickerOptionsFor(filename, blobType, options = {}) {
 }
 
 export async function saveBlob(blob, filename, options = {}) {
-  const safeName = sanitizeFilename(filename);
+  const safeName = sanitizeFilenameBase(filename, 'download');
   if (supportsSavePicker()) {
+    let writable = null;
     try {
       const handle = await window.showSaveFilePicker(pickerOptionsFor(safeName, blob?.type, options));
-      const writable = await handle.createWritable();
+      writable = await handle.createWritable();
       await writable.write(blob);
       await writable.close();
+      writable = null;
       return true;
     } catch (error) {
       if (error?.name === 'AbortError') {
@@ -120,6 +161,14 @@ export async function saveBlob(blob, filename, options = {}) {
       }
       if (!options.fallbackToDownloadOnError) {
         throw error;
+      }
+    } finally {
+      if (writable && typeof writable.close === 'function') {
+        try {
+          await writable.close();
+        } catch {
+          // Ignore cleanup failures after the primary picker/write error.
+        }
       }
     }
   }
@@ -263,8 +312,11 @@ async function exportPDF({ svgString, width, height, baseName }) {
   });
 }
 
-export async function exportTreeGraphic({ format, svgString, width, height, bgColor, baseName = 'phylotree' }) {
-  const safeBaseName = sanitizeFilename(baseName, 'phylotree').replace(/\.[^.]+$/u, '');
+export async function exportTreeGraphic({ format, svgString, width, height, bgColor, baseName, payload }) {
+  const genericNames = new Set(['', 'tree', 'phylotree', 'phylo-tree', 'phgo-tree']);
+  const requested = String(baseName || '').trim().replace(/\.[^.]+$/u, '');
+  const rawBaseName = genericNames.has(requested.toLowerCase()) ? defaultExportBaseName(payload, 'phylotree') : requested;
+  const safeBaseName = sanitizeFilenameBase(rawBaseName, 'phylotree');
   if (format === 'svg') {
     return exportSVG({ svgString, baseName: safeBaseName });
   }
@@ -277,7 +329,7 @@ export async function exportTreeGraphic({ format, svgString, width, height, bgCo
   throw new Error(`Unsupported tree export format: ${format}`);
 }
 
-export function installPHGOSaveBridge(onError) {
+export function installPHGOSaveBridge(onError, defaultContext) {
   const handleError = (error) => {
     if (!error) {
       return;
@@ -287,9 +339,22 @@ export function installPHGOSaveBridge(onError) {
     }
     onError?.(error instanceof Error ? error.message : String(error));
   };
-  const saveBlobBridge = (blob, filename, options) => saveBlob(blob, filename, options);
-  const saveURLBridge = (url, filename, options) => saveURL(url, filename, options);
-  const exportTreeBridge = (payload) => exportTreeGraphic(payload);
+  const saveBlobBridge = (blob, filename, options) => {
+    const context = typeof defaultContext === 'function' ? defaultContext() : {};
+    return saveBlob(blob, defaultedFilename(filename, context?.payload, context?.baseName || 'phgo-viewer'), options);
+  };
+  const saveURLBridge = (url, filename, options) => {
+    const context = typeof defaultContext === 'function' ? defaultContext() : {};
+    return saveURL(url, defaultedFilename(filename, context?.payload, context?.baseName || 'phgo-viewer'), options);
+  };
+  const exportTreeBridge = (request) => {
+    const context = typeof defaultContext === 'function' ? defaultContext() : {};
+    return exportTreeGraphic({
+      ...(request || {}),
+      payload: request?.payload || context?.payload,
+      baseName: request?.baseName || context?.baseName,
+    });
+  };
   window.__PHGO_SAVE_BLOB__ = saveBlobBridge;
   window.__PHGO_SAVE_URL__ = saveURLBridge;
   window.__PHGO_EXPORT_TREE__ = exportTreeBridge;
@@ -311,9 +376,5 @@ export function installPHGOSaveBridge(onError) {
 }
 
 export function snapshotFilename(payload) {
-  const session = String(payload?.session_id || 'phgo-viewer')
-    .trim()
-    .replace(/[^\w.-]+/g, '_')
-    .replace(/^_+|_+$/g, '') || 'phgo-viewer';
-  return `${session}.pgv`;
+  return `${defaultExportBaseName(payload, 'phgo-viewer')}.pgv`;
 }

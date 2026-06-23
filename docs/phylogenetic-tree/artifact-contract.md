@@ -50,7 +50,7 @@ PHGOT000002
 PHGOT000003
 ```
 
-User-facing labels live in metadata and page state. Stable IDs stay alphanumeric so Newick-to-metadata mapping is lossless. For tree rendering, `display_name` may include the optional PHgo coordinate prefix when the Canvas setting is enabled. For MSA rendering, `base_display_name` is Jalview's true sequence name and `display_prefix` is drawn separately in the left ID list; menus, rename dialogs, and Apply payloads use the base name. PHgo's Jalview left ID renderer ignores Jalview's right-align-ID and sequence-limit suffix settings so the visible list stays left-aligned and never gains generated `/start-end` suffixes that would diverge from PHgo `display_name`.
+User-facing labels live in metadata and page state. Stable IDs stay alphanumeric so Newick-to-metadata mapping is lossless. `display_name` is the raw/base label for both tree and MSA, while `display_prefix` carries the PHgo row coordinate separately. MSA always draws `display_prefix` in Jalview's left ID list; menus, rename dialogs, and Apply payloads use the base name. Tree rendering defaults to `display_name` and can show `display_prefix` only through Reactree's viewer-state `Coord` toggle. PHgo's Jalview left ID renderer ignores Jalview's right-align-ID and sequence-limit suffix settings so the visible list stays left-aligned and never gains generated `/start-end` suffixes that would diverge from PHgo `display_name`.
 
 ## Input Metadata
 

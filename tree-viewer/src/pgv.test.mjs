@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   buildViewerSnapshot,
+  defaultExportBaseName,
   normalizeExportBackground,
   parseViewerSnapshot,
   PGV_FORMAT,
@@ -8,12 +9,14 @@ import {
   PGV_SCHEMA_VERSION,
   PGV_VIEWER_STATE_SCHEMA_VERSION,
   snapshotFilename,
+  titleNumberFilenameBase,
   TRANSPARENT_EXPORT_BACKGROUND,
 } from './pgv.js';
 
 const payload = {
   schema_version: 1,
   session_id: 'canvas 2.3/test',
+  title: '1.1 Brassica test tree',
   updated_at: '2026-05-30T12:30:00Z',
   newick: '(PHGOT000001);',
 };
@@ -51,7 +54,13 @@ assert.deepEqual(snapshot.viewer_state, {
 });
 assert.match(snapshot.created_at, /^\d{4}-\d{2}-\d{2}T/);
 
-assert.equal(snapshotFilename(payload), 'canvas_2.3_test.pgv');
+assert.equal(titleNumberFilenameBase('Phgotreer: 1.1 Brassica test tree'), '1.1');
+assert.equal(titleNumberFilenameBase('Phgomsar: 1 MSA export'), '1');
+assert.equal(titleNumberFilenameBase('Phgotreer: 1/2 invalid chars'), '1');
+assert.equal(titleNumberFilenameBase('No numeric title', 'fallback'), 'fallback');
+assert.equal(defaultExportBaseName(payload), '1.1');
+assert.equal(defaultExportBaseName({ title: '', session_id: 'bad/session:name' }), 'bad_session_name');
+assert.equal(snapshotFilename(payload), '1.1.pgv');
 assert.equal(snapshotFilename({ session_id: '  ' }), 'phgo-viewer.pgv');
 assert.equal(normalizeExportBackground(''), null);
 assert.equal(normalizeExportBackground('   '), null);

@@ -164,6 +164,17 @@ textarea {
   font-size: 14px;
 }
 
+.phgo-office-ribbon-collapsed {
+  flex-basis: 32px;
+  height: 32px;
+  grid-template-rows: 32px 0;
+  overflow: visible;
+}
+
+.phgo-office-ribbon-collapsed .phgo-office-toolbar-row {
+  display: none;
+}
+
 .phgo-office-tab-row {
   box-sizing: border-box;
   min-width: 0;

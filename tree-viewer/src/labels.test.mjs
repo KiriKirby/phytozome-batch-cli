@@ -3,7 +3,7 @@ import { reactreeLabelMap, reactreeLabelMaps, relabelFasta, relabelNewick, sanit
 
 const metadata = {
   records: [
-    { taxon_id: 'PHGOT000001', display_name: 'PAL 1' },
+    { taxon_id: 'PHGOT000001', display_name: 'PAL 1', display_prefix: '[1,1]' },
     { taxon_id: 'PHGOT000002', display_name: 'PAL_1' },
     { taxon_id: 'PHGOT000003', display_name: 'PAL:1(beta)' },
     { taxon_id: 'PHGOT000004', display_name: '' },
@@ -26,6 +26,8 @@ assert.equal(labels.get('PHGOT000002'), 'PAL_1');
 assert.equal(labels.get('PHGOT000003'), 'PAL:1(beta)');
 assert.equal(labels.get('PHGOT000004'), 'PHGOT000004');
 assert.equal(labels.get('PHGOT000005'), "O'Brien, PAL; 2");
+const coordinateLabels = reactreeLabelMap(metadata, { showPhgoCoords: true });
+assert.equal(coordinateLabels.get('PHGOT000001'), '[1,1] PAL 1');
 
 const { reverse } = reactreeLabelMaps(metadata);
 assert.equal(reverse.get('PAL 1'), 'PHGOT000001');

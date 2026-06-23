@@ -1,19 +1,22 @@
-export function displayLabelMap(metadata) {
+export function displayLabelMap(metadata, options = {}) {
+  const showPhgoCoords = Boolean(options.showPhgoCoords);
   const map = new Map();
   for (const record of metadata?.records || []) {
     const taxon = String(record.taxon_id || '').trim();
     if (!taxon) continue;
-    map.set(taxon, String(record.display_name || taxon).trim() || taxon);
+    const name = String(record.display_name || taxon).trim() || taxon;
+    const prefix = showPhgoCoords ? String(record.display_prefix || '').trim() : '';
+    map.set(taxon, prefix ? `${prefix} ${name}` : name);
   }
   return map;
 }
 
-export function reactreeLabelMap(metadata) {
-  return reactreeLabelMaps(metadata).forward;
+export function reactreeLabelMap(metadata, options = {}) {
+  return reactreeLabelMaps(metadata, options).forward;
 }
 
-export function reactreeLabelMaps(metadata) {
-  const displayNames = displayLabelMap(metadata);
+export function reactreeLabelMaps(metadata, options = {}) {
+  const displayNames = displayLabelMap(metadata, options);
   const forward = new Map();
   const reverse = new Map();
   for (const [taxon, label] of displayNames) {
@@ -29,17 +32,17 @@ export function sanitizeReactreeLabel(label) {
   return String(label || '').trim();
 }
 
-export function relabelNewick(newick, metadata) {
+export function relabelNewick(newick, metadata, options = {}) {
   let out = String(newick || '');
-  const entries = [...reactreeLabelMap(metadata).entries()].sort((a, b) => b[0].length - a[0].length);
+  const entries = [...reactreeLabelMap(metadata, options).entries()].sort((a, b) => b[0].length - a[0].length);
   for (const [taxon, label] of entries) {
     out = out.replace(new RegExp(escapeRegExp(taxon) + '(?=[:),;])', 'g'), quoteNewickLabel(label));
   }
   return out;
 }
 
-export function relabelFasta(fasta, metadata) {
-  const names = reactreeLabelMap(metadata);
+export function relabelFasta(fasta, metadata, options = {}) {
+  const names = reactreeLabelMap(metadata, options);
   return String(fasta || '').split(/\r?\n/).map((line) => {
     if (!line.startsWith('>')) return line;
     const id = line.slice(1).trim().split(/\s+/)[0];
