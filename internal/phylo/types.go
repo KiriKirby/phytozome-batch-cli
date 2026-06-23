@@ -163,6 +163,7 @@ type MSAState struct {
 	Sequences     []MSASequenceState `json:"sequences,omitempty"`
 	ViewerState   map[string]any     `json:"viewer_state,omitempty"`
 	Settings      map[string]any     `json:"settings,omitempty"`
+	Colours       map[string]any     `json:"colours,omitempty"`
 	Annotations   []map[string]any   `json:"annotations,omitempty"`
 	Features      []map[string]any   `json:"features,omitempty"`
 	Groups        []map[string]any   `json:"groups,omitempty"`

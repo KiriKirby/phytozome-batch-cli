@@ -126,14 +126,14 @@ func (p *Prompter) UpdateOpenCanvasRefreshStatus(refreshing bool, message string
 }
 
 func (p *Prompter) QueueKeywordResultTableCue() {
-	if p == nil || p.familyContext() {
+	if p == nil {
 		return
 	}
 	p.keywordTableCuePending = true
 }
 
 func (p *Prompter) QueueBlastResultTableCue() {
-	if p == nil || p.familyContext() {
+	if p == nil {
 		return
 	}
 	p.blastTableCuePending = true
@@ -165,17 +165,17 @@ func promptTaskUpdate(update func(string)) func(string) {
 	}
 }
 
-func prepareResultTableValue[T any](page tui.TaskPage, playCue bool, build func(update func(string)) (T, error)) (T, error) {
+func prepareResultTableValue[T any](page tui.TaskPage, playCue bool, onStart func(), build func(update func(string)) (T, error)) (T, error) {
 	if !playCue {
 		return build(nil)
+	}
+	if onStart != nil {
+		onStart()
 	}
 	value, err := tui.RunTaskValueContext(page, func(ctx context.Context, update func(string)) (T, error) {
 		_ = ctx
 		return build(promptTaskUpdate(update))
 	})
-	if err == nil {
-		notifyaudio.PlayResultTableReady()
-	}
 	return value, err
 }
 
@@ -3631,7 +3631,7 @@ func (p *Prompter) selectKeywordRows(groups []model.KeywordSearchGroup, initial 
 		Title:       "Loading keyword results",
 		Description: "Preparing the keyword result table.",
 		Initial:     "Loading keyword results...",
-	}, p.consumeKeywordResultTableCue(), func(update func(string)) (struct {
+	}, p.consumeKeywordResultTableCue(), notifyaudio.PlayKeywordResult, func(update func(string)) (struct {
 		columns   []tui.TableColumn
 		tableRows []tui.TableRow
 	}, error) {
@@ -3849,7 +3849,7 @@ func (p *Prompter) selectBlastRunsWithState(runs []BlastRunView, backTarget erro
 		Title:       "Loading BLAST results",
 		Description: "Preparing the BLAST result tables.",
 		Initial:     "Loading BLAST results...",
-	}, p.consumeBlastResultTableCue(), func(update func(string)) (struct {
+	}, p.consumeBlastResultTableCue(), notifyaudio.PlayBlastResult, func(update func(string)) (struct {
 		items         []tui.BlastRunItem
 		tableKeyParts []string
 	}, error) {
@@ -4456,7 +4456,7 @@ func (p *Prompter) selectBlastRowsWithInitial(rows []model.BlastResultRow, allow
 		Title:       "Loading BLAST results",
 		Description: "Preparing the BLAST result table.",
 		Initial:     "Loading BLAST results...",
-	}, p.consumeBlastResultTableCue(), func(update func(string)) (struct {
+	}, p.consumeBlastResultTableCue(), notifyaudio.PlayBlastResult, func(update func(string)) (struct {
 		columns   []tui.TableColumn
 		tableRows []tui.TableRow
 	}, error) {

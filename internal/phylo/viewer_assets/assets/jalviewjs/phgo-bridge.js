@@ -449,6 +449,19 @@
     if (text && text !== "[object Object]") target[key] = text;
   }
 
+  function setHexIfPresent(target, key, value) {
+    const colour = javaColorToHex(value, "");
+    if (colour) target[key] = colour;
+  }
+
+  function collectNamedValues(target, entries) {
+    const out = {};
+    for (const [key, names] of entries) {
+      setIfPresent(out, key, callValue(target, names));
+    }
+    return out;
+  }
+
   function mainViewport(frame) {
     if (!frame) return null;
     try {
@@ -536,21 +549,39 @@
     const viewport = mainViewport(frame);
     const settings = {};
     if (!viewport) return settings;
-    const getters = {
-      wrap_alignment: ["getWrapAlignment$", "isWrapAlignment$"],
-      show_annotations: ["isShowAnnotation$", "getShowAnnotation$"],
-      show_boxes: ["getShowBoxes$", "isShowBoxes$"],
-      show_text: ["getShowText$", "isShowText$"],
-      show_colour_text: ["getShowColourText$", "isShowColourText$"],
-      show_sequence_features: ["isShowSequenceFeatures$", "getShowSequenceFeatures$"],
-      scale_protein_as_cdna: ["isScaleProteinAsCdna$", "getScaleProteinAsCdna$"],
-      residue_font: ["getFont$"],
-      colour_scheme: ["getGlobalColourScheme$"]
-    };
-    for (const [key, names] of Object.entries(getters)) {
-      setIfPresent(settings, key, callValue(viewport, names));
-    }
+    Object.assign(settings, collectNamedValues(viewport, [
+      ["wrap_alignment", ["getWrapAlignment$", "isWrapAlignment$"]],
+      ["show_annotations", ["isShowAnnotation$", "getShowAnnotation$"]],
+      ["show_boxes", ["getShowBoxes$", "isShowBoxes$"]],
+      ["show_text", ["getShowText$", "isShowText$"]],
+      ["show_colour_text", ["getShowColourText$", "isShowColourText$"]],
+      ["show_sequence_features", ["isShowSequenceFeatures$", "getShowSequenceFeatures$"]],
+      ["render_gaps", ["isRenderGaps$", "getRenderGaps$"]],
+      ["right_align_ids", ["isRightAlignIds$", "getRightAlignIds$"]],
+      ["scale_protein_as_cdna", ["isScaleProteinAsCdna$", "getScaleProteinAsCdna$"]],
+      ["char_width", ["getCharWidth$"]],
+      ["char_height", ["getCharHeight$"]],
+      ["start_res", ["getStartRes$"]],
+      ["end_res", ["getEndRes$"]],
+      ["start_seq", ["getStartSeq$"]],
+      ["end_seq", ["getEndSeq$"]],
+      ["residue_font", ["getFont$"]],
+      ["colour_scheme", ["getGlobalColourScheme$"]],
+      ["residue_shading", ["getResidueShading$"]]
+    ]));
     return settings;
+  }
+
+  function collectMSAColours(frame) {
+    const viewport = mainViewport(frame);
+    if (!viewport) return {};
+    const colours = {};
+    setHexIfPresent(colours, "text", callValue(viewport, ["getTextColour$"]));
+    setHexIfPresent(colours, "conservation_text", callValue(viewport, ["getConservationColour$"]));
+    setHexIfPresent(colours, "background", callValue(viewport, ["getBackgroundColour$"]));
+    setIfPresent(colours, "colour_scheme", callValue(viewport, ["getGlobalColourScheme$"]));
+    setIfPresent(colours, "residue_shading", callValue(viewport, ["getResidueShading$"]));
+    return colours;
   }
 
   function collectMSAGroups(frame) {
@@ -564,8 +595,11 @@
       setIfPresent(out, "display_boxes", callValue(group, ["getDisplayBoxes$"]));
       setIfPresent(out, "display_text", callValue(group, ["getDisplayText$"]));
       setIfPresent(out, "colour_text", callValue(group, ["getColourText$"]));
-      const colour = callValue(group, ["getColourScheme$"]);
-      setIfPresent(out, "colour_scheme", colour);
+      setIfPresent(out, "description", callValue(group, ["getDescription$"]));
+      setIfPresent(out, "colour_scheme", callValue(group, ["getColourScheme$"]));
+      setHexIfPresent(out, "outline_colour", callValue(group, ["getOutlineColour$"]));
+      setHexIfPresent(out, "text_colour", callValue(group, ["getTextColour$"]));
+      setHexIfPresent(out, "id_colour", callValue(group, ["getIdColour$"]));
       const sequences = javaListToArray(callValue(group, ["getSequences$"]), 500)
         .map(sequenceName)
         .filter(Boolean);
@@ -635,6 +669,8 @@
     setIfPresent(out, "phase", callValue(feature, ["getPhase$"]));
     setIfPresent(out, "attributes", callValue(feature, ["getAttributes$"]));
     setIfPresent(out, "ena_location", callValue(feature, ["getEnaLocation$"]));
+    setHexIfPresent(out, "colour", callValue(feature, ["getColour$", "getColor$"]));
+    setIfPresent(out, "style", callValue(feature, ["getStyle$"]));
     if (feature && feature.otherDetails) {
       const other = javaMapToObject(feature.otherDetails, 250);
       if (Object.keys(other).length > 0) out.other_details = other;
@@ -642,6 +678,27 @@
     const links = javaListToArray(feature && feature.links, 100).map(stringValue).filter(Boolean);
     if (links.length > 0) out.links = links;
     return out;
+  }
+
+  function collectMSAMarkers(frame) {
+    const viewport = mainViewport(frame);
+    const alignment = mainAlignment(frame);
+    const raw =
+      callValue(viewport, ["getMarkers$", "getBookmarks$"]) ||
+      callValue(alignment, ["getMarkers$", "getBookmarks$"]);
+    return javaListToArray(raw, 1000).map((marker, index) => {
+      const out = { index };
+      Object.assign(out, collectNamedValues(marker, [
+        ["name", ["getName$", "getLabel$"]],
+        ["description", ["getDescription$"]],
+        ["sequence", ["getSequence$", "getSequenceName$"]],
+        ["column", ["getColumn$", "getPosition$", "getStart$"]],
+        ["end", ["getEnd$"]],
+        ["type", ["getType$"]]
+      ]));
+      setHexIfPresent(out, "colour", callValue(marker, ["getColour$", "getColor$"]));
+      return out;
+    }).filter((marker) => Object.keys(marker).length > 1);
   }
 
   function collectMSAFeatures(frame) {
@@ -680,9 +737,11 @@
     if (full) {
       state.sequences = collectMSASequences(frame);
       state.settings = collectMSASettings(frame);
+      state.colours = collectMSAColours(frame);
       state.groups = collectMSAGroups(frame);
       state.annotations = collectMSAAnnotations(frame);
       state.features = collectMSAFeatures(frame);
+      state.markers = collectMSAMarkers(frame);
     }
     return state;
   }
@@ -793,6 +852,7 @@
     }
     if (!ann) return null;
     ann.__phgoRestoredKey = savedAnnotationKey(item);
+    ann.__phgoRestoredBySave = true;
     if (typeof item.visible === "boolean") ann.visible = item.visible;
     if (typeof item.below_alignment === "boolean") ann.belowAlignment = item.below_alignment;
     const graphHeight = Number(item.graph_height);
@@ -844,6 +904,48 @@
     ].join("\u001f");
   }
 
+  function removePHgoRestoredAnnotations(frame) {
+    const alignment = mainAlignment(frame);
+    if (!alignment) return;
+    const annotations = javaListToArray(callValue(alignment, ["getAlignmentAnnotation$"]), 2000);
+    for (const ann of annotations) {
+      if (!ann || !ann.__phgoRestoredBySave) continue;
+      try {
+        if (typeof alignment.deleteAnnotation$jalview_datamodel_AlignmentAnnotation === "function") {
+          alignment.deleteAnnotation$jalview_datamodel_AlignmentAnnotation(ann);
+        } else if (typeof alignment.removeAnnotation$jalview_datamodel_AlignmentAnnotation === "function") {
+          alignment.removeAnnotation$jalview_datamodel_AlignmentAnnotation(ann);
+        }
+      } catch (error) {
+        debug("msa-state-annotation-cleanup-failed", { message: formatValue(error) });
+      }
+    }
+  }
+
+  function removePHgoRestoredSequenceFeatures(frame) {
+    for (const seq of alignmentSequences(frame)) {
+      seq.__phgoRestoredFeatureKeys = new Set();
+      try {
+        const existing = featureListForSequence(seq);
+        if (!existing.length) continue;
+        const retained = existing.filter((feature) => !(feature && feature.__phgoRestoredBySave));
+        if (retained.length === existing.length) continue;
+        if (typeof seq.setSequenceFeatures$java_util_List === "function") {
+          const arrayListClass = clazzClass("java.util.ArrayList");
+          const list = arrayListClass ? clazzNew(arrayListClass.c$, []) : null;
+          if (list && typeof list.add$TE === "function") {
+            for (const feature of retained) list.add$TE(feature);
+            seq.setSequenceFeatures$java_util_List(list);
+          }
+        } else if (typeof seq.setSequenceFeatures$jalview_datamodel_SequenceFeatureA === "function") {
+          seq.setSequenceFeatures$jalview_datamodel_SequenceFeatureA(retained);
+        }
+      } catch (error) {
+        debug("msa-state-feature-cleanup-failed", { message: formatValue(error), sequence: sequenceName(seq) });
+      }
+    }
+  }
+
   function applySavedMSAFeatures(frame, state) {
     if (!Array.isArray(state && state.features) || state.features.length === 0) return 0;
     const featureClass = clazzClass("jalview.datamodel.SequenceFeature");
@@ -865,6 +967,11 @@
         : [String(item.type || "feature"), String(item.description || ""), begin, end, String(item.feature_group || "")]);
       if (!feature) continue;
       try {
+        feature.__phgoRestoredBySave = true;
+        const featureColour = hexToAwtColor(item.colour);
+        if (featureColour && typeof feature.setColour$java_awt_Color === "function") {
+          feature.setColour$java_awt_Color(featureColour);
+        }
         if (hashMapClass && item.other_details && typeof item.other_details === "object") {
           feature.otherDetails = clazzNew(hashMapClass.c$, []);
           for (const [keyName, value] of Object.entries(item.other_details)) {
@@ -909,6 +1016,10 @@
         if (typeof group.setDisplayBoxes$Z === "function" && typeof item.display_boxes === "boolean") group.setDisplayBoxes$Z(item.display_boxes);
         if (typeof group.setDisplayText$Z === "function" && typeof item.display_text === "boolean") group.setDisplayText$Z(item.display_text);
         if (typeof group.setColourText$Z === "function" && typeof item.colour_text === "boolean") group.setColourText$Z(item.colour_text);
+        const outlineColour = hexToAwtColor(item.outline_colour);
+        if (outlineColour && typeof group.setOutlineColour$java_awt_Color === "function") group.setOutlineColour$java_awt_Color(outlineColour);
+        const textColour = hexToAwtColor(item.text_colour);
+        if (textColour && typeof group.setTextColour$java_awt_Color === "function") group.setTextColour$java_awt_Color(textColour);
         const names = Array.isArray(item.sequences) ? item.sequences : [];
         for (const name of names) {
           const seq = findSequenceBySavedReference(frame, { display_name: name, name });
@@ -917,6 +1028,7 @@
           }
         }
         group.__phgoRestoredKey = key || String(item.index || applied);
+        group.__phgoRestoredBySave = true;
         alignment.addGroup$jalview_datamodel_SequenceGroup(group);
         existingSet.add(group.__phgoRestoredKey);
         applied += 1;
@@ -925,6 +1037,24 @@
       }
     }
     return applied;
+  }
+
+  function removePHgoRestoredGroups(frame) {
+    const alignment = mainAlignment(frame);
+    if (!alignment) return;
+    const groups = javaListToArray(callValue(alignment, ["getGroups$"]), 2000);
+    for (const group of groups) {
+      if (!group || !group.__phgoRestoredBySave) continue;
+      try {
+        if (typeof alignment.deleteGroup$jalview_datamodel_SequenceGroup === "function") {
+          alignment.deleteGroup$jalview_datamodel_SequenceGroup(group);
+        } else if (typeof alignment.removeGroup$jalview_datamodel_SequenceGroup === "function") {
+          alignment.removeGroup$jalview_datamodel_SequenceGroup(group);
+        }
+      } catch (error) {
+        debug("msa-state-group-cleanup-failed", { message: formatValue(error) });
+      }
+    }
   }
 
   function applySavedMSASettings(frame, state) {
@@ -936,7 +1066,11 @@
       ["show_annotations", "setShowAnnotation$Z"],
       ["show_sequence_features", "setShowSequenceFeatures$Z"],
       ["show_boxes", "setShowBoxes$Z"],
-      ["show_text", "setShowText$Z"]
+      ["show_text", "setShowText$Z"],
+      ["show_colour_text", "setShowColourText$Z"],
+      ["render_gaps", "setRenderGaps$Z"],
+      ["wrap_alignment", "setWrapAlignment$Z"],
+      ["right_align_ids", "setRightAlignIds$Z"]
     ];
     for (const [key, method] of boolSetters) {
       if (typeof settings[key] === "boolean" && typeof viewport[method] === "function") {
@@ -948,6 +1082,62 @@
         }
       }
     }
+    const intSetters = [
+      ["char_width", "setCharWidth$I"],
+      ["char_height", "setCharHeight$I"]
+    ];
+    for (const [key, method] of intSetters) {
+      const value = Number.parseInt(settings[key], 10);
+      if (Number.isFinite(value) && value > 0 && typeof viewport[method] === "function") {
+        try {
+          viewport[method](value);
+          applied += 1;
+        } catch (_error) {
+          // Continue with other restorable settings.
+        }
+      }
+    }
+    return applied;
+  }
+
+  function applySavedMSAColours(frame, state) {
+    const viewport = mainViewport(frame);
+    const colours = state && state.colours || {};
+    if (!viewport || !colours || typeof colours !== "object") return 0;
+    let applied = 0;
+    const applyColour = (key, setterNames) => {
+      const color = hexToAwtColor(colours[key]);
+      if (!color) return 0;
+      for (const setterName of setterNames) {
+        if (typeof viewport[setterName] !== "function") continue;
+        try {
+          viewport[setterName](color);
+          return 1;
+        } catch (_error) {
+          // JalviewJS builds do not expose a consistent setter matrix.
+        }
+      }
+      return 0;
+    };
+    const applyValue = (key, setterNames) => {
+      const value = colours[key];
+      if (value == null || value === "") return 0;
+      for (const setterName of setterNames) {
+        if (typeof viewport[setterName] !== "function") continue;
+        try {
+          viewport[setterName](value);
+          return 1;
+        } catch (_error) {
+          // Keep trying alternates.
+        }
+      }
+      return 0;
+    };
+    applied += applyColour("text", ["setTextColour$java_awt_Color", "setTextColor$java_awt_Color"]);
+    applied += applyColour("conservation_text", ["setConservationColour$java_awt_Color", "setConservationColor$java_awt_Color"]);
+    applied += applyColour("background", ["setBackgroundColour$java_awt_Color", "setBackgroundColor$java_awt_Color"]);
+    applied += applyValue("colour_scheme", ["setGlobalColourScheme$O", "setGlobalColorScheme$O"]);
+    applied += applyValue("residue_shading", ["setResidueShading$O"]);
     return applied;
   }
 
@@ -970,15 +1160,23 @@
     const durableCount =
       (Array.isArray(state.annotations) ? state.annotations.length : 0) +
       (Array.isArray(state.features) ? state.features.length : 0) +
-      (Array.isArray(state.groups) ? state.groups.length : 0);
+      (Array.isArray(state.groups) ? state.groups.length : 0) +
+      (Array.isArray(state.markers) ? state.markers.length : 0);
     const signature = JSON.stringify({
       updated_at: state.updated_at || "",
+      colours: state && state.colours && typeof state.colours === "object" ? Object.keys(state.colours).sort().map((key) => [key, state.colours[key]]) : [],
+      settings: state && state.settings && typeof state.settings === "object" ? Object.keys(state.settings).sort().map((key) => [key, state.settings[key]]) : [],
       annotations: Array.isArray(state.annotations) ? state.annotations.length : 0,
       features: Array.isArray(state.features) ? state.features.length : 0,
-      groups: Array.isArray(state.groups) ? state.groups.length : 0
+      groups: Array.isArray(state.groups) ? state.groups.length : 0,
+      markers: Array.isArray(state.markers) ? state.markers.length : 0
     });
     if (window.__PHGOMSAStateRestoreSignature === signature) return true;
+    removePHgoRestoredAnnotations(frame);
+    removePHgoRestoredSequenceFeatures(frame);
+    removePHgoRestoredGroups(frame);
     const applied = applySavedMSASettings(frame, state) +
+      applySavedMSAColours(frame, state) +
       applySavedMSAAnnotations(frame, state) +
       applySavedMSAFeatures(frame, state) +
       applySavedMSAGroups(frame, state);
@@ -1975,6 +2173,10 @@
     if (typeof window.__PHGOJalviewResizeMainAlignment === "function") {
       window.__PHGOJalviewResizeMainAlignment();
     }
+    window.setTimeout(() => {
+      resyncSwingColourSwatches();
+      fixSwingMenuPositioning("resize");
+    }, 0);
   }
 
   let resizeTimer = 0;
@@ -2005,6 +2207,8 @@
 
     if (alignmentReady) {
       document.body.classList.add("phgo-jalview-ready");
+      window.setTimeout(() => fixSwingMenuPositioning("layout-ready"), 0);
+      window.setTimeout(() => fixSwingMenuPositioning("layout-ready-delayed"), 250);
       if (!adaptLayout.msaStateSaveScheduled) {
         adaptLayout.msaStateSaveScheduled = true;
         scheduleMSAStateSave("layout-ready", 600, true);
@@ -2060,6 +2264,64 @@
       });
     } catch (error) {
       debug("hide-menus-failed", { reason, method: "dom-menu-close-secondary", message: formatValue(error) });
+    }
+  }
+
+  function fixSwingMenuPositioning(reason) {
+    const root = document.getElementById("jalview-shell") || document.body;
+    const rootRect = root && typeof root.getBoundingClientRect === "function"
+      ? root.getBoundingClientRect()
+      : { left: 0, top: 0, width: window.innerWidth || 0, height: window.innerHeight || 0 };
+    const maxWidth = Math.max(0, Math.floor(rootRect.width || window.innerWidth || 0));
+    const maxHeight = Math.max(0, Math.floor(rootRect.height || window.innerHeight || 0));
+    const selectors = [
+      ".swingjsPopupMenu",
+      ".swingjs-popup",
+      ".swingjs-menu",
+      ".ui-j2smenu",
+      "[role='menu']",
+      "[id*='_MenuBarUI']",
+      "[id*='_PopupMenuUI']"
+    ];
+    try {
+      document.querySelectorAll(selectors.join(",")).forEach((node) => {
+        if (!(node instanceof HTMLElement)) return;
+        const rect = node.getBoundingClientRect();
+        if ((rect.width <= 0 && rect.height <= 0) || node.closest("#sysoutdiv")) return;
+        if (!node.closest("#jalview-alignment-div, #jalview-desktop-div, body")) return;
+        const style = window.getComputedStyle(node);
+        const isMenuBar = node.matches("[id*='_MenuBarUI']");
+        if (isMenuBar) {
+          node.style.setProperty("left", "0px", "important");
+          node.style.setProperty("top", "0px", "important");
+          node.style.setProperty("right", "auto", "important");
+          node.style.setProperty("max-width", `${maxWidth}px`, "important");
+          node.style.setProperty("transform", "none", "important");
+          return;
+        }
+        if (style.position === "fixed") return;
+        let left = rect.left - rootRect.left;
+        let top = rect.top - rootRect.top;
+        if (!Number.isFinite(left)) left = 0;
+        if (!Number.isFinite(top)) top = 0;
+        const width = Math.max(0, rect.width);
+        const height = Math.max(0, rect.height);
+        if (left < 0) left = 0;
+        if (top < 0) top = 0;
+        if (width > 0 && maxWidth > 0 && left + width > maxWidth) {
+          left = Math.max(0, maxWidth - width);
+        }
+        if (height > 0 && maxHeight > 0 && top + height > maxHeight) {
+          top = Math.max(0, maxHeight - height);
+        }
+        node.style.setProperty("left", `${Math.round(left)}px`, "important");
+        node.style.setProperty("top", `${Math.round(top)}px`, "important");
+        node.style.setProperty("right", "auto", "important");
+        node.style.setProperty("bottom", "auto", "important");
+        node.style.setProperty("transform", "none", "important");
+      });
+    } catch (error) {
+      debug("fix-swing-menu-positioning-failed", { reason, message: formatValue(error) });
     }
   }
 
@@ -2192,6 +2454,8 @@
     document.addEventListener("touchstart", hideMenusFromOutsideEvent, true);
     document.addEventListener("wheel", hideMenusFromOutsideEvent, true);
     document.addEventListener("keydown", hideMenusOnEscape, true);
+    document.addEventListener("pointerup", () => window.setTimeout(() => fixSwingMenuPositioning("pointerup"), 0), true);
+    document.addEventListener("click", () => window.setTimeout(() => fixSwingMenuPositioning("click"), 0), true);
     window.addEventListener("message", (event) => {
       const data = event.data || {};
       if (data.source === "phgo-jalview-host" && data.type === "resize") {
@@ -2204,6 +2468,9 @@
     window.setTimeout(adaptLayout, 0);
     window.setTimeout(adaptLayout, 250);
     window.setTimeout(adaptLayout, 1000);
+    window.setTimeout(() => fixSwingMenuPositioning("startup"), 0);
+    window.setTimeout(() => fixSwingMenuPositioning("startup-delayed"), 500);
+    window.setTimeout(() => fixSwingMenuPositioning("startup-late"), 1500);
     window.setTimeout(installSwingColourSwatchFix, 0);
     window.setTimeout(installSwingColourSwatchFix, 500);
     window.setTimeout(installSwingColourSwatchFix, 1500);

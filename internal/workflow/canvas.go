@@ -27,6 +27,7 @@ import (
 	"github.com/KiriKirby/phytozome-go/internal/fastautil"
 	"github.com/KiriKirby/phytozome-go/internal/megaphgo"
 	"github.com/KiriKirby/phytozome-go/internal/model"
+	"github.com/KiriKirby/phytozome-go/internal/notifyaudio"
 	"github.com/KiriKirby/phytozome-go/internal/phylo"
 	"github.com/KiriKirby/phytozome-go/internal/progressctx"
 	"github.com/KiriKirby/phytozome-go/internal/prompt"
@@ -50,6 +51,7 @@ type canvasLaunchState struct {
 
 func (w *BlastWizard) runCanvasMode(ctx context.Context, state canvasLaunchState) error {
 	defer w.closeCanvasTreeViewer()
+	notifyaudio.PlayCanvas()
 	if state.NextNumericID <= 0 {
 		state.NextNumericID = nextCanvasNumericID(state.Items)
 	}
@@ -486,7 +488,11 @@ func (w *BlastWizard) refreshCanvasTreeWithProgress(ctx context.Context, state c
 	defer w.setCanvasTreeViewerRefreshing(false, "")
 	defer w.prompt.UpdateOpenCanvasRefreshStatus(false, "")
 	if w.suppressTaskModals {
-		return w.refreshCanvasTree(ctx, state, settings)
+		err := w.refreshCanvasTree(ctx, state, settings)
+		if err == nil {
+			notifyaudio.PlayDone()
+		}
+		return err
 	}
 	_, err := tui.RunProgressTaskValueContext(tui.TaskPage{
 		Path:        w.tuiPath("Startup", "Explore", "Canvas", "Tree tools"),
@@ -503,6 +509,7 @@ func (w *BlastWizard) refreshCanvasTreeWithProgress(ctx context.Context, state c
 			return struct{}{}, err
 		}
 		progress(6, "System tree refresh completed.")
+		notifyaudio.PlayDone()
 		return struct{}{}, nil
 	})
 	return err
@@ -521,7 +528,11 @@ func (w *BlastWizard) refreshCanvasTreeForMSAApply(ctx context.Context, state ca
 		w.setCanvasTreeViewerRefreshing(true, message)
 		w.prompt.UpdateOpenCanvasRefreshStatus(true, message)
 	}
-	return w.refreshCanvasTree(progressctx.WithProgress(ctx, progress), state, settings)
+	err := w.refreshCanvasTree(progressctx.WithProgress(ctx, progress), state, settings)
+	if err == nil {
+		notifyaudio.PlayDone()
+	}
+	return err
 }
 
 func (w *BlastWizard) setCanvasTreeViewerRefreshing(refreshing bool, message string) {
@@ -2435,7 +2446,7 @@ func (w *BlastWizard) snapshotCanvasMSAState(items []model.CanvasItem) *sessions
 	state := w.canvasTreeMSAState
 	if server := w.canvasTreeViewer; server != nil {
 		live := server.GetMSAState(w.canvasTreeSessionID())
-		if len(live.Rows) > 0 || len(live.Groups) > 0 || len(live.Annotations) > 0 || len(live.Settings) > 0 || len(live.Markers) > 0 {
+		if len(live.Rows) > 0 || len(live.Sequences) > 0 || len(live.Groups) > 0 || len(live.Annotations) > 0 || len(live.Features) > 0 || len(live.Settings) > 0 || len(live.Colours) > 0 || len(live.Markers) > 0 {
 			state = live
 			w.canvasTreeMSAState = live
 		}
@@ -2447,7 +2458,7 @@ func (w *BlastWizard) snapshotCanvasMSAState(items []model.CanvasItem) *sessions
 		return nil
 	}
 	if state.SchemaVersion == 0 {
-		state.SchemaVersion = 1
+		state.SchemaVersion = 2
 	}
 	if state.UpdatedAt.IsZero() {
 		state.UpdatedAt = time.Now()

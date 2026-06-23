@@ -4,7 +4,7 @@ export function displayLabelMap(metadata, options = {}) {
   for (const record of metadata?.records || []) {
     const taxon = String(record.taxon_id || '').trim();
     if (!taxon) continue;
-    const name = String(record.display_name || taxon).trim() || taxon;
+    const name = normalizeDisplayName(record, taxon, showPhgoCoords);
     const prefix = showPhgoCoords ? String(record.display_prefix || '').trim() : '';
     map.set(taxon, prefix ? `${prefix} ${name}` : name);
   }
@@ -57,4 +57,16 @@ function escapeRegExp(value) {
 
 function quoteNewickLabel(value) {
   return `'${String(value || '').replace(/'/g, "''")}'`;
+}
+
+function normalizeDisplayName(record, fallback, showPhgoCoords) {
+  const rawName = String(record?.display_name || fallback).trim() || fallback;
+  if (!showPhgoCoords) {
+    return rawName;
+  }
+  const prefix = String(record?.display_prefix || '').trim();
+  if (!prefix) {
+    return rawName;
+  }
+  return rawName.replace(new RegExp(`^${escapeRegExp(prefix)}(?:\\s+)?`), '').trim() || fallback;
 }

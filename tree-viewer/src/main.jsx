@@ -7,7 +7,6 @@ import {
 import { Reactree } from 'reactreejs';
 import 'reactreejs/style.css';
 import './style.css';
-import { relabelFasta, relabelNewick } from './labels.js';
 import { megaDefaultDisplayNewick } from './mega-display.js';
 import {
   buildViewerSnapshot,
@@ -133,9 +132,8 @@ function App() {
   const loadedPayloadStampRef = useRef('');
   const hasLoadedPayloadRef = useRef(false);
   const hasTree = Boolean(payload?.newick?.trim());
-  const labelOptions = useMemo(() => ({ showPhgoCoords }), [showPhgoCoords]);
-  const newick = useMemo(() => relabelNewick(megaDefaultDisplayNewick(payload?.newick, payload?.metadata), payload?.metadata, labelOptions), [payload, labelOptions]);
-  const fasta = useMemo(() => relabelFasta(payload?.aligned_fasta, payload?.metadata, labelOptions), [payload, labelOptions]);
+  const newick = useMemo(() => megaDefaultDisplayNewick(payload?.newick, payload?.metadata), [payload]);
+  const fasta = useMemo(() => String(payload?.aligned_fasta || ''), [payload]);
   const viewerTitle = useMemo(() => {
     const rawTitle = String(payload?.title || payload?.metadata?.title || sessionID || '').trim();
     return rawTitle ? `Phgotreer: ${rawTitle}` : 'Phgotreer';
@@ -401,6 +399,7 @@ function App() {
               initialState={initialViewerState?.reactree}
               onStateChange={handleViewerStateChange}
               onViewerSnapshot={handleViewerSnapshot}
+              labelMetadata={payload?.metadata}
               showPhgoCoords={showPhgoCoords}
               setShowPhgoCoords={setShowPhgoCoords}
             />

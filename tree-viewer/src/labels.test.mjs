@@ -18,6 +18,12 @@ const duplicateMetadata = {
   ],
 };
 
+const prefixedMetadata = {
+  records: [
+    { taxon_id: 'PHGOT000200', display_name: '[3,20] GSMUA_Achr5T28780_001', display_prefix: '[3,20]' },
+  ],
+};
+
 assert.equal(sanitizeReactreeLabel(' PAL: 1; (beta) '), 'PAL: 1; (beta)');
 
 const labels = reactreeLabelMap(metadata);
@@ -28,6 +34,8 @@ assert.equal(labels.get('PHGOT000004'), 'PHGOT000004');
 assert.equal(labels.get('PHGOT000005'), "O'Brien, PAL; 2");
 const coordinateLabels = reactreeLabelMap(metadata, { showPhgoCoords: true });
 assert.equal(coordinateLabels.get('PHGOT000001'), '[1,1] PAL 1');
+const deDuplicatedCoordLabels = reactreeLabelMap(prefixedMetadata, { showPhgoCoords: true });
+assert.equal(deDuplicatedCoordLabels.get('PHGOT000200'), '[3,20] GSMUA_Achr5T28780_001');
 
 const { reverse } = reactreeLabelMaps(metadata);
 assert.equal(reverse.get('PAL 1'), 'PHGOT000001');
@@ -47,4 +55,9 @@ assert.equal(
 assert.equal(
   relabelFasta('>PHGOT000001\nAAAA\n>PHGOT000002 some source note\nCCCC\n>PHGOT000005\nTTTT\n>UNKNOWN\nGGGG', metadata),
   ">PAL 1\nAAAA\n>PAL_1\nCCCC\n>O'Brien, PAL; 2\nTTTT\n>UNKNOWN\nGGGG",
+);
+
+assert.equal(
+  relabelNewick('(PHGOT000200:0.1);', prefixedMetadata, { showPhgoCoords: true }),
+  "('[3,20] GSMUA_Achr5T28780_001':0.1);",
 );

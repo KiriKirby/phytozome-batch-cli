@@ -331,8 +331,12 @@ func TestWriteReadCanvasSnapshotRoundTrip(t *testing.T) {
 					{TaxonID: "PHGOT000001", DisplayName: "PAL1", Index: 0, State: "green"},
 					{TaxonID: "PHGOT000002", DisplayName: "query1", Index: 1, State: "yellow"},
 				},
-				Settings: map[string]any{"wrap": false},
-				Groups:   []map[string]any{{"name": "manual group", "start": float64(1), "end": float64(3)}},
+				Settings:    map[string]any{"wrap": false},
+				Colours:     map[string]any{"text": "#111111"},
+				Groups:      []map[string]any{{"name": "manual group", "start": float64(1), "end": float64(3)}},
+				Annotations: []map[string]any{{"label": "score", "visible": true}},
+				Features:    []map[string]any{{"taxon_id": "PHGOT000001", "type": "domain", "begin": float64(1), "end": float64(3)}},
+				Markers:     []map[string]any{{"name": "bookmark", "column": float64(2)}},
 			},
 			LastPayload: phylo.ViewerPayload{
 				SchemaVersion: 1,
@@ -403,6 +407,9 @@ func TestWriteReadCanvasSnapshotRoundTrip(t *testing.T) {
 	}
 	if len(out.CanvasMSA.State.Groups) != 1 || out.CanvasMSA.LastPayload.AlignedFASTA == "" {
 		t.Fatalf("canvas MSA groups/payload did not round-trip: %#v", out.CanvasMSA)
+	}
+	if out.CanvasMSA.State.Colours["text"] != "#111111" || len(out.CanvasMSA.State.Annotations) != 1 || len(out.CanvasMSA.State.Features) != 1 || len(out.CanvasMSA.State.Markers) != 1 {
+		t.Fatalf("canvas MSA durable state did not round-trip completely: %#v", out.CanvasMSA.State)
 	}
 	if out.CanvasReview == nil || !out.CanvasReview.SelectionState.Valid || out.CanvasReview.SelectionState.ControlMode != 2 {
 		t.Fatalf("canvas review state did not round-trip: %#v", out.CanvasReview)

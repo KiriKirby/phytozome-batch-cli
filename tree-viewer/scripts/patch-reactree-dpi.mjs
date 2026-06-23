@@ -3182,6 +3182,8 @@ function OfficeRibbon({
       showAlignment,
       setShowAlignment,
       alignLabels,
+      showPhgoCoords,
+      setShowPhgoCoords,
       collapsedNodes,
       setCollapsedNodes,
       history,
@@ -3256,19 +3258,110 @@ patchReactreeOfficeRibbonMJS(join(packageRoot, 'dist', 'index.mjs'));
   }
 }
 
+function patchReactreePHGOLabels(file) {
+  let text = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+
+  const displayNameOriginal = `function displayTreeName(name) {
+  return String(name || "");
+}`;
+
+  const displayNamePatched = `let phgoDisplayTreeLabelResolver = null;
+function setDisplayTreeLabelResolver(resolver) {
+  phgoDisplayTreeLabelResolver = typeof resolver === "function" ? resolver : null;
+}
+function escapeDisplayLabelRegExp(value) {
+  return String(value || "").replace(/[.*+?^$()|[\\]\\\\]/g, (match) => "\\\\" + match);
+}
+function buildPhgoDisplayTreeLabelResolver(metadata, showPhgoCoords) {
+  const records = Array.isArray(metadata?.records) ? metadata.records : [];
+  const labels = /* @__PURE__ */ new Map();
+  for (const record of records) {
+    const taxon = String(record?.taxon_id || "").trim();
+    if (!taxon) continue;
+    const prefix = String(record?.display_prefix || "").trim();
+    const rawName = String(record?.display_name || taxon).trim() || taxon;
+    const baseName = prefix ? rawName.replace(new RegExp(\`^\${escapeDisplayLabelRegExp(prefix)}(?:\\\\s+)?\`), "").trim() || taxon : rawName;
+    labels.set(taxon, showPhgoCoords && prefix ? \`\${prefix} \${baseName}\` : baseName);
+  }
+  return (name) => {
+    const raw = String(name || "").trim();
+    return labels.get(raw) || raw;
+  };
+}
+function displayTreeName(name) {
+  const raw = String(name || "");
+  return phgoDisplayTreeLabelResolver ? phgoDisplayTreeLabelResolver(raw) : raw;
+}`;
+
+  if (text.includes(displayNameOriginal)) {
+    text = replaceRequired(text, displayNameOriginal, displayNamePatched, 'Reactree PHGO display-name resolver', file);
+  } else if (!text.includes('function buildPhgoDisplayTreeLabelResolver(')) {
+    throw new Error(`Reactree PHGO display-name resolver anchor not found in ${file}`);
+  }
+
+  text = replaceRequired(
+    text,
+    'function Reactree({ newick, defaultHeight = 520, fasta, initialState, onStateChange, onViewerSnapshot, showPhgoCoords = false, setShowPhgoCoords }) {',
+    'function Reactree({ newick, defaultHeight = 520, fasta, initialState, onStateChange, onViewerSnapshot, labelMetadata, showPhgoCoords = false, setShowPhgoCoords }) {',
+    'Reactree labelMetadata prop',
+    file,
+  );
+
+  if (!text.includes('const displayLabelResolver = useMemo(() => buildPhgoDisplayTreeLabelResolver(labelMetadata, showPhgoCoords)')) {
+    text = replaceRequired(
+      text,
+      '  const initialSnapshot = normalizeReactreeStateSnapshot(initialState);',
+      `  const initialSnapshot = normalizeReactreeStateSnapshot(initialState);
+  const displayLabelResolver = useMemo(() => buildPhgoDisplayTreeLabelResolver(labelMetadata, showPhgoCoords), [labelMetadata, showPhgoCoords]);
+  useEffect(() => {
+    setDisplayTreeLabelResolver(displayLabelResolver);
+    return () => {
+      setDisplayTreeLabelResolver(null);
+    };
+  }, [displayLabelResolver]);`,
+      'Reactree display-label resolver state',
+      file,
+    );
+  }
+
+  text = replaceRequired(
+    text,
+    '  }, [getPreparedAlignmentRows]);',
+    '  }, [getPreparedAlignmentRows, showPhgoCoords, labelMetadata]);',
+    'Reactree alignment redraw deps for PHGO labels',
+    file,
+  );
+
+  text = replaceRequired(
+    text,
+    '  }, [treeData, containerH, hScale, vScale, fontScale, fontFamily, strokeWidth, layout, renderStyle, treeType, colorOverrides, theme, labelMode, alignLabels, truncateNames, collapsedNodes, collapseLabels, searchQuery, searchMatchIdx, showAlignment]);',
+    '  }, [treeData, containerH, hScale, vScale, fontScale, fontFamily, strokeWidth, layout, renderStyle, treeType, colorOverrides, theme, labelMode, alignLabels, truncateNames, collapsedNodes, collapseLabels, searchQuery, searchMatchIdx, showAlignment, showPhgoCoords, labelMetadata]);',
+    'Reactree tree redraw deps for PHGO labels',
+    file,
+  );
+
+  writeFileSync(file, text);
+  console.log(`Patched Reactree PHGO labels: ${file}`);
+}
+
+patchReactreePHGOLabels(join(packageRoot, 'dist', 'index.mjs'));
+
 for (const file of ['index.d.ts', 'index.d.mts'].map((name) => join(packageRoot, 'dist', name))) {
   let text = readFileSync(file, 'utf8');
   if (!text.includes('onViewerSnapshot')) {
     text = text
-      .replace('    fasta?: string;\n', '    fasta?: string;\n    initialState?: Record<string, unknown>;\n    onStateChange?: (state: Record<string, unknown>) => void;\n    onViewerSnapshot?: (state: Record<string, unknown>) => void;\n    showPhgoCoords?: boolean;\n    setShowPhgoCoords?: (updater: boolean | ((value: boolean) => boolean)) => void;\n')
-      .replace('declare function Reactree({ newick, defaultHeight, fasta }: ReactreeProps)', 'declare function Reactree({ newick, defaultHeight, fasta, initialState, onStateChange, onViewerSnapshot, showPhgoCoords, setShowPhgoCoords }: ReactreeProps)');
+      .replace('    fasta?: string;\n', '    fasta?: string;\n    initialState?: Record<string, unknown>;\n    onStateChange?: (state: Record<string, unknown>) => void;\n    onViewerSnapshot?: (state: Record<string, unknown>) => void;\n    labelMetadata?: Record<string, unknown>;\n    showPhgoCoords?: boolean;\n    setShowPhgoCoords?: (updater: boolean | ((value: boolean) => boolean)) => void;\n')
+      .replace('declare function Reactree({ newick, defaultHeight, fasta }: ReactreeProps)', 'declare function Reactree({ newick, defaultHeight, fasta, initialState, onStateChange, onViewerSnapshot, labelMetadata, showPhgoCoords, setShowPhgoCoords }: ReactreeProps)');
     writeFileSync(file, text);
     console.log(`Patched Reactree viewer-state types: ${file}`);
-  } else {
+  } else if (!text.includes('labelMetadata?: Record<string, unknown>;') || !text.includes('showPhgoCoords?: boolean;')) {
     text = text
-      .replace('    onViewerSnapshot?: (state: Record<string, unknown>) => void;\n', '    onViewerSnapshot?: (state: Record<string, unknown>) => void;\n    showPhgoCoords?: boolean;\n    setShowPhgoCoords?: (updater: boolean | ((value: boolean) => boolean)) => void;\n')
-      .replace('declare function Reactree({ newick, defaultHeight, fasta, initialState, onStateChange, onViewerSnapshot }: ReactreeProps)', 'declare function Reactree({ newick, defaultHeight, fasta, initialState, onStateChange, onViewerSnapshot, showPhgoCoords, setShowPhgoCoords }: ReactreeProps)');
+      .replace('    onViewerSnapshot?: (state: Record<string, unknown>) => void;\n', '    onViewerSnapshot?: (state: Record<string, unknown>) => void;\n    labelMetadata?: Record<string, unknown>;\n    showPhgoCoords?: boolean;\n    setShowPhgoCoords?: (updater: boolean | ((value: boolean) => boolean)) => void;\n')
+      .replace('declare function Reactree({ newick, defaultHeight, fasta, initialState, onStateChange, onViewerSnapshot }: ReactreeProps)', 'declare function Reactree({ newick, defaultHeight, fasta, initialState, onStateChange, onViewerSnapshot, labelMetadata, showPhgoCoords, setShowPhgoCoords }: ReactreeProps)')
+      .replace('declare function Reactree({ newick, defaultHeight, fasta, initialState, onStateChange, onViewerSnapshot, showPhgoCoords, setShowPhgoCoords }: ReactreeProps)', 'declare function Reactree({ newick, defaultHeight, fasta, initialState, onStateChange, onViewerSnapshot, labelMetadata, showPhgoCoords, setShowPhgoCoords }: ReactreeProps)');
     writeFileSync(file, text);
+    console.log(`Patched Reactree coordinate viewer-state types: ${file}`);
+  } else {
     console.log(`Reactree viewer-state types already present: ${file}`);
   }
 }

@@ -125,11 +125,33 @@
       #jalview-desktop-div .phgo-root-desktop-frame .swingjs-window,
       #jalview-desktop-div .phgo-root-desktop-frame .swingjs-popup,
       #jalview-desktop-div .phgo-root-desktop-frame .swingjs-menu,
+      #jalview-desktop-div .phgo-root-desktop-frame .ui-j2smenu,
       #jalview-desktop-div .phgo-root-desktop-frame .ui-j2smenu-node,
       #jalview-desktop-div .phgo-root-desktop-frame [role="dialog"],
       #jalview-desktop-div .phgo-root-desktop-frame [role="menu"] {
         visibility: visible !important;
         pointer-events: auto !important;
+      }
+
+      #jalview-desktop-div .phgo-root-desktop-frame .swingjs-popup,
+      #jalview-desktop-div .phgo-root-desktop-frame .swingjs-menu,
+      #jalview-desktop-div .phgo-root-desktop-frame .ui-j2smenu,
+      #jalview-desktop-div .phgo-root-desktop-frame [role="menu"] {
+        position: absolute !important;
+        inset: auto !important;
+        max-width: calc(100dvw - 8px);
+        max-height: calc(100dvh - 8px);
+        overflow: auto !important;
+        z-index: 2500 !important;
+      }
+
+      #jalview-alignment-div [id*="_MenuBarUI"] {
+        position: absolute !important;
+        left: 0 !important;
+        top: 0 !important;
+        right: auto !important;
+        max-width: 100dvw !important;
+        z-index: 2400 !important;
       }
 
       #jalview-desktop-div .phgo-root-desktop-frame .swingjs-desktop .swingjs-window,

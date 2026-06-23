@@ -108,6 +108,15 @@ Use bridge-contract tests and deterministic fake bridge outputs:
 
 Use the in-app/browser path for release smoke tests and after changes to the bridge, SwingJS child-window registration, or save/export UI.
 
+## Manual MSA Save State
+
+- `File -> Save` calls only `/sessions/<id>/msa/state` with a full durable snapshot and does not call `/msa/apply`
+- row-only checkbox saves preserve the last full durable state on the server
+- saved state includes sequences, settings, groups, annotations, features, markers, and colour/font/render details when Jalview exposes them
+- reopening the MSA page restores saved groups, annotations, features, settings, and sequence edits without tree recomputation
+- repeated restore is idempotent and does not duplicate PHgo-restored groups, annotations, or features
+- PHgo tree refresh is the boundary that can replace the shared MSA payload/alignment generation
+
 Required behavior:
 
 - MSA page opens normally

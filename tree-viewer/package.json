@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node src/labels.test.mjs && node src/mega-display.test.mjs && node src/pgv.test.mjs",
+    "test": "npm run patch:reactree && node src/labels.test.mjs && node src/mega-display.test.mjs && node src/pgv.test.mjs && node src/reactree-patch.test.mjs",
     "patch:reactree": "node scripts/patch-reactree-dpi.mjs",
-    "build": "npm run patch:reactree && vite build"
+    "build": "vite build"
   },
   "dependencies": {
     "@fluentui/react-components": "^9.74.1",

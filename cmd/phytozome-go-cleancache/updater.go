@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/KiriKirby/phytozome-go/internal/notifyaudio"
 	"github.com/KiriKirby/phytozome-go/internal/startupstate"
 	"golang.org/x/term"
 )
@@ -433,6 +434,7 @@ func downloadFile(ctx context.Context, rawURL string, dest string, output io.Wri
 		return fmt.Errorf("write update archive %s: %w", dest, err)
 	}
 	progress.Finish("Application update download complete.", true)
+	notifyaudio.PlayStartup()
 	return nil
 }
 

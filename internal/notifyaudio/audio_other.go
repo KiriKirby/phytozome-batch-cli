@@ -1,7 +1,7 @@
-//go:build !windows
+//go:build !windows && !darwin && !linux
 
 package notifyaudio
 
-func playAudioFile(path string) error {
+func playMIDIFile(path string) error {
 	return nil
 }

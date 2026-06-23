@@ -137,6 +137,9 @@ func TestViewerAssetsIncludeJalviewBootstrapPage(t *testing.T) {
 		!strings.Contains(html, `[id*="_DesktopPaneUI"]`) ||
 		!strings.Contains(html, `#jalview-desktop-div .phgo-root-desktop-frame [id*="_MenuBarUI"]`) ||
 		!strings.Contains(html, `#jalview-alignment-div [id*="_MenuBarUI"]`) ||
+		!strings.Contains(html, `.phgo-root-desktop-frame .ui-j2smenu`) ||
+		!strings.Contains(html, `max-width: calc(100dvw - 8px)`) ||
+		!strings.Contains(html, `z-index: 2500 !important`) ||
 		!strings.Contains(html, `scrollbar-color: rgba(96, 94, 92, 0.62) rgba(243, 242, 241, 0.9)`) ||
 		!strings.Contains(html, `*::-webkit-scrollbar-thumb`) ||
 		!strings.Contains(html, `pointer-events: none`) ||
@@ -179,6 +182,8 @@ func TestViewerAssetsIncludePHgoJalviewBridge(t *testing.T) {
 		!strings.Contains(js, `collectMSASequences`) ||
 		!strings.Contains(js, `collectMSAFeatures`) ||
 		!strings.Contains(js, `state.features = collectMSAFeatures(frame)`) ||
+		!strings.Contains(js, `state.colours = collectMSAColours(frame)`) ||
+		!strings.Contains(js, `state.markers = collectMSAMarkers(frame)`) ||
 		!strings.Contains(js, `javaMapToObject`) ||
 		!strings.Contains(js, `const full = fullState !== false`) ||
 		!strings.Contains(js, `scheduleMSAStateSave("selection-toggle", 250, false)`) ||
@@ -186,6 +191,9 @@ func TestViewerAssetsIncludePHgoJalviewBridge(t *testing.T) {
 		!strings.Contains(js, `await saveTask`) ||
 		!strings.Contains(js, `saveMSAStateNow`) ||
 		!strings.Contains(js, `saveMSAStateManual`) ||
+		!strings.Contains(js, `removePHgoRestoredAnnotations(frame)`) ||
+		!strings.Contains(js, `removePHgoRestoredSequenceFeatures(frame)`) ||
+		!strings.Contains(js, `removePHgoRestoredGroups(frame)`) ||
 		!strings.Contains(js, `openMSAExportImageWindow`) ||
 		!strings.Contains(js, `openMSAExportImageWindowSafe`) ||
 		!strings.Contains(js, `MSA export window failed`) ||
@@ -195,6 +203,9 @@ func TestViewerAssetsIncludePHgoJalviewBridge(t *testing.T) {
 		!strings.Contains(js, `java.awt.image.BufferedImage`) ||
 		!strings.Contains(js, `data-msaexpor-renderer="jalview-vector"`) ||
 		!strings.Contains(js, `installSwingColourSwatchFix`) ||
+		!strings.Contains(js, `function fixSwingMenuPositioning(reason)`) ||
+		!strings.Contains(js, `fixSwingMenuPositioning("startup")`) ||
+		!strings.Contains(js, `fixSwingMenuPositioning("layout-ready")`) ||
 		!strings.Contains(js, `ensureMSAExportWindowMounted`) ||
 		!strings.Contains(js, `const leftLabelPadding = Math.max(24, Math.ceil(charWidth * 3));`) ||
 		!strings.Contains(js, `SwingJS child-window content pane is not available for msaexpor`) ||
@@ -221,6 +232,10 @@ func TestViewerAssetsIncludePHgoJalviewBridge(t *testing.T) {
 		!strings.Contains(js, `/msa/state`) ||
 		!strings.Contains(js, `payloadUpdatedAt`) ||
 		!strings.Contains(js, `currentPayloadUpdatedAt`) ||
+		!strings.Contains(js, `setConservationColour$java_awt_Color`) ||
+		!strings.Contains(js, `setBackgroundColour$java_awt_Color`) ||
+		!strings.Contains(js, `setGlobalColourScheme$O`) ||
+		!strings.Contains(js, `setResidueShading$O`) ||
 		!strings.Contains(js, `Reloading MSA...`) ||
 		!strings.Contains(js, `checkboxColumnWidth`) ||
 		strings.Contains(js, `installApplyMenuFallback`) ||
@@ -229,6 +244,7 @@ func TestViewerAssetsIncludePHgoJalviewBridge(t *testing.T) {
 		strings.Contains(js, `selectionStateForName`) ||
 		strings.Contains(js, `toggleSelectionForName`) ||
 		strings.Contains(js, `selectionEntryForSequenceName`) ||
+		strings.Contains(js, `saveMSAStateManual(); applyMSASelection`) ||
 		strings.Contains(js, `window.setInterval(updateMSACheckboxLayer`) ||
 		strings.Contains(js, `phgo-hidden-desktop`) ||
 		strings.Contains(js, `notify("layout-warning"`) ||
@@ -857,9 +873,11 @@ func TestViewerServerMSAStateEndpointPreservesDurableJalviewState(t *testing.T) 
 			{"taxon_id":"a","display_name":"Alpha Renamed","description":"manual desc","sequence":"m p e p"}
 		],
 		"settings": {"show_annotations": false, "wrap_alignment": true},
-		"groups": [{"name": "manual", "start": 1, "end": 4}],
+		"colours": {"text": "#112233", "scheme": "Clustal"},
+		"groups": [{"name": "manual", "start": 1, "end": 4, "outline_colour":"#123456"}],
 		"annotations": [{"label": "quality", "visible": true}],
-		"features": [{"taxon_id":"a","display_name":"Alpha Renamed","type":"domain","begin":1,"end":4,"feature_group":"manual","other_details":{"ID":"feat1"}}]
+		"features": [{"taxon_id":"a","display_name":"Alpha Renamed","type":"domain","begin":1,"end":4,"feature_group":"manual","links":["https://example.test/f"],"other_details":{"ID":"feat1"}}],
+		"markers": [{"name":"bookmark","column":2}]
 	}`))
 	if err != nil {
 		t.Fatalf("build MSA state request: %v", err)
@@ -879,6 +897,9 @@ func TestViewerServerMSAStateEndpointPreservesDurableJalviewState(t *testing.T) 
 	if got, ok := state.Settings["wrap_alignment"].(bool); !ok || !got {
 		t.Fatalf("MSA settings were not preserved: %#v", state.Settings)
 	}
+	if state.Colours["text"] != "#112233" || state.Colours["scheme"] != "Clustal" {
+		t.Fatalf("MSA colours were not preserved: %#v", state.Colours)
+	}
 	if len(state.Groups) != 1 || state.Groups[0]["name"] != "manual" {
 		t.Fatalf("MSA groups were not preserved: %#v", state.Groups)
 	}
@@ -887,6 +908,9 @@ func TestViewerServerMSAStateEndpointPreservesDurableJalviewState(t *testing.T) 
 	}
 	if len(state.Features) != 1 || state.Features[0]["type"] != "domain" || state.Features[0]["taxon_id"] != "a" {
 		t.Fatalf("MSA features were not preserved: %#v", state.Features)
+	}
+	if len(state.Markers) != 1 || state.Markers[0]["name"] != "bookmark" {
+		t.Fatalf("MSA markers were not preserved: %#v", state.Markers)
 	}
 	if len(state.Sequences) != 1 || state.Sequences[0].TaxonID != "a" || state.Sequences[0].DisplayName != "Alpha Renamed" || state.Sequences[0].Description != "manual desc" || state.Sequences[0].Sequence != "m p e p" {
 		t.Fatalf("MSA sequence edits were not preserved: %#v", state.Sequences)
@@ -907,11 +931,11 @@ func TestViewerServerMSAStateEndpointPreservesDurableJalviewState(t *testing.T) 
 		t.Fatalf("PUT partial MSA state status = %d", partialResp.StatusCode)
 	}
 	state = server.GetMSAState("canvas")
-	if len(state.Features) != 1 || len(state.Groups) != 1 || len(state.Annotations) != 1 || len(state.Sequences) != 1 {
+	if len(state.Features) != 1 || len(state.Groups) != 1 || len(state.Annotations) != 1 || len(state.Sequences) != 1 || len(state.Markers) != 1 || len(state.Colours) != 2 {
 		t.Fatalf("partial MSA state update should preserve durable Jalview state: %#v", state)
 	}
 	body := getViewerPayload(t, server.URL()+"/sessions/canvas/msa/state")
-	if !strings.Contains(body, `"show_annotations":false`) || !strings.Contains(body, `"state":"green"`) || !strings.Contains(body, `"description":"manual desc"`) || !strings.Contains(body, `"features"`) {
+	if !strings.Contains(body, `"show_annotations":false`) || !strings.Contains(body, `"state":"green"`) || !strings.Contains(body, `"description":"manual desc"`) || !strings.Contains(body, `"features"`) || !strings.Contains(body, `"colours"`) || !strings.Contains(body, `"markers"`) {
 		t.Fatalf("MSA state endpoint body missing durable state: %s", body)
 	}
 	fasta := getViewerPayload(t, server.URL()+"/sessions/canvas/aligned.fasta")

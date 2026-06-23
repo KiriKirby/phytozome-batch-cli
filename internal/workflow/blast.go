@@ -34,6 +34,7 @@ import (
 	"github.com/KiriKirby/phytozome-go/internal/lemna"
 	"github.com/KiriKirby/phytozome-go/internal/model"
 	"github.com/KiriKirby/phytozome-go/internal/ncbi"
+	"github.com/KiriKirby/phytozome-go/internal/notifyaudio"
 	"github.com/KiriKirby/phytozome-go/internal/phylo"
 	"github.com/KiriKirby/phytozome-go/internal/phytozome"
 	"github.com/KiriKirby/phytozome-go/internal/progressctx"
@@ -587,9 +588,13 @@ func (w *BlastWizard) ensureSymbolNameDatabaseWithProgress(ctx context.Context, 
 		return fmt.Errorf("%w: missing %s", labelname.ErrGeneInfoDatabaseMissing, path)
 	}
 	safeProgress(update)(0, "Preparing symbol name database...")
-	return labelname.EnsureDefaultGeneInfoDatabaseProgress(ctx, path, func(event labelname.GeneInfoProgress) {
+	err = labelname.EnsureDefaultGeneInfoDatabaseProgress(ctx, path, func(event labelname.GeneInfoProgress) {
 		safeProgress(update)(geneInfoProgressPermille(event), labelname.FormatGeneInfoProgress(event))
 	})
+	if err == nil {
+		notifyaudio.PlayDone()
+	}
+	return err
 }
 
 func (w *BlastWizard) ensureSymbolNameDatabaseWithUpdate(ctx context.Context, update func(string), allowInstall bool) error {
@@ -612,9 +617,13 @@ func (w *BlastWizard) ensureSymbolNameDatabaseWithUpdate(ctx context.Context, up
 	}
 	taskUpdate := safeTaskUpdate(update)
 	taskUpdate("Preparing symbol name database...")
-	return labelname.EnsureDefaultGeneInfoDatabaseProgress(ctx, path, func(event labelname.GeneInfoProgress) {
+	err = labelname.EnsureDefaultGeneInfoDatabaseProgress(ctx, path, func(event labelname.GeneInfoProgress) {
 		taskUpdate(labelname.FormatGeneInfoProgress(event))
 	})
+	if err == nil {
+		notifyaudio.PlayDone()
+	}
+	return err
 }
 
 func (w *BlastWizard) waitForStartupInitializationIfNeeded(ctx context.Context) error {
@@ -7267,7 +7276,11 @@ func (w *BlastWizard) autoIdentifyBlastLabelsWithProgress(ctx context.Context, s
 				setBlastQueryItemLabel(&out[i], preferredStoredQuerySourceAlias(out[i].QuerySource))
 			}
 		}
-		return harmonizeAutoIdentifiedBlastLabelsWithLocks(out, lockedLabels), nil
+		out = harmonizeAutoIdentifiedBlastLabelsWithLocks(out, lockedLabels)
+		if len(items) > 0 && allLabelsPresent(out) {
+			notifyaudio.PlayDone()
+		}
+		return out, nil
 	}
 	autoIndexes := blastItemsNeedingAutoLabel(items)
 	if len(autoIndexes) == 0 {
@@ -7370,15 +7383,23 @@ func (w *BlastWizard) autoIdentifyBlastLabelsWithProgress(ctx context.Context, s
 		return out, nil
 	}
 	if w.suppressTaskModals {
-		return run(ctx, nil)
+		out, err := run(ctx, nil)
+		if err == nil && len(items) > 0 && allLabelsPresent(out) {
+			notifyaudio.PlayDone()
+		}
+		return out, err
 	}
-	return tui.RunTaskValueContext(tui.TaskPage{
+	out, err := tui.RunTaskValueContext(tui.TaskPage{
 		Path:        w.tuiPath("BLAST", "Auto identify"),
 		Title:       "Auto identifying BLAST symbol names",
 		Description: "Ranking BLAST query labels through the local symbol name database.",
 		Initial:     "Auto identifying BLAST symbol names...",
 		CancelError: prompt.ErrBackToQueryInput,
 	}, run)
+	if err == nil && len(items) > 0 && allLabelsPresent(out) {
+		notifyaudio.PlayDone()
+	}
+	return out, err
 }
 
 func (w *BlastWizard) supplementBlastAliasesWithProgress(ctx context.Context, selected model.SpeciesCandidate, items []blastQueryItem) ([]blastQueryItem, error) {
@@ -10178,7 +10199,7 @@ func (w *BlastWizard) autoIdentifyKeywordLabelsWithProgress(ctx context.Context,
 			return nil, err
 		}
 	}
-	return tui.RunTaskValueContext(tui.TaskPage{
+	identifications, err := tui.RunTaskValueContext(tui.TaskPage{
 		Path:        w.tuiPath("Keyword", "Auto identify"),
 		Title:       "Auto identifying symbol names",
 		Description: "Inferring keyword symbol names from result rows.",
@@ -10195,6 +10216,10 @@ func (w *BlastWizard) autoIdentifyKeywordLabelsWithProgress(ctx context.Context,
 		taskUpdate("Selecting symbol names...")
 		return autoIdentifyKeywordLabelIdentificationsWithSourceType(working, "symbolname database"), nil
 	})
+	if err == nil && len(groups) > 0 && len(identifications) == len(groups) {
+		notifyaudio.PlayDone()
+	}
+	return identifications, err
 }
 
 func (w *BlastWizard) autoIdentifyLemnaKeywordLabelsWithProgress(ctx context.Context, selected model.SpeciesCandidate, groups []model.KeywordSearchGroup) []keywordLabelIdentification {

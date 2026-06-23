@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/KiriKirby/phytozome-go/internal/labelname"
+	"github.com/KiriKirby/phytozome-go/internal/notifyaudio"
 	"github.com/KiriKirby/phytozome-go/internal/startupstate"
 )
 
@@ -555,6 +556,7 @@ func chooseLaunchWhileDownloading(appDir string, args []string, dbPath string, p
 			if err != nil {
 				return launchNow, err
 			}
+			notifyaudio.PlayStartup()
 			return launchNow, nil
 		}
 	}
@@ -584,6 +586,9 @@ func downloadSymbolNameDatabaseWithProgress(appDir string, label string, dbPath 
 		},
 	})
 	progress.Finish("Symbol name library download/build complete.", err == nil)
+	if err == nil {
+		notifyaudio.PlayStartup()
+	}
 	return err
 }
 

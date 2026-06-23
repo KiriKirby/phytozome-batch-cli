@@ -108,7 +108,10 @@ if (-not $skipTreeViewerBuild) {
         }
     }
     if (Test-Path -LiteralPath $targetAssetsRoot) {
-        Get-ChildItem -LiteralPath $targetAssetsRoot -Force | Where-Object { $_.Name -ne "jalviewjs" } | Remove-Item -Recurse -Force
+        $persistentAssetDirs = @("jalviewjs", "msaexpor")
+        Get-ChildItem -LiteralPath $targetAssetsRoot -Force |
+            Where-Object { $persistentAssetDirs -notcontains $_.Name } |
+            Remove-Item -Recurse -Force
     }
 
     Copy-Item -LiteralPath (Join-Path $viewerRoot "dist\index.html") -Destination $targetRoot -Force

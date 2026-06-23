@@ -1173,6 +1173,7 @@ func cloneMSAState(in MSAState) MSAState {
 	out.Sequences = append([]MSASequenceState(nil), in.Sequences...)
 	out.ViewerState = cloneAnyMap(in.ViewerState)
 	out.Settings = cloneAnyMap(in.Settings)
+	out.Colours = cloneAnyMap(in.Colours)
 	out.Annotations = cloneAnyMapSlice(in.Annotations)
 	out.Features = cloneAnyMapSlice(in.Features)
 	out.Groups = cloneAnyMapSlice(in.Groups)
@@ -1202,6 +1203,9 @@ func mergeMSAState(base MSAState, update MSAState) MSAState {
 	}
 	if update.Settings == nil {
 		out.Settings = cloneAnyMap(base.Settings)
+	}
+	if update.Colours == nil {
+		out.Colours = cloneAnyMap(base.Colours)
 	}
 	if update.Annotations == nil {
 		out.Annotations = cloneAnyMapSlice(base.Annotations)

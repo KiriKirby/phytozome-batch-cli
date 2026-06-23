@@ -29,6 +29,8 @@ The module does not export screenshots of the current UI. It asks the PHgo Jalvi
   Defines the advanced text format used to select PHgo rows and MSA column ranges and split those ranges into exported blocks.
 - [Rendering Contract](./rendering-contract.md)
   Defines layout, numbering, residue-position math, group/feature rendering, and SVG/PNG/PDF output rules.
+- [Save State Contract](./save-state-contract.md)
+  Defines the manual MSA `File -> Save` model, the non-UI state that must be persisted, and restore behavior.
 - [Implementation Plan](./implementation-plan.md)
   Defines staged implementation work and code-level integration tasks.
 - [Test Plan](./test-plan.md)

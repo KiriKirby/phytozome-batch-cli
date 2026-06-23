@@ -5,7 +5,6 @@ package notifyaudio
 import (
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 	"unsafe"
 
@@ -15,31 +14,18 @@ import (
 var (
 	winmmDLL      = windows.NewLazySystemDLL("winmm.dll")
 	mciSendString = winmmDLL.NewProc("mciSendStringW")
-	playMu        sync.Mutex
-	currentAlias  string
 )
 
-func playAudioFile(path string) error {
-	playMu.Lock()
-	defer playMu.Unlock()
-
-	if currentAlias != "" {
-		_ = mciCommand("stop " + currentAlias)
-		_ = mciCommand("close " + currentAlias)
-		currentAlias = ""
-	}
-
-	alias := fmt.Sprintf("phgo_ready_%d", time.Now().UnixNano())
+func playMIDIFile(path string) error {
+	alias := fmt.Sprintf("phgo_midi_%d", time.Now().UnixNano())
 	escapedPath := strings.ReplaceAll(path, `"`, `""`)
-	if err := mciCommand(fmt.Sprintf(`open "%s" type mpegvideo alias %s`, escapedPath, alias)); err != nil {
+	if err := mciCommand(fmt.Sprintf(`open "%s" type sequencer alias %s`, escapedPath, alias)); err != nil {
 		return err
 	}
-	if err := mciCommand("play " + alias + " from 0"); err != nil {
+	defer func() {
 		_ = mciCommand("close " + alias)
-		return err
-	}
-	currentAlias = alias
-	return nil
+	}()
+	return mciCommand("play " + alias + " from 0 wait")
 }
 
 func mciCommand(command string) error {
