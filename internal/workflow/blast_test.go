@@ -4811,6 +4811,23 @@ func TestBlastAuxWorkerBudgetsHonorEnvOverrides(t *testing.T) {
 	}
 }
 
+func TestTAIR12ENAKeywordWorkerBudgetUsesMeasuredHighConcurrency(t *testing.T) {
+	t.Setenv("PHGO_TAIR_ENA_KEYWORD_WORKERS", "")
+	src := fakeSource{name: "tair"}
+	tair12 := model.SpeciesCandidate{JBrowseName: "TAIR12", GenomeLabel: "TAIR12"}
+	if got := keywordSearchWorkerCountForSource(src, tair12, 200); got != 96 {
+		t.Fatalf("TAIR12 ENA keyword workers = %d, want measured default 96", got)
+	}
+	if got := keywordSearchWorkerCountForSource(src, model.SpeciesCandidate{JBrowseName: "TAIR10"}, 200); got != keywordSearchWorkerCount(200) {
+		t.Fatalf("non-ENA TAIR worker budget changed unexpectedly: %d", got)
+	}
+
+	t.Setenv("PHGO_TAIR_ENA_KEYWORD_WORKERS", "32")
+	if got := keywordSearchWorkerCountForSource(src, tair12, 200); got != 32 {
+		t.Fatalf("TAIR12 ENA keyword env override = %d, want 32", got)
+	}
+}
+
 func TestAlignPreparedBlastItemsToRequestResolvesProgramSpecificSequenceKinds(t *testing.T) {
 	w := &BlastWizard{
 		source: fakeSource{
@@ -7711,5 +7728,19 @@ func TestReplayExportFilterSettingsRelaxesGenomeTargetPrograms(t *testing.T) {
 	}
 	if blastp.InterProDomainMode != "conserved_region" || !blastp.RequireInterProConservedRegion {
 		t.Fatalf("blastp interpro defaults should stay enabled: %#v", blastp)
+	}
+}
+
+func TestKeywordRowLabelnameCandidatesIncludeENAIdentifiers(t *testing.T) {
+	row := model.KeywordResultRow{ExtraColumns: map[string]string{
+		"ena_locus_tag":  "TAIR12_TAIR12_AT2G37040",
+		"ena_protein_id": "CAO7037755.1",
+		"ena_accession":  "CAO7037755",
+	}}
+	candidates := allKeywordRowSymbolCandidates(row)
+	for _, want := range []string{"TAIR12_TAIR12_AT2G37040", "CAO7037755.1", "CAO7037755"} {
+		if !slices.Contains(candidates, want) {
+			t.Fatalf("ENA labelname candidate %q missing from %#v", want, candidates)
+		}
 	}
 }

@@ -8977,6 +8977,56 @@ func keywordSearchWorkerCount(total int) int {
 	return maxInt(parallelismFor(total, maxParallelKeywordJobs), networkParallelismFor(total))
 }
 
+func keywordSearchWorkerCountForSource(src source.DataSource, species model.SpeciesCandidate, total int) int {
+	if isTAIR12ENASpecies(src, species) {
+		if configured := configuredInt("PHGO_TAIR_ENA_KEYWORD_WORKERS", 0); configured > 0 {
+			return boundedWorkerCount(total, configured)
+		}
+		return boundedWorkerCount(total, 96)
+	}
+	if isTAIRReleaseSpecies(src, species) {
+		if configured := configuredInt("PHGO_TAIR_RELEASE_KEYWORD_WORKERS", 0); configured > 0 {
+			return boundedWorkerCount(total, configured)
+		}
+		return boundedWorkerCount(total, 128)
+	}
+	return keywordSearchWorkerCount(total)
+}
+
+func isTAIR12ENASpecies(src source.DataSource, species model.SpeciesCandidate) bool {
+	if !isTAIRSource(src) {
+		return false
+	}
+	for _, value := range []string{species.JBrowseName, species.GenomeLabel, species.SearchAlias} {
+		if strings.Contains(strings.ToUpper(strings.TrimSpace(value)), "TAIR12") {
+			return true
+		}
+	}
+	return false
+}
+
+func isTAIRReleaseSpecies(src source.DataSource, species model.SpeciesCandidate) bool {
+	if !isTAIRSource(src) {
+		return false
+	}
+	for _, value := range []string{species.JBrowseName, species.GenomeLabel, species.SearchAlias} {
+		upper := strings.ToUpper(strings.TrimSpace(value))
+		if strings.Contains(upper, "TAIR7") ||
+			strings.Contains(upper, "TAIR8") ||
+			strings.Contains(upper, "TAIR9") ||
+			strings.Contains(upper, "TAIR10") ||
+			strings.Contains(upper, "TAIR11") ||
+			strings.Contains(upper, "ARAPORT11") {
+			return true
+		}
+	}
+	return false
+}
+
+func isTAIRSource(src source.DataSource) bool {
+	return src != nil && strings.EqualFold(sourceDatabaseName(src), "tair")
+}
+
 func keywordSearchResultCompleted(result keywordSearchResult) bool {
 	return result.err == nil && !result.ended.IsZero()
 }
@@ -10469,6 +10519,9 @@ func allKeywordRowSymbolCandidates(row model.KeywordResultRow) []string {
 			"tair_fasta_symbols",
 			"tair_keyword_synonyms",
 			"tair_keyword_name_exact",
+			"ena_locus_tag",
+			"ena_protein_id",
+			"ena_accession",
 			"ncbi_other_aliases",
 			"ncbi_gene_name",
 			"ahrd_blast_hit_accession",
@@ -13155,7 +13208,7 @@ func (w *BlastWizard) searchKeywordResultsWithProgress(ctx context.Context, spec
 
 	for cursor := 0; cursor < len(pending); {
 		remaining := len(pending) - cursor
-		batchSize := keywordSearchWorkerCount(remaining)
+		batchSize := keywordSearchWorkerCountForSource(w.source, species, remaining)
 		if batchSize <= 0 {
 			break
 		}

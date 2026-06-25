@@ -15,9 +15,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,9 +36,17 @@ import (
 const (
 	baseURL                     = "https://www.arabidopsis.org"
 	downloadAPI                 = "https://www.arabidopsis.org/api/download-files/download?filePath="
-	tairKeywordIndexCacheSchema = "tair-keyword-index-v5"
+	tairFTPBase                 = "ftp://ftp.arabidopsis.org/home/tair/"
+	tairKeywordIndexCacheSchema = "tair-keyword-index-v7"
+	tairENAStudyPRJEB100887     = "PRJEB100887"
 	tairFamilyRowsCacheSchema   = "tair-family-rows-v2"
 	tairLiveFamilyCacheSchema   = "tair-live-family-v2"
+	tairDownloadTimeout         = 25 * time.Second
+)
+
+const (
+	tairReleaseSourceFiles = ""
+	tairReleaseSourceENA   = "ena"
 )
 
 type Client struct {
@@ -52,6 +62,7 @@ type Client struct {
 	nucleotideSeqs  map[string]map[string]proteinEntry
 	fastaHeaders    map[string]map[string]fastaEntry
 	descriptions    map[string]map[string]descriptionEntry
+	geneAliases     map[string]map[string]geneAliasEntry
 	representative  map[string]map[string]string
 	liveGeneDocs    map[string][]tairSearchDoc
 	liveProteinDocs map[string][]tairSearchDoc
@@ -60,18 +71,24 @@ type Client struct {
 	querySources    map[string]model.QuerySequenceSource
 	localBlastDBs   map[string]string
 	localResults    map[string]model.BlastResult
+	enaCodingRows   map[string][]enaCodingRow
+	enaFastaEntries map[string]proteinEntry
 }
 
 type releaseInfo struct {
 	Name                   string `json:"name"`
 	Label                  string `json:"label"`
 	ReleaseDate            string `json:"release_date"`
+	Source                 string `json:"source,omitempty"`
+	SourceURL              string `json:"source_url,omitempty"`
+	ENAStudyAccession      string `json:"ena_study_accession,omitempty"`
 	GFFURL                 string `json:"gff_url"`
 	ProteinURL             string `json:"protein_url"`
 	NucleotideURL          string `json:"nucleotide_url"`
 	CDNAURL                string `json:"cdna_url"`
 	CDSURL                 string `json:"cds_url"`
 	DescriptionURL         string `json:"description_url"`
+	GeneAliasURL           string `json:"gene_alias_url"`
 	RepresentativeModelURL string `json:"representative_model_url"`
 	ReportURLBase          string `json:"report_url_base"`
 }
@@ -118,6 +135,17 @@ type proteinEntry struct {
 	Symbols     string `json:"symbols"`
 }
 
+type enaCodingRow struct {
+	Accession       string
+	Description     string
+	Gene            string
+	Product         string
+	LocusTag        string
+	ProteinID       string
+	SequenceVersion string
+	StudyAccession  string
+}
+
 var (
 	spacePattern       = regexp.MustCompile(`\s+`)
 	searchNoisePattern = regexp.MustCompile(`[^a-z0-9]+`)
@@ -141,6 +169,7 @@ func NewClient(httpClient *http.Client) *Client {
 		nucleotideSeqs:  make(map[string]map[string]proteinEntry),
 		fastaHeaders:    make(map[string]map[string]fastaEntry),
 		descriptions:    make(map[string]map[string]descriptionEntry),
+		geneAliases:     make(map[string]map[string]geneAliasEntry),
 		representative:  make(map[string]map[string]string),
 		liveGeneDocs:    make(map[string][]tairSearchDoc),
 		liveProteinDocs: make(map[string][]tairSearchDoc),
@@ -149,6 +178,8 @@ func NewClient(httpClient *http.Client) *Client {
 		querySources:    make(map[string]model.QuerySequenceSource),
 		localBlastDBs:   make(map[string]string),
 		localResults:    make(map[string]model.BlastResult),
+		enaCodingRows:   make(map[string][]enaCodingRow),
+		enaFastaEntries: make(map[string]proteinEntry),
 	}
 	for _, rel := range defaultReleases() {
 		c.releases[strings.ToLower(rel.Name)] = rel
@@ -163,25 +194,30 @@ func defaultReleases() []releaseInfo {
 		{
 			Name:                   "TAIR12",
 			Label:                  "TAIR12",
-			ReleaseDate:            "2026-02-01",
-			GFFURL:                 downloadURL("Genes/TAIR12_genome_release/TAIR12_1Feb26.gff3.zip"),
-			ProteinURL:             downloadURL("Genes/TAIR12_genome_release/TAIR12_pep.fasta"),
-			NucleotideURL:          downloadURL("Genes/TAIR12_genome_release/TAIR12_cds.fasta"),
-			CDSURL:                 downloadURL("Genes/TAIR12_genome_release/TAIR12_cds.fasta"),
+			ReleaseDate:            "2026-02-05 ENA first public",
+			Source:                 tairReleaseSourceENA,
+			SourceURL:              "https://www.ebi.ac.uk/ena/browser/view/PRJEB100887",
+			ENAStudyAccession:      tairENAStudyPRJEB100887,
+			GFFURL:                 "",
+			ProteinURL:             "",
+			NucleotideURL:          "",
+			CDSURL:                 "",
 			DescriptionURL:         "",
 			RepresentativeModelURL: "",
-			ReportURLBase:          baseURL + "/servlets/TairObject?type=locus&name=",
+			ReportURLBase:          "https://www.ebi.ac.uk/ena/browser/view/",
 		},
 		{
 			Name:                   "TAIR11",
 			Label:                  "TAIR11",
-			ReleaseDate:            "unpublished in current public download tree",
-			GFFURL:                 "",
+			ReleaseDate:            "2024-10-01 Zenodo TAIR functional annotation data",
+			SourceURL:              "https://zenodo.org/records/17371665",
+			GFFURL:                 "https://zenodo.org/api/records/17371665/files/Araport11_GFF3_genes_transposons.20241001.gff.gz/content",
 			ProteinURL:             "",
 			NucleotideURL:          "",
 			CDNAURL:                "",
 			CDSURL:                 "",
-			DescriptionURL:         "",
+			DescriptionURL:         "https://zenodo.org/api/records/17371665/files/Araport11_functional_descriptions_20241001.txt.gz/content",
+			GeneAliasURL:           "https://zenodo.org/api/records/17371665/files/gene_aliases_20241001.txt.gz/content",
 			RepresentativeModelURL: "",
 			ReportURLBase:          baseURL + "/servlets/TairObject?type=locus&name=",
 		},
@@ -203,10 +239,10 @@ func defaultReleases() []releaseInfo {
 			Label:                  "TAIR10",
 			ReleaseDate:            "2010-12",
 			GFFURL:                 downloadURL("Genes/TAIR10_genome_release/TAIR10_gff3/TAIR10_GFF3_genes_transposons.gff"),
-			ProteinURL:             downloadURL("Genes/TAIR10_genome_release/TAIR10_blastsets/TAIR10_pep_20110103_representative_gene_model_updated"),
+			ProteinURL:             downloadURL("Sequences/blast_datasets/TAIR10_blastsets/TAIR10_pep_20110103_representative_gene_model_updated"),
 			NucleotideURL:          downloadURL("Genes/TAIR10_genome_release/TAIR10_chromosome_files/TAIR10_chr_all.fas.gz"),
-			CDNAURL:                downloadURL("Genes/TAIR10_genome_release/TAIR10_blastsets/TAIR10_cdna_20110103_representative_gene_model_updated"),
-			CDSURL:                 downloadURL("Genes/TAIR10_genome_release/TAIR10_blastsets/TAIR10_cds_20110103_representative_gene_model_updated"),
+			CDNAURL:                downloadURL("Sequences/blast_datasets/TAIR10_blastsets/TAIR10_cdna_20110103_representative_gene_model_updated"),
+			CDSURL:                 downloadURL("Sequences/blast_datasets/TAIR10_blastsets/TAIR10_cds_20110103_representative_gene_model_updated"),
 			DescriptionURL:         downloadURL("Genes/TAIR10_genome_release/TAIR10_functional_descriptions_20130831.txt"),
 			RepresentativeModelURL: downloadURL("Genes/TAIR10_genome_release/TAIR10_gene_lists/TAIR10_representative_gene_models"),
 			ReportURLBase:          baseURL + "/servlets/TairObject?type=locus&name=",
@@ -215,11 +251,11 @@ func defaultReleases() []releaseInfo {
 			Name:                   "TAIR9",
 			Label:                  "TAIR9",
 			ReleaseDate:            "2009",
-			GFFURL:                 downloadURL("Genes/TAIR9_genome_release/tair9_gff3/TAIR9_GFF3_genes_transposons.gff"),
-			ProteinURL:             downloadURL("Genes/TAIR9_genome_release/TAIR9_pep_20090619"),
+			GFFURL:                 downloadURL("Maps/gbrowse_data/TAIR9/TAIR9_GFF3_genes_transposons.gff"),
+			ProteinURL:             downloadURL("Sequences/blast_datasets/TAIR9_blastsets/TAIR9_pep_20090619_representative_gene_model"),
 			NucleotideURL:          downloadURL("Genes/TAIR9_genome_release/TAIR9_chr_all.fas"),
-			CDNAURL:                "",
-			CDSURL:                 "",
+			CDNAURL:                downloadURL("Sequences/blast_datasets/TAIR9_blastsets/TAIR9_cdna_20090619"),
+			CDSURL:                 downloadURL("Sequences/blast_datasets/TAIR9_blastsets/TAIR9_cds_20090619"),
 			DescriptionURL:         downloadURL("Genes/TAIR9_genome_release/TAIR9_functional_descriptions"),
 			RepresentativeModelURL: downloadURL("Genes/TAIR9_genome_release/TAIR9_representative_gene_model.txt"),
 			ReportURLBase:          baseURL + "/servlets/TairObject?type=locus&name=",
@@ -228,11 +264,11 @@ func defaultReleases() []releaseInfo {
 			Name:                   "TAIR8",
 			Label:                  "TAIR8",
 			ReleaseDate:            "2008",
-			GFFURL:                 downloadURL("Genes/TAIR8_genome_release/tair8_gff3/TAIR8_GFF3_genes_transposons.gff"),
-			ProteinURL:             downloadURL("Genes/TAIR8_genome_release/TAIR8_pep_20080412"),
+			GFFURL:                 downloadURL("Maps/gbrowse_data/TAIR8/TAIR8_GFF3_genes_transposons.gff"),
+			ProteinURL:             downloadURL("Sequences/blast_datasets/TAIR8_blastsets/TAIR8_pep_20080412"),
 			NucleotideURL:          downloadURL("Genes/TAIR8_genome_release/tair8.at.chromosomes.fas"),
-			CDNAURL:                "",
-			CDSURL:                 "",
+			CDNAURL:                downloadURL("Sequences/blast_datasets/TAIR8_blastsets/TAIR8_cdna_20080412"),
+			CDSURL:                 downloadURL("Sequences/blast_datasets/TAIR8_blastsets/TAIR8_cds_20080412"),
 			DescriptionURL:         downloadURL("Genes/TAIR8_genome_release/TAIR8_functional_descriptions"),
 			RepresentativeModelURL: downloadURL("Genes/TAIR8_genome_release/TAIR8_representative_gene_model"),
 			ReportURLBase:          baseURL + "/servlets/TairObject?type=locus&name=",
@@ -242,10 +278,10 @@ func defaultReleases() []releaseInfo {
 			Label:                  "TAIR7",
 			ReleaseDate:            "2007",
 			GFFURL:                 downloadURL("Genes/TAIR7_genome_release/TAIR7_gff3/TAIR7_GFF3_genes.gff"),
-			ProteinURL:             downloadURL("Genes/TAIR7_genome_release/TAIR7_pep_20070425"),
-			NucleotideURL:          "",
-			CDNAURL:                "",
-			CDSURL:                 "",
+			ProteinURL:             downloadURL("Sequences/blast_datasets/TAIR7_blastsets/TAIR7_pep_20070425"),
+			NucleotideURL:          downloadURL("Sequences/blast_datasets/TAIR7_blastsets/TAIR7_seq_20070320"),
+			CDNAURL:                downloadURL("Sequences/blast_datasets/TAIR7_blastsets/TAIR7_cdna_20070425"),
+			CDSURL:                 downloadURL("Sequences/blast_datasets/TAIR7_blastsets/TAIR7_cds_20070425"),
 			DescriptionURL:         downloadURL("Genes/TAIR7_genome_release/TAIR7_functional_descriptions"),
 			RepresentativeModelURL: "",
 			ReportURLBase:          baseURL + "/servlets/TairObject?type=locus&name=",
@@ -297,6 +333,9 @@ func tairReleaseUsableInMode(rel releaseInfo, mode string) bool {
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	switch mode {
 	case "keyword", "family":
+		if mode == "keyword" && rel.Source == tairReleaseSourceENA {
+			return true
+		}
 		return strings.TrimSpace(rel.GFFURL) != ""
 	case "blast":
 		return strings.TrimSpace(rel.ProteinURL) != "" || strings.TrimSpace(rel.NucleotideURL) != ""
@@ -403,8 +442,19 @@ func (c *Client) SearchKeywordRowsByIdentifier(ctx context.Context, version mode
 	if term == "" {
 		return nil, nil
 	}
+	if rel, err := c.releaseForVersion(version); err == nil && rel.Source == tairReleaseSourceENA {
+		rows, err := c.searchENAIdentifierRows(ctx, version, rel, term, kind, limit)
+		if err != nil {
+			return nil, err
+		}
+		return rows, nil
+	}
 	if rel, err := c.releaseForVersion(version); err == nil && rel.GFFURL != "" {
-		if idx, idxErr := c.cachedIndex(ctx, version); idxErr == nil && len(idx.Rows) > 0 {
+		idx, idxErr := c.cachedIndex(ctx, version)
+		if idxErr != nil {
+			return nil, idxErr
+		}
+		if len(idx.Rows) > 0 {
 			var keys []string
 			switch strings.ToLower(strings.TrimSpace(kind)) {
 			case "gene":
@@ -427,6 +477,9 @@ func (c *Client) SearchKeywordRowsByIdentifier(ctx context.Context, version mode
 		}
 		return nil, nil
 	}
+	if rel, err := c.releaseForVersion(version); err == nil && rel.SourceURL != "" {
+		return nil, nil
+	}
 	rows, err := c.searchLiveIdentifierRows(ctx, version, term, kind)
 	if err != nil {
 		return nil, err
@@ -435,8 +488,15 @@ func (c *Client) SearchKeywordRowsByIdentifier(ctx context.Context, version mode
 }
 
 func (c *Client) SearchKeywordRowsByLabel(ctx context.Context, version model.SpeciesCandidate, term string, limit int) ([]model.KeywordResultRow, error) {
+	if rel, err := c.releaseForVersion(version); err == nil && rel.Source == tairReleaseSourceENA {
+		return nil, nil
+	}
 	if rel, err := c.releaseForVersion(version); err == nil && rel.GFFURL != "" {
-		if idx, idxErr := c.cachedIndex(ctx, version); idxErr == nil && len(idx.Rows) > 0 {
+		idx, idxErr := c.cachedIndex(ctx, version)
+		if idxErr != nil {
+			return nil, idxErr
+		}
+		if len(idx.Rows) > 0 {
 			rows := c.searchKeywordRowsByAliases(idx, term, limit)
 			if len(rows) > 0 {
 				for i := range rows {
@@ -448,6 +508,9 @@ func (c *Client) SearchKeywordRowsByLabel(ctx context.Context, version model.Spe
 		}
 		return nil, nil
 	}
+	if rel, err := c.releaseForVersion(version); err == nil && rel.SourceURL != "" {
+		return nil, nil
+	}
 	rows, err := c.searchLiveLabelRows(ctx, version, term)
 	if err != nil {
 		return nil, err
@@ -456,13 +519,23 @@ func (c *Client) SearchKeywordRowsByLabel(ctx context.Context, version model.Spe
 }
 
 func (c *Client) SearchKeywordRowsByKeywordText(ctx context.Context, version model.SpeciesCandidate, term string, limit int) ([]model.KeywordResultRow, error) {
+	if rel, err := c.releaseForVersion(version); err == nil && rel.Source == tairReleaseSourceENA {
+		return nil, nil
+	}
 	if rel, err := c.releaseForVersion(version); err == nil && rel.GFFURL != "" {
-		if idx, idxErr := c.cachedIndex(ctx, version); idxErr == nil && len(idx.Rows) > 0 {
+		idx, idxErr := c.cachedIndex(ctx, version)
+		if idxErr != nil {
+			return nil, idxErr
+		}
+		if len(idx.Rows) > 0 {
 			rows := c.searchIndex(idx, term, false, limit)
 			if len(rows) > 0 {
 				return rows, nil
 			}
 		}
+		return nil, nil
+	}
+	if rel, err := c.releaseForVersion(version); err == nil && rel.SourceURL != "" {
 		return nil, nil
 	}
 	rows, err := c.searchLiveKeywordRows(ctx, version, term, false)
@@ -473,13 +546,23 @@ func (c *Client) SearchKeywordRowsByKeywordText(ctx context.Context, version mod
 }
 
 func (c *Client) SearchKeywordRowsByWideText(ctx context.Context, version model.SpeciesCandidate, term string, limit int) ([]model.KeywordResultRow, error) {
+	if rel, err := c.releaseForVersion(version); err == nil && rel.Source == tairReleaseSourceENA {
+		return nil, nil
+	}
 	if rel, err := c.releaseForVersion(version); err == nil && rel.GFFURL != "" {
-		if idx, idxErr := c.cachedIndex(ctx, version); idxErr == nil && len(idx.Rows) > 0 {
+		idx, idxErr := c.cachedIndex(ctx, version)
+		if idxErr != nil {
+			return nil, idxErr
+		}
+		if len(idx.Rows) > 0 {
 			rows := c.searchIndex(idx, term, true, limit)
 			if len(rows) > 0 {
 				return rows, nil
 			}
 		}
+		return nil, nil
+	}
+	if rel, err := c.releaseForVersion(version); err == nil && rel.SourceURL != "" {
 		return nil, nil
 	}
 	rows, err := c.searchLiveKeywordRows(ctx, version, term, true)
@@ -490,8 +573,15 @@ func (c *Client) SearchKeywordRowsByWideText(ctx context.Context, version model.
 }
 
 func (c *Client) SearchKeywordRowsByBroadText(ctx context.Context, version model.SpeciesCandidate, term string, limit int) ([]model.KeywordResultRow, error) {
+	if rel, err := c.releaseForVersion(version); err == nil && rel.Source == tairReleaseSourceENA {
+		return nil, nil
+	}
 	if rel, err := c.releaseForVersion(version); err == nil && rel.GFFURL != "" {
-		if idx, idxErr := c.cachedIndex(ctx, version); idxErr == nil && len(idx.Rows) > 0 {
+		idx, idxErr := c.cachedIndex(ctx, version)
+		if idxErr != nil {
+			return nil, idxErr
+		}
+		if len(idx.Rows) > 0 {
 			rows := c.searchIndex(idx, term, true, limit)
 			if len(rows) > 0 {
 				for i := range rows {
@@ -500,6 +590,9 @@ func (c *Client) SearchKeywordRowsByBroadText(ctx context.Context, version model
 				return rows, nil
 			}
 		}
+		return nil, nil
+	}
+	if rel, err := c.releaseForVersion(version); err == nil && rel.SourceURL != "" {
 		return nil, nil
 	}
 	rows, err := c.searchLiveKeywordRows(ctx, version, term, true)
@@ -518,7 +611,11 @@ func (c *Client) SearchKeywordRowsByFamily(ctx context.Context, version model.Sp
 		return cached, nil
 	}
 	if rel, err := c.releaseForVersion(version); err == nil && rel.GFFURL != "" {
-		if idx, idxErr := c.cachedIndex(ctx, version); idxErr == nil && len(idx.Rows) > 0 {
+		idx, idxErr := c.cachedIndex(ctx, version)
+		if idxErr != nil {
+			return nil, idxErr
+		}
+		if len(idx.Rows) > 0 {
 			rows := c.searchKeywordRowsByFamilyIndex(idx, key, limit)
 			rows = keywordRowsWithSequences(rows)
 			if len(rows) > 0 {
@@ -562,9 +659,222 @@ func (c *Client) SearchKeywordRowsByFamily(ctx context.Context, version model.Sp
 	return rows, nil
 }
 
+func (c *Client) searchENAIdentifierRows(ctx context.Context, version model.SpeciesCandidate, rel releaseInfo, term string, kind string, limit int) ([]model.KeywordResultRow, error) {
+	term = cleanIdentifier(term)
+	if term == "" {
+		return nil, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "gene", "any", "":
+	case "model":
+		term = stripTranscriptSuffix(term)
+	default:
+		term = stripTranscriptSuffix(term)
+	}
+	if !agiGenePattern.MatchString(term) {
+		return nil, nil
+	}
+	rows, err := c.fetchENACodingRowsByLocus(ctx, rel, term)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]model.KeywordResultRow, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, keywordRowFromENACoding(version, rel, row, term))
+	}
+	sortKeywordRows(out)
+	for i := range out {
+		out[i].SearchTerm = term
+		out[i].SearchType = classifySearchType(term)
+	}
+	return limitKeywordRows(out, limit), nil
+}
+
+func (c *Client) fetchENACodingRowsByLocus(ctx context.Context, rel releaseInfo, locus string) ([]enaCodingRow, error) {
+	study := strings.TrimSpace(rel.ENAStudyAccession)
+	if study == "" {
+		return nil, fmt.Errorf("TAIR %s has no ENA study accession", rel.Name)
+	}
+	locus = strings.ToUpper(strings.TrimSpace(stripTranscriptSuffix(locus)))
+	if locus == "" {
+		return nil, nil
+	}
+	cacheKey := "ena-coding|" + study + "|" + locus
+	c.mu.RLock()
+	if cached, ok := c.enaCodingRows[cacheKey]; ok {
+		out := cloneENACodingRows(cached)
+		c.mu.RUnlock()
+		return out, nil
+	}
+	c.mu.RUnlock()
+	if cached, ok := readCachedJSON[[]enaCodingRow]("ena-coding", cacheKey); ok {
+		c.mu.Lock()
+		c.enaCodingRows[cacheKey] = cloneENACodingRows(cached)
+		c.mu.Unlock()
+		return cloneENACodingRows(cached), nil
+	}
+
+	value, err, _ := c.sf.Do("tair-ena-coding:"+cacheKey, func() (any, error) {
+		c.mu.RLock()
+		if cached, ok := c.enaCodingRows[cacheKey]; ok {
+			out := cloneENACodingRows(cached)
+			c.mu.RUnlock()
+			return out, nil
+		}
+		c.mu.RUnlock()
+		if cached, ok := readCachedJSON[[]enaCodingRow]("ena-coding", cacheKey); ok {
+			c.mu.Lock()
+			c.enaCodingRows[cacheKey] = cloneENACodingRows(cached)
+			c.mu.Unlock()
+			return cloneENACodingRows(cached), nil
+		}
+
+		query := fmt.Sprintf(`study_accession="%s" AND locus_tag="TAIR12_TAIR12_%s"`, study, locus)
+		values := url.Values{}
+		values.Set("result", "coding")
+		values.Set("query", query)
+		values.Set("fields", "accession,description,gene,product,locus_tag,protein_id,sequence_version,study_accession")
+		values.Set("format", "tsv")
+		values.Set("limit", "100")
+		endpoint := "https://www.ebi.ac.uk/ena/portal/api/search?" + values.Encode()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("User-Agent", "phytozome-go TAIR12 ENA exact search")
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("query ENA coding records for %s: %w", locus, err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("query ENA coding records for %s: unexpected status %s", locus, resp.Status)
+		}
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		rows, err := parseENACodingTSV(bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		c.mu.Lock()
+		c.enaCodingRows[cacheKey] = cloneENACodingRows(rows)
+		c.mu.Unlock()
+		writeCachedJSON("ena-coding", cacheKey, rows)
+		return cloneENACodingRows(rows), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return value.([]enaCodingRow), nil
+}
+
+func parseENACodingTSV(reader io.Reader) ([]enaCodingRow, error) {
+	csvReader := csv.NewReader(reader)
+	csvReader.Comma = '\t'
+	csvReader.FieldsPerRecord = -1
+	csvReader.LazyQuotes = true
+	records, err := csvReader.ReadAll()
+	if err != nil {
+		return nil, err
+	}
+	if len(records) <= 1 {
+		return nil, nil
+	}
+	header := make(map[string]int)
+	for i, name := range records[0] {
+		header[strings.ToLower(strings.TrimSpace(name))] = i
+	}
+	field := func(record []string, name string) string {
+		idx, ok := header[strings.ToLower(name)]
+		if !ok || idx < 0 || idx >= len(record) {
+			return ""
+		}
+		return strings.TrimSpace(record[idx])
+	}
+	out := make([]enaCodingRow, 0, len(records)-1)
+	for _, record := range records[1:] {
+		row := enaCodingRow{
+			Accession:       field(record, "accession"),
+			Description:     field(record, "description"),
+			Gene:            field(record, "gene"),
+			Product:         field(record, "product"),
+			LocusTag:        field(record, "locus_tag"),
+			ProteinID:       field(record, "protein_id"),
+			SequenceVersion: field(record, "sequence_version"),
+			StudyAccession:  field(record, "study_accession"),
+		}
+		if row.Accession == "" && row.ProteinID == "" && row.LocusTag == "" {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
+func keywordRowFromENACoding(version model.SpeciesCandidate, rel releaseInfo, row enaCodingRow, requestedLocus string) model.KeywordResultRow {
+	gene := enaGeneFromLocusTag(row.LocusTag)
+	if gene == "" {
+		gene = strings.ToUpper(strings.TrimSpace(requestedLocus))
+	}
+	sequenceID := firstNonEmpty(row.Accession, strings.TrimSuffix(row.ProteinID, ".1"))
+	proteinID := firstNonEmpty(row.ProteinID, row.Accession)
+	product := cleanText(firstNonEmpty(row.Product, row.Description))
+	label := firstSymbolFromText(product)
+	extra := map[string]string{
+		"tair_version":         rel.Name,
+		"tair_source_url":      rel.SourceURL,
+		"ena_study_accession":  rel.ENAStudyAccession,
+		"ena_result":           "coding",
+		"ena_accession":        row.Accession,
+		"ena_protein_id":       row.ProteinID,
+		"ena_locus_tag":        row.LocusTag,
+		"ena_sequence_version": row.SequenceVersion,
+		"ena_study":            row.StudyAccession,
+	}
+	return model.KeywordResultRow{
+		SourceDatabase:      "tair",
+		SearchType:          "TAIR keyword",
+		LabelName:           label,
+		ProteinID:           proteinID,
+		TranscriptID:        "",
+		GeneIdentifier:      gene,
+		Genome:              version.DisplayLabel(),
+		Aliases:             joinUniqueFields(row.Gene, row.LocusTag, row.ProteinID, row.Accession),
+		Symbols:             label,
+		Description:         product,
+		Comments:            row.Description,
+		AutoDefine:          product,
+		GeneReportURL:       rel.ReportURLBase + url.PathEscape(firstNonEmpty(row.Accession, row.ProteinID, gene)),
+		SequenceHeaderLabel: version.DisplayLabel(),
+		SequenceID:          sequenceID,
+		ExtraColumns:        extra,
+	}
+}
+
+func enaGeneFromLocusTag(value string) string {
+	value = strings.ToUpper(strings.TrimSpace(value))
+	if value == "" {
+		return ""
+	}
+	matches := agiGenePattern.FindAllString(value, -1)
+	if len(matches) == 0 {
+		return ""
+	}
+	return strings.ToUpper(matches[len(matches)-1])
+}
+
 func (c *Client) FetchFamilyCandidates(ctx context.Context, version model.SpeciesCandidate) ([]model.SpeciesCandidate, error) {
+	if rel, err := c.releaseForVersion(version); err == nil && rel.Source == tairReleaseSourceENA {
+		return nil, nil
+	}
 	if rel, err := c.releaseForVersion(version); err == nil && rel.GFFURL != "" {
-		if idx, idxErr := c.cachedIndex(ctx, version); idxErr == nil && len(idx.FamilyCandidates) > 0 {
+		idx, idxErr := c.cachedIndex(ctx, version)
+		if idxErr != nil {
+			return nil, idxErr
+		}
+		if len(idx.FamilyCandidates) > 0 {
 			return familyCandidatesToSpecies(idx.FamilyCandidates), nil
 		}
 		return nil, nil
@@ -1512,19 +1822,18 @@ func (c *Client) cachedIndex(ctx context.Context, version model.SpeciesCandidate
 }
 
 func (c *Client) buildIndex(ctx context.Context, rel releaseInfo, version model.SpeciesCandidate) (tairIndex, error) {
-	var proteins map[string]proteinEntry
 	var descriptions map[string]descriptionEntry
+	var geneAliases map[string]geneAliasEntry
 	var representative map[string]string
 	var preload sync.WaitGroup
-	proteinDone := make(chan struct{})
-	preload.Add(2)
-	go func() {
-		defer close(proteinDone)
-		proteins, _ = c.loadProteinSequences(ctx, rel)
-	}()
+	preload.Add(3)
 	go func() {
 		defer preload.Done()
 		descriptions = c.loadDescriptionIndex(ctx, rel)
+	}()
+	go func() {
+		defer preload.Done()
+		geneAliases = c.loadGeneAliasIndex(ctx, rel)
 	}()
 	go func() {
 		defer preload.Done()
@@ -1535,7 +1844,6 @@ func (c *Client) buildIndex(ctx context.Context, rel releaseInfo, version model.
 		return tairIndex{}, err
 	}
 	defer closeFn()
-	<-proteinDone
 
 	rows := make([]model.KeywordResultRow, 0, 36000)
 	rowByGene := make(map[string]int)
@@ -1551,13 +1859,6 @@ func (c *Client) buildIndex(ctx context.Context, rel releaseInfo, version model.
 			continue
 		}
 		row := buildKeywordRowFromGFF(version, rel, gff)
-		if protein, ok := lookupProteinEntry(proteins, row.SequenceID); ok {
-			enrichRowWithProtein(&row, protein)
-		} else if protein, ok := lookupProteinEntry(proteins, row.TranscriptID); ok {
-			enrichRowWithProtein(&row, protein)
-		} else if protein, ok := lookupProteinEntry(proteins, row.GeneIdentifier); ok {
-			enrichRowWithProtein(&row, protein)
-		}
 		if row.GeneIdentifier == "" && row.TranscriptID == "" {
 			continue
 		}
@@ -1589,6 +1890,7 @@ func (c *Client) buildIndex(ctx context.Context, rel releaseInfo, version model.
 	parentNames := make(map[string]string)
 	for i, row := range rows {
 		mergeDescriptionIntoRow(&row, descriptions)
+		mergeGeneAliasesIntoRow(&row, geneAliases)
 		applyRepresentativeModelHint(&row, representative)
 		if row.SequenceID != "" {
 			if fam := familyNameFromDescription(firstNonEmpty(row.Description, row.AutoDefine, row.Comments)); fam != "" {
@@ -1831,15 +2133,21 @@ func (c *Client) FetchProteinSequence(ctx context.Context, targetID int, sequenc
 	if err != nil {
 		return model.ProteinSequenceData{}, err
 	}
-	proteins, err := c.loadProteinSequences(ctx, rel)
-	if err == nil {
-		for _, candidate := range uniqueStrings([]string{sequenceID, stripTranscriptSuffix(sequenceID)}) {
-			if entry, ok := lookupProteinEntry(proteins, candidate); ok {
-				return model.ProteinSequenceData{Sequence: entry.Sequence, OriginalHeader: entry.Header}, nil
-			}
+	if rel.Source == tairReleaseSourceENA {
+		entry, err := c.fetchENAFastaEntry(ctx, sequenceID)
+		if err != nil {
+			return model.ProteinSequenceData{}, err
 		}
+		return model.ProteinSequenceData{Sequence: entry.Sequence, OriginalHeader: entry.Header}, nil
 	}
-	if err != nil {
+	if strings.TrimSpace(rel.ProteinURL) == "" {
+		return model.ProteinSequenceData{}, fmt.Errorf("TAIR %s has no official protein FASTA in the current public release assets", rel.Name)
+	}
+	entry, err := c.lookupFASTASequenceEntry(ctx, rel.ProteinURL, c.proteinSeqs, sequenceID)
+	if err == nil {
+		return model.ProteinSequenceData{Sequence: entry.Sequence, OriginalHeader: entry.Header}, nil
+	}
+	if _, ok := err.(errSequenceNotFound); !ok {
 		return model.ProteinSequenceData{}, fmt.Errorf("load TAIR %s protein FASTA: %w", rel.Name, err)
 	}
 	return model.ProteinSequenceData{}, fmt.Errorf("no TAIR protein sequence matched %s in %s official protein FASTA", sequenceID, rel.Name)
@@ -1850,14 +2158,23 @@ func (c *Client) FetchNucleotideSequence(ctx context.Context, targetID int, sequ
 	if err != nil {
 		return model.ProteinSequenceData{}, err
 	}
-	_ = program
-	seqs, err := c.loadNucleotideSequences(ctx, rel)
-	if err != nil {
-		return model.ProteinSequenceData{}, err
+	if rel.Source == tairReleaseSourceENA {
+		entry, err := c.fetchENAFastaEntry(ctx, sequenceID)
+		if err != nil {
+			return model.ProteinSequenceData{}, err
+		}
+		return model.ProteinSequenceData{Sequence: entry.Sequence, OriginalHeader: entry.Header}, nil
 	}
-	entry, ok := lookupProteinEntry(seqs, sequenceID)
-	if !ok {
-		return model.ProteinSequenceData{}, fmt.Errorf("no TAIR nucleotide sequence matched %s in %s", sequenceID, rel.Name)
+	_ = program
+	if strings.TrimSpace(rel.NucleotideURL) == "" {
+		return model.ProteinSequenceData{}, fmt.Errorf("TAIR %s has no official nucleotide FASTA in the current public release assets", rel.Name)
+	}
+	entry, err := c.lookupFASTASequenceEntry(ctx, rel.NucleotideURL, c.nucleotideSeqs, sequenceID)
+	if err != nil {
+		if _, ok := err.(errSequenceNotFound); ok {
+			return model.ProteinSequenceData{}, fmt.Errorf("no TAIR nucleotide sequence matched %s in %s", sequenceID, rel.Name)
+		}
+		return model.ProteinSequenceData{}, err
 	}
 	return model.ProteinSequenceData{Sequence: entry.Sequence, OriginalHeader: entry.Header}, nil
 }
@@ -2027,13 +2344,28 @@ func (c *Client) findRow(ctx context.Context, version model.SpeciesCandidate, id
 	if identifier == "" {
 		return model.KeywordResultRow{}, fmt.Errorf("empty TAIR identifier")
 	}
+	if rel, err := c.releaseForVersion(version); err == nil && rel.Source == tairReleaseSourceENA {
+		rows, searchErr := c.searchENAIdentifierRows(ctx, version, rel, identifier, "any", 20)
+		if searchErr != nil {
+			return model.KeywordResultRow{}, searchErr
+		}
+		if row, ok := bestMatchingRow(identifier, rows); ok {
+			return row, nil
+		}
+		return model.KeywordResultRow{}, fmt.Errorf("TAIR ENA identifier %s was not found in %s", identifier, version.DisplayLabel())
+	}
 	if rel, err := c.releaseForVersion(version); err == nil && rel.GFFURL != "" {
-		if idx, idxErr := c.cachedIndex(ctx, version); idxErr == nil && len(idx.Rows) > 0 {
+		idx, idxErr := c.cachedIndex(ctx, version)
+		if idxErr != nil {
+			return model.KeywordResultRow{}, idxErr
+		}
+		if len(idx.Rows) > 0 {
 			rows := c.searchKeywordRowsByIdentifiers(idx, identifierKeys(identifier), 8)
 			if row, ok := bestMatchingRow(identifier, rows); ok {
 				return row, nil
 			}
 		}
+		return model.KeywordResultRow{}, fmt.Errorf("TAIR identifier %s was not found in %s local release index", identifier, version.DisplayLabel())
 	}
 	rows, err := c.searchLiveIdentifierRows(ctx, version, identifier, "any")
 	if err != nil {
@@ -2055,11 +2387,6 @@ func (c *Client) releaseForTargetID(targetID int) (releaseInfo, error) {
 	if targetID == 0 {
 		return releaseInfo{}, fmt.Errorf("missing TAIR target id")
 	}
-	for _, rel := range defaultReleases() {
-		if strings.EqualFold(rel.Name, "Araport11") {
-			return rel, nil
-		}
-	}
 	return releaseInfo{}, fmt.Errorf("unknown TAIR target id %d", targetID)
 }
 
@@ -2073,44 +2400,147 @@ func (c *Client) releaseVersion(rel releaseInfo) (model.SpeciesCandidate, error)
 }
 
 func (c *Client) loadProteinSequences(ctx context.Context, rel releaseInfo) (map[string]proteinEntry, error) {
+	if rel.Source == tairReleaseSourceENA {
+		return nil, fmt.Errorf("TAIR %s ENA source does not expose a single official protein FASTA asset for bulk loading", rel.Name)
+	}
 	return c.loadFASTASequences(ctx, rel.ProteinURL, c.proteinSeqs)
 }
 
+func (c *Client) loadProteinSequencesShared(ctx context.Context, rel releaseInfo) (map[string]proteinEntry, error) {
+	if rel.Source == tairReleaseSourceENA {
+		return nil, fmt.Errorf("TAIR %s ENA source does not expose a single official protein FASTA asset for bulk loading", rel.Name)
+	}
+	return c.loadFASTASequencesShared(ctx, rel.ProteinURL, c.proteinSeqs)
+}
+
 func (c *Client) loadNucleotideSequences(ctx context.Context, rel releaseInfo) (map[string]proteinEntry, error) {
+	if rel.Source == tairReleaseSourceENA {
+		return nil, fmt.Errorf("TAIR %s ENA source does not expose a single official nucleotide FASTA asset for bulk loading", rel.Name)
+	}
 	return c.loadFASTASequences(ctx, rel.NucleotideURL, c.nucleotideSeqs)
 }
 
+func (c *Client) loadNucleotideSequencesShared(ctx context.Context, rel releaseInfo) (map[string]proteinEntry, error) {
+	if rel.Source == tairReleaseSourceENA {
+		return nil, fmt.Errorf("TAIR %s ENA source does not expose a single official nucleotide FASTA asset for bulk loading", rel.Name)
+	}
+	return c.loadFASTASequencesShared(ctx, rel.NucleotideURL, c.nucleotideSeqs)
+}
+
+func (c *Client) fetchENAFastaEntry(ctx context.Context, accession string) (proteinEntry, error) {
+	accession = cleanIdentifier(accession)
+	if accession == "" {
+		return proteinEntry{}, fmt.Errorf("empty ENA accession")
+	}
+	cacheKey := "ena-fasta|" + accession
+	c.mu.RLock()
+	if cached, ok := c.enaFastaEntries[cacheKey]; ok && cached.Sequence != "" {
+		c.mu.RUnlock()
+		return cached, nil
+	}
+	c.mu.RUnlock()
+	if cached, ok := readCachedJSON[proteinEntry]("ena-fasta", cacheKey); ok && cached.Sequence != "" {
+		c.mu.Lock()
+		c.enaFastaEntries[cacheKey] = cached
+		c.mu.Unlock()
+		return cached, nil
+	}
+
+	value, err, _ := c.sf.Do("tair-ena-fasta:"+cacheKey, func() (any, error) {
+		c.mu.RLock()
+		if cached, ok := c.enaFastaEntries[cacheKey]; ok && cached.Sequence != "" {
+			c.mu.RUnlock()
+			return cached, nil
+		}
+		c.mu.RUnlock()
+		if cached, ok := readCachedJSON[proteinEntry]("ena-fasta", cacheKey); ok && cached.Sequence != "" {
+			c.mu.Lock()
+			c.enaFastaEntries[cacheKey] = cached
+			c.mu.Unlock()
+			return cached, nil
+		}
+
+		endpoint := "https://www.ebi.ac.uk/ena/browser/api/fasta/" + url.PathEscape(accession) + "?download=false"
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return proteinEntry{}, err
+		}
+		req.Header.Set("User-Agent", "phytozome-go TAIR12 ENA FASTA fetch")
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return proteinEntry{}, fmt.Errorf("fetch ENA FASTA %s: %w", accession, err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return proteinEntry{}, fmt.Errorf("fetch ENA FASTA %s: unexpected status %s", accession, resp.Status)
+		}
+		entries, err := parseFASTA(resp.Body)
+		if err != nil {
+			return proteinEntry{}, err
+		}
+		for _, candidate := range []string{accession, stripTranscriptSuffix(accession)} {
+			if entry, ok := lookupProteinEntry(entries, candidate); ok && entry.Sequence != "" {
+				c.mu.Lock()
+				c.enaFastaEntries[cacheKey] = entry
+				c.mu.Unlock()
+				writeCachedJSON("ena-fasta", cacheKey, entry)
+				return entry, nil
+			}
+		}
+		for _, entry := range entries {
+			if entry.Sequence != "" {
+				c.mu.Lock()
+				c.enaFastaEntries[cacheKey] = entry
+				c.mu.Unlock()
+				writeCachedJSON("ena-fasta", cacheKey, entry)
+				return entry, nil
+			}
+		}
+		return proteinEntry{}, fmt.Errorf("ENA FASTA %s returned no sequence", accession)
+	})
+	if err != nil {
+		return proteinEntry{}, err
+	}
+	return value.(proteinEntry), nil
+}
+
 func (c *Client) loadFastaHeaders(ctx context.Context, requestURL string) (map[string]fastaEntry, error) {
+	index, err := c.loadFastaHeadersShared(ctx, requestURL)
+	if err != nil {
+		return nil, err
+	}
+	return cloneFastaEntryMap(index), nil
+}
+
+func (c *Client) loadFastaHeadersShared(ctx context.Context, requestURL string) (map[string]fastaEntry, error) {
 	requestURL = strings.TrimSpace(requestURL)
 	if requestURL == "" {
 		return nil, fmt.Errorf("empty TAIR FASTA URL")
 	}
 	c.mu.RLock()
 	if cached, ok := c.fastaHeaders[requestURL]; ok && len(cached) > 0 {
-		out := cloneFastaEntryMap(cached)
 		c.mu.RUnlock()
-		return out, nil
+		return cached, nil
 	}
 	c.mu.RUnlock()
 	if cached, ok := readCachedJSON[map[string]fastaEntry]("fasta-header-index", requestURL); ok && len(cached) > 0 {
 		c.mu.Lock()
 		c.fastaHeaders[requestURL] = cached
 		c.mu.Unlock()
-		return cloneFastaEntryMap(cached), nil
+		return cached, nil
 	}
 	value, err, _ := c.sf.Do("tair-fasta-header:"+requestURL, func() (any, error) {
 		c.mu.RLock()
 		if cached, ok := c.fastaHeaders[requestURL]; ok && len(cached) > 0 {
-			out := cloneFastaEntryMap(cached)
 			c.mu.RUnlock()
-			return out, nil
+			return cached, nil
 		}
 		c.mu.RUnlock()
 		if cached, ok := readCachedJSON[map[string]fastaEntry]("fasta-header-index", requestURL); ok && len(cached) > 0 {
 			c.mu.Lock()
 			c.fastaHeaders[requestURL] = cached
 			c.mu.Unlock()
-			return cloneFastaEntryMap(cached), nil
+			return cached, nil
 		}
 		reader, closeFn, err := c.openMaybeCompressed(ctx, requestURL)
 		if err != nil {
@@ -2125,7 +2555,7 @@ func (c *Client) loadFastaHeaders(ctx context.Context, requestURL string) (map[s
 		c.fastaHeaders[requestURL] = index
 		c.mu.Unlock()
 		writeCachedJSON("fasta-header-index", requestURL, index)
-		return cloneFastaEntryMap(index), nil
+		return index, nil
 	})
 	if err != nil {
 		return nil, err
@@ -2134,24 +2564,43 @@ func (c *Client) loadFastaHeaders(ctx context.Context, requestURL string) (map[s
 }
 
 func (c *Client) loadFASTASequences(ctx context.Context, requestURL string, memory map[string]map[string]proteinEntry) (map[string]proteinEntry, error) {
+	seqs, err := c.loadFASTASequencesShared(ctx, requestURL, memory)
+	if err != nil {
+		return nil, err
+	}
+	return cloneProteinMap(seqs), nil
+}
+
+func (c *Client) loadFASTASequencesShared(ctx context.Context, requestURL string, memory map[string]map[string]proteinEntry) (map[string]proteinEntry, error) {
 	requestURL = strings.TrimSpace(requestURL)
 	if requestURL == "" {
 		return nil, fmt.Errorf("empty TAIR FASTA URL")
 	}
 	c.mu.RLock()
 	if cached, ok := memory[requestURL]; ok && len(cached) > 0 {
-		out := cloneProteinMap(cached)
 		c.mu.RUnlock()
-		return out, nil
+		return cached, nil
 	}
 	c.mu.RUnlock()
 	if cached, ok := readCachedJSON[map[string]proteinEntry]("fasta-index", requestURL); ok && len(cached) > 0 {
 		c.mu.Lock()
 		memory[requestURL] = cached
 		c.mu.Unlock()
-		return cloneProteinMap(cached), nil
+		return cached, nil
 	}
 	value, err, _ := c.sf.Do("tair-fasta:"+requestURL, func() (any, error) {
+		c.mu.RLock()
+		if cached, ok := memory[requestURL]; ok && len(cached) > 0 {
+			c.mu.RUnlock()
+			return cached, nil
+		}
+		c.mu.RUnlock()
+		if cached, ok := readCachedJSON[map[string]proteinEntry]("fasta-index", requestURL); ok && len(cached) > 0 {
+			c.mu.Lock()
+			memory[requestURL] = cached
+			c.mu.Unlock()
+			return cached, nil
+		}
 		reader, closeFn, err := c.openMaybeCompressed(ctx, requestURL)
 		if err != nil {
 			return nil, err
@@ -2170,7 +2619,176 @@ func (c *Client) loadFASTASequences(ctx context.Context, requestURL string, memo
 	if err != nil {
 		return nil, err
 	}
-	return cloneProteinMap(value.(map[string]proteinEntry)), nil
+	return value.(map[string]proteinEntry), nil
+}
+
+type errSequenceNotFound struct {
+	id string
+}
+
+func (e errSequenceNotFound) Error() string {
+	return fmt.Sprintf("sequence %s not found", e.id)
+}
+
+func (c *Client) lookupFASTASequenceEntry(ctx context.Context, requestURL string, memory map[string]map[string]proteinEntry, sequenceID string) (proteinEntry, error) {
+	requestURL = strings.TrimSpace(requestURL)
+	if requestURL == "" {
+		return proteinEntry{}, fmt.Errorf("empty TAIR FASTA URL")
+	}
+	keys := uniqueStrings([]string{sequenceID, stripTranscriptSuffix(sequenceID)})
+	for _, candidate := range keys {
+		if entry, ok := c.lookupMemoryFASTAEntry(memory, requestURL, candidate); ok {
+			return entry, nil
+		}
+	}
+	for _, candidate := range keys {
+		cacheKey := requestURL + "|" + normalizeIdentifierKey(candidate)
+		if entry, ok := readCachedJSON[proteinEntry]("fasta-entry", cacheKey); ok && entry.Sequence != "" {
+			c.storeFASTAEntry(memory, requestURL, entry)
+			return entry, nil
+		}
+	}
+	if cached, ok := readCachedJSON[map[string]proteinEntry]("fasta-index", requestURL); ok && len(cached) > 0 {
+		c.mu.Lock()
+		if existing := memory[requestURL]; len(existing) == 0 {
+			memory[requestURL] = cached
+		}
+		c.mu.Unlock()
+		for _, candidate := range keys {
+			if entry, ok := lookupProteinEntry(cached, candidate); ok {
+				return entry, nil
+			}
+		}
+	}
+	entry, ok, err := c.scanFASTASequenceEntry(ctx, requestURL, sequenceID)
+	if err != nil {
+		return proteinEntry{}, err
+	}
+	if !ok {
+		return proteinEntry{}, errSequenceNotFound{id: sequenceID}
+	}
+	c.storeFASTAEntry(memory, requestURL, entry)
+	for _, candidate := range keys {
+		if normalized := normalizeIdentifierKey(candidate); normalized != "" {
+			writeCachedJSON("fasta-entry", requestURL+"|"+normalized, entry)
+		}
+	}
+	return entry, nil
+}
+
+func (c *Client) lookupMemoryFASTAEntry(memory map[string]map[string]proteinEntry, requestURL string, sequenceID string) (proteinEntry, bool) {
+	key := normalizeIdentifierKey(sequenceID)
+	if key == "" {
+		return proteinEntry{}, false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	seqs := memory[requestURL]
+	if len(seqs) == 0 {
+		return proteinEntry{}, false
+	}
+	entry, ok := seqs[key]
+	return entry, ok
+}
+
+func (c *Client) storeFASTAEntry(memory map[string]map[string]proteinEntry, requestURL string, entry proteinEntry) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	seqs := memory[requestURL]
+	if seqs == nil {
+		seqs = make(map[string]proteinEntry)
+		memory[requestURL] = seqs
+	}
+	for _, key := range proteinEntryKeys(entry) {
+		seqs[key] = entry
+	}
+}
+
+func (c *Client) scanFASTASequenceEntry(ctx context.Context, requestURL string, sequenceID string) (proteinEntry, bool, error) {
+	reader, closeFn, err := c.openMaybeCompressed(ctx, requestURL)
+	if err != nil {
+		return proteinEntry{}, false, err
+	}
+	defer closeFn()
+	return scanFASTAForEntry(reader, sequenceID)
+}
+
+func proteinEntryKeys(entry proteinEntry) []string {
+	keys := make([]string, 0, 16)
+	for _, alias := range identifierVariants(entry.ID) {
+		keys = append(keys, normalizeIdentifierKey(alias))
+	}
+	for _, token := range strings.FieldsFunc(entry.Header, func(r rune) bool {
+		return r == '|' || r == ';' || r == ',' || r == ' ' || r == '\t'
+	}) {
+		for _, alias := range identifierVariants(token) {
+			keys = append(keys, normalizeIdentifierKey(alias))
+		}
+	}
+	return uniqueStrings(keys)
+}
+
+func scanFASTAForEntry(reader io.Reader, sequenceID string) (proteinEntry, bool, error) {
+	targets := make(map[string]struct{})
+	for _, candidate := range uniqueStrings([]string{sequenceID, stripTranscriptSuffix(sequenceID)}) {
+		for _, alias := range identifierKeys(candidate) {
+			targets[alias] = struct{}{}
+		}
+	}
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 1024), 32*1024*1024)
+	header := ""
+	var seq strings.Builder
+	matched := false
+	skipCurrent := false
+	flush := func() (proteinEntry, bool) {
+		header = strings.TrimSpace(header)
+		sequence := strings.TrimSpace(seq.String())
+		if !matched || header == "" || sequence == "" || skipCurrent {
+			skipCurrent = false
+			return proteinEntry{}, false
+		}
+		id := fastaHeaderID(header)
+		return proteinEntry{ID: id, Header: header, Sequence: sequence, Description: fastaDescription(header), Symbols: fastaSymbols(header)}, true
+	}
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, ">") {
+			if entry, ok := flush(); ok {
+				return entry, true, nil
+			}
+			header = strings.TrimPrefix(line, ">")
+			seq.Reset()
+			if fastautil.IsIgnoredPHGONoteHeader(header) {
+				header = ""
+				skipCurrent = true
+				matched = false
+				continue
+			}
+			skipCurrent = false
+			matched = false
+			for _, key := range fastaHeaderIdentifierKeys(header) {
+				if _, ok := targets[key]; ok {
+					matched = true
+					break
+				}
+			}
+			continue
+		}
+		if skipCurrent {
+			continue
+		}
+		if matched {
+			seq.WriteString(line)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return proteinEntry{}, false, err
+	}
+	if entry, ok := flush(); ok {
+		return entry, true, nil
+	}
+	return proteinEntry{}, false, nil
 }
 
 func parseFastaHeaderIndex(reader io.Reader) (map[string]fastaEntry, error) {
@@ -2186,7 +2804,7 @@ func parseFastaHeaderIndex(reader io.Reader) (map[string]fastaEntry, error) {
 			return
 		}
 		entry := fastaEntry{Defline: header, Length: length}
-		for _, key := range identifierKeys(fastaHeaderID(header)) {
+		for _, key := range fastaHeaderIdentifierKeys(header) {
 			index[key] = entry
 		}
 	}
@@ -2217,12 +2835,30 @@ func parseFastaHeaderIndex(reader io.Reader) (map[string]fastaEntry, error) {
 	return index, nil
 }
 
+func fastaHeaderIdentifierKeys(header string) []string {
+	keys := identifierKeys(fastaHeaderID(header))
+	for _, token := range strings.FieldsFunc(header, func(r rune) bool {
+		return r == '|' || r == ';' || r == ',' || r == ' ' || r == '\t'
+	}) {
+		for _, alias := range identifierVariants(token) {
+			keys = append(keys, normalizeIdentifierKey(alias))
+		}
+	}
+	return uniqueStrings(keys)
+}
+
 type descriptionEntry struct {
 	Identifier               string
 	GeneModelType            string
 	ShortDescription         string
 	CuratorSummary           string
 	ComputationalDescription string
+}
+
+type geneAliasEntry struct {
+	LocusName string
+	Symbols   []string
+	FullNames []string
 }
 
 func (c *Client) loadDescriptionIndex(ctx context.Context, rel releaseInfo) map[string]descriptionEntry {
@@ -2276,6 +2912,59 @@ func (c *Client) loadDescriptionIndex(ctx context.Context, rel releaseInfo) map[
 		return nil
 	}
 	return value.(map[string]descriptionEntry)
+}
+
+func (c *Client) loadGeneAliasIndex(ctx context.Context, rel releaseInfo) map[string]geneAliasEntry {
+	requestURL := strings.TrimSpace(rel.GeneAliasURL)
+	if requestURL == "" {
+		return nil
+	}
+	c.mu.RLock()
+	if cached, ok := c.geneAliases[requestURL]; ok && len(cached) > 0 {
+		out := cloneGeneAliasEntryMap(cached)
+		c.mu.RUnlock()
+		return out
+	}
+	c.mu.RUnlock()
+	if cached, ok := readCachedJSON[map[string]geneAliasEntry]("gene-alias-index", requestURL); ok && len(cached) > 0 {
+		c.mu.Lock()
+		c.geneAliases[requestURL] = cached
+		c.mu.Unlock()
+		return cloneGeneAliasEntryMap(cached)
+	}
+	value, err, _ := c.sf.Do("tair-gene-alias:"+requestURL, func() (any, error) {
+		c.mu.RLock()
+		if cached, ok := c.geneAliases[requestURL]; ok && len(cached) > 0 {
+			out := cloneGeneAliasEntryMap(cached)
+			c.mu.RUnlock()
+			return out, nil
+		}
+		c.mu.RUnlock()
+		if cached, ok := readCachedJSON[map[string]geneAliasEntry]("gene-alias-index", requestURL); ok && len(cached) > 0 {
+			c.mu.Lock()
+			c.geneAliases[requestURL] = cached
+			c.mu.Unlock()
+			return cloneGeneAliasEntryMap(cached), nil
+		}
+		reader, closeFn, err := c.openMaybeCompressed(ctx, requestURL)
+		if err != nil {
+			return map[string]geneAliasEntry{}, err
+		}
+		defer closeFn()
+		entries, err := parseGeneAliasTable(reader)
+		if err != nil {
+			return map[string]geneAliasEntry{}, err
+		}
+		c.mu.Lock()
+		c.geneAliases[requestURL] = entries
+		c.mu.Unlock()
+		writeCachedJSON("gene-alias-index", requestURL, entries)
+		return cloneGeneAliasEntryMap(entries), nil
+	})
+	if err != nil {
+		return nil
+	}
+	return value.(map[string]geneAliasEntry)
 }
 
 func (c *Client) loadRepresentativeModels(ctx context.Context, rel releaseInfo) map[string]string {
@@ -2402,29 +3091,30 @@ func (c *Client) openMaybeCompressed(ctx context.Context, requestURL string) (io
 		}
 		return f, func() { _ = f.Close() }, nil
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+	dir, err := cacheDir("assets")
 	if err != nil {
 		return nil, nil, err
 	}
-	resp, err := c.httpClient.Do(req)
+	localPath, err := downloadToCache(ctx, c.httpClient, requestURL, dir)
 	if err != nil {
 		return nil, nil, err
 	}
-	if resp.StatusCode != http.StatusOK {
-		_ = resp.Body.Close()
-		return nil, nil, fmt.Errorf("fetch %s: unexpected status %s", requestURL, resp.Status)
+	f, err := os.Open(localPath)
+	if err != nil {
+		return nil, nil, err
 	}
-	if strings.HasSuffix(strings.ToLower(requestURL), ".gz") {
-		gz, err := gzip.NewReader(resp.Body)
+	lower := strings.ToLower(localPath)
+	if strings.HasSuffix(lower, ".gz") {
+		gz, err := gzip.NewReader(f)
 		if err != nil {
-			_ = resp.Body.Close()
+			_ = f.Close()
 			return nil, nil, err
 		}
-		return gz, func() { _ = gz.Close(); _ = resp.Body.Close() }, nil
+		return gz, func() { _ = gz.Close(); _ = f.Close() }, nil
 	}
-	if strings.HasSuffix(strings.ToLower(requestURL), ".zip") {
-		body, err := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
+	if strings.HasSuffix(lower, ".zip") {
+		body, err := io.ReadAll(f)
+		_ = f.Close()
 		if err != nil {
 			return nil, nil, err
 		}
@@ -2444,7 +3134,7 @@ func (c *Client) openMaybeCompressed(ctx context.Context, requestURL string) (io
 		}
 		return nil, nil, fmt.Errorf("zip %s did not contain a supported text payload", requestURL)
 	}
-	return resp.Body, func() { _ = resp.Body.Close() }, nil
+	return f, func() { _ = f.Close() }, nil
 }
 
 func (c *Client) openMaybeGzip(ctx context.Context, requestURL string) (io.Reader, func(), error) {
@@ -2522,6 +3212,43 @@ func parseDescriptionTable(reader io.Reader) (map[string]descriptionEntry, error
 	return out, nil
 }
 
+func parseGeneAliasTable(reader io.Reader) (map[string]geneAliasEntry, error) {
+	csvReader := csv.NewReader(reader)
+	csvReader.Comma = '\t'
+	csvReader.FieldsPerRecord = -1
+	csvReader.LazyQuotes = true
+	records, err := csvReader.ReadAll()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]geneAliasEntry)
+	start := 0
+	if len(records) > 0 {
+		header := normalizeTSVHeader(records[0])
+		if len(header) >= 2 && header[0] == "locus_name" && header[1] == "symbol" {
+			start = 1
+		}
+	}
+	for _, record := range records[start:] {
+		locus := cleanIdentifier(recordAt(record, 0))
+		symbol := cleanText(recordAt(record, 1))
+		fullName := cleanText(recordAt(record, 2))
+		if locus == "" {
+			continue
+		}
+		entry := out[normalizeIdentifierKey(locus)]
+		entry.LocusName = locus
+		if symbol != "" && !strings.EqualFold(symbol, "NULL") {
+			entry.Symbols = uniqueStrings(append(entry.Symbols, symbol))
+		}
+		if fullName != "" && !strings.EqualFold(fullName, "NULL") {
+			entry.FullNames = uniqueStrings(append(entry.FullNames, fullName))
+		}
+		out[normalizeIdentifierKey(locus)] = entry
+	}
+	return out, nil
+}
+
 func parseRepresentativeModels(reader io.Reader) (map[string]string, error) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 1024), 8*1024*1024)
@@ -2594,6 +3321,66 @@ func mergeDescriptionIntoRow(row *model.KeywordResultRow, descriptions map[strin
 			return
 		}
 	}
+}
+
+func mergeGeneAliasesIntoRow(row *model.KeywordResultRow, aliases map[string]geneAliasEntry) {
+	if row == nil || len(aliases) == 0 {
+		return
+	}
+	geneKey := normalizeIdentifierKey(row.GeneIdentifier)
+	if geneKey == "" {
+		return
+	}
+	entry, ok := aliases[geneKey]
+	if !ok {
+		return
+	}
+	aliasLabel := bestGeneAliasLabel(entry.Symbols)
+	row.Symbols = joinUniqueFields(row.Symbols, strings.Join(entry.Symbols, "; "))
+	row.Aliases = joinUniqueFields(row.Aliases, strings.Join(entry.Symbols, "; "), strings.Join(entry.FullNames, "; "))
+	row.Synonyms = joinUniqueFields(row.Synonyms, strings.Join(entry.Symbols, "; "))
+	if row.LabelName == "" || strings.EqualFold(cleanIdentifier(row.LabelName), row.GeneIdentifier) {
+		row.LabelName = firstNonEmpty(aliasLabel, row.LabelName)
+	}
+	row.ExtraColumns = ensureExtraColumns(row.ExtraColumns)
+	if len(entry.Symbols) > 0 {
+		row.ExtraColumns["tair_gene_alias_symbols"] = strings.Join(entry.Symbols, "; ")
+	}
+	if len(entry.FullNames) > 0 {
+		row.ExtraColumns["tair_gene_alias_full_names"] = strings.Join(entry.FullNames, "; ")
+	}
+}
+
+func bestGeneAliasLabel(symbols []string) string {
+	best := ""
+	bestScore := -1
+	for _, symbol := range symbols {
+		symbol = cleanText(symbol)
+		if symbol == "" || strings.EqualFold(symbol, "NULL") {
+			continue
+		}
+		score := 0
+		upper := strings.ToUpper(symbol)
+		switch {
+		case strings.HasPrefix(upper, "AT") && len(symbol) > 4:
+			score = 1
+		case strings.ContainsRune(symbol, ' '):
+			score = 0
+		default:
+			score = 3
+		}
+		if len(symbol) <= 6 {
+			score += 2
+		}
+		if strings.ContainsAny(symbol, "-_") {
+			score--
+		}
+		if score > bestScore || (score == bestScore && len(symbol) < len(best)) {
+			best = symbol
+			bestScore = score
+		}
+	}
+	return best
 }
 
 func applyRepresentativeModelHint(row *model.KeywordResultRow, representative map[string]string) {
@@ -3004,6 +3791,18 @@ func cloneDescriptionEntryMap(values map[string]descriptionEntry) map[string]des
 	return out
 }
 
+func cloneGeneAliasEntryMap(values map[string]geneAliasEntry) map[string]geneAliasEntry {
+	out := make(map[string]geneAliasEntry, len(values))
+	for key, value := range values {
+		out[key] = geneAliasEntry{
+			LocusName: value.LocusName,
+			Symbols:   append([]string(nil), value.Symbols...),
+			FullNames: append([]string(nil), value.FullNames...),
+		}
+	}
+	return out
+}
+
 func cloneStringMap(values map[string]string) map[string]string {
 	out := make(map[string]string, len(values))
 	for key, value := range values {
@@ -3020,6 +3819,12 @@ func cloneTAIRSearchDocs(values []tairSearchDoc) []tairSearchDoc {
 
 func cloneTAIRKeywordSearchDocs(values []tairKeywordSearchDoc) []tairKeywordSearchDoc {
 	out := make([]tairKeywordSearchDoc, len(values))
+	copy(out, values)
+	return out
+}
+
+func cloneENACodingRows(values []enaCodingRow) []enaCodingRow {
+	out := make([]enaCodingRow, len(values))
 	copy(out, values)
 	return out
 }
@@ -3060,12 +3865,59 @@ func localFileName(rawURL string) string {
 		if file := path.Base(parsed.Query().Get("filePath")); file != "." && file != "/" {
 			return sanitizeFileName(file)
 		}
+		parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+		for i := 0; i+2 < len(parts); i++ {
+			if parts[i] == "files" && parts[i+2] == "content" && parts[i+1] != "" {
+				return sanitizeFileName(parts[i+1])
+			}
+		}
 		if file := path.Base(parsed.Path); file != "." && file != "/" {
 			return sanitizeFileName(file)
 		}
 	}
 	sum := sha256.Sum256([]byte(rawURL))
 	return "tair_" + hex.EncodeToString(sum[:8]) + ".fasta"
+}
+
+func tairDownloadCandidates(rawURL string) []string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return nil
+	}
+	candidates := make([]string, 0, 3)
+	if parsed, err := url.Parse(rawURL); err == nil {
+		filePath := strings.TrimLeft(parsed.Query().Get("filePath"), "/")
+		if filePath != "" && tairFilePathHasHistoricalFTPMirror(filePath) {
+			candidates = append(candidates, tairFTPBase+filePath)
+		}
+	}
+	candidates = append(candidates, rawURL)
+	return uniqueStrings(candidates)
+}
+
+func tairFilePathHasHistoricalFTPMirror(filePath string) bool {
+	filePath = strings.TrimLeft(strings.TrimSpace(filePath), "/")
+	if filePath == "" {
+		return false
+	}
+	parts := strings.Split(filePath, "/")
+	for _, part := range parts {
+		upper := strings.ToUpper(part)
+		for version := 6; version <= 10; version++ {
+			if strings.Contains(upper, fmt.Sprintf("TAIR%d", version)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func addTAIRDownloadHeaders(req *http.Request) {
+	if req == nil {
+		return
+	}
+	req.Header.Set("User-Agent", "phytozome-go TAIR release asset fetcher")
+	req.Header.Set("Accept", "application/octet-stream,text/plain,*/*")
 }
 
 func sanitizeFileName(value string) string {
@@ -3101,41 +3953,137 @@ func downloadToCache(ctx context.Context, httpClient *http.Client, rawURL string
 		}
 		return dest, nil
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return "", err
+	var lastErr error
+	for _, candidate := range tairDownloadCandidates(rawURL) {
+		if err := downloadCandidateToCache(ctx, httpClient, candidate, dest); err != nil {
+			lastErr = err
+			continue
+		}
+		lastErr = nil
+		break
 	}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("download %s: unexpected status %s", rawURL, resp.Status)
-	}
-	tmp := dest + ".part"
-	out, err := os.Create(tmp)
-	if err != nil {
-		return "", err
-	}
-	_, copyErr := io.CopyBuffer(out, resp.Body, make([]byte, 1024*1024))
-	closeErr := out.Close()
-	if copyErr != nil {
-		_ = os.Remove(tmp)
-		return "", copyErr
-	}
-	if closeErr != nil {
-		_ = os.Remove(tmp)
-		return "", closeErr
-	}
-	if err := os.Rename(tmp, dest); err != nil {
-		_ = os.Remove(tmp)
-		return "", err
+	if lastErr != nil {
+		return "", lastErr
 	}
 	if strings.HasSuffix(strings.ToLower(dest), ".gz") {
 		return decompressCached(dest)
 	}
 	return dest, nil
+}
+
+func downloadCandidateToCache(ctx context.Context, httpClient *http.Client, rawURL string, dest string) error {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(rawURL)), "ftp://") {
+		return downloadCandidateToCacheWithCurl(ctx, rawURL, dest)
+	}
+	runCtx, cancel := context.WithTimeout(ctx, tairDownloadTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(runCtx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return err
+	}
+	addTAIRDownloadHeaders(req)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("download %s: %w", rawURL, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download %s: unexpected status %s", rawURL, resp.Status)
+	}
+	tmp := dest + ".part"
+	_ = os.Remove(tmp)
+	out, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.CopyBuffer(out, resp.Body, make([]byte, 1024*1024))
+	closeErr := out.Close()
+	if copyErr != nil {
+		_ = os.Remove(tmp)
+		return copyErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(tmp)
+		return closeErr
+	}
+	if err := validateDownloadedTAIRAsset(tmp, dest); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, dest); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+func downloadCandidateToCacheWithCurl(ctx context.Context, rawURL string, dest string) error {
+	curlPath, err := exec.LookPath("curl")
+	if err != nil {
+		if runtime.GOOS == "windows" {
+			curlPath, err = exec.LookPath("curl.exe")
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("download %s: curl not available for FTP mirror", rawURL)
+	}
+	runCtx, cancel := context.WithTimeout(ctx, tairDownloadTimeout)
+	defer cancel()
+	tmp := dest + ".part"
+	_ = os.Remove(tmp)
+	args := []string{
+		"--fail",
+		"--location",
+		"--silent",
+		"--show-error",
+		"--max-time", strconv.Itoa(int(tairDownloadTimeout.Seconds())),
+		"--output", tmp,
+		rawURL,
+	}
+	cmd := exec.CommandContext(runCtx, curlPath, args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("download %s via curl: %w: %s", rawURL, err, strings.TrimSpace(string(output)))
+	}
+	if info, err := os.Stat(tmp); err != nil || info.IsDir() || info.Size() == 0 {
+		_ = os.Remove(tmp)
+		if err != nil {
+			return fmt.Errorf("download %s via curl produced no file: %w", rawURL, err)
+		}
+		return fmt.Errorf("download %s via curl produced empty file", rawURL)
+	}
+	if err := validateDownloadedTAIRAsset(tmp, dest); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, dest); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+func validateDownloadedTAIRAsset(path string, dest string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	buf := make([]byte, 512)
+	n, _ := f.Read(buf)
+	sample := strings.TrimSpace(strings.ToLower(string(buf[:n])))
+	if strings.HasPrefix(sample, "<!doctype html") || strings.HasPrefix(sample, "<html") || strings.Contains(sample, "<div id=\"app\"") || strings.Contains(sample, "403 forbidden") {
+		return fmt.Errorf("downloaded %s is an HTML/error page, not a TAIR release asset", filepath.Base(dest))
+	}
+	lower := strings.ToLower(dest)
+	if strings.HasSuffix(lower, ".zip") && n >= 4 && string(buf[:4]) != "PK\x03\x04" {
+		return fmt.Errorf("downloaded %s is not a ZIP archive", filepath.Base(dest))
+	}
+	if strings.HasSuffix(lower, ".gz") && n >= 2 && !(buf[0] == 0x1f && buf[1] == 0x8b) {
+		return fmt.Errorf("downloaded %s is not a gzip archive", filepath.Base(dest))
+	}
+	return nil
 }
 
 func decompressCached(gzPath string) (string, error) {

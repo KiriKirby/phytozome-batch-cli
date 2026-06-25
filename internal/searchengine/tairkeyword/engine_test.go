@@ -102,7 +102,7 @@ func TestEngineMapsTAIRPrograms(t *testing.T) {
 	}
 }
 
-func TestEngineRecordsWideSearchFallback(t *testing.T) {
+func TestEngineDoesNotFallbackToWideSearch(t *testing.T) {
 	finder := &fakeFinder{
 		wideRows: map[string][]model.KeywordResultRow{
 			"NAC RARE WIDE ONLY": {{GeneIdentifier: "AT1G01010", LabelName: "NAC001"}},
@@ -113,11 +113,8 @@ func TestEngineRecordsWideSearchFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SearchKeywordRows returned error: %v", err)
 	}
-	if len(rows) != 1 {
-		t.Fatalf("rows = %d, want 1", len(rows))
-	}
-	if !strings.Contains(rows[0].SearchType, "fallback to wide search") {
-		t.Fatalf("search type should record wide fallback, got %q", rows[0].SearchType)
+	if len(rows) != 0 {
+		t.Fatalf("rows = %d, want 0 when exact program misses and fallback is disabled", len(rows))
 	}
 }
 

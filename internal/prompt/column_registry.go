@@ -1138,9 +1138,9 @@ func dynamicColumnHelpText(id string) string {
 	switch {
 	case id == "search_type":
 		return columnHelp(
-			"Search program selected by the new keyword search engine for this row. If the selected program found nothing and wide search produced the hit, the value explicitly records that fallback.",
-			"新 keyword 搜索引擎为这一行选择的搜索程序。如果原本选择的程序没有命中，而宽搜索产生了结果，这里会明确记录这个回退。",
-			"新しい keyword 検索エンジンがこの行に選んだ検索プログラムです。最初のプログラムで命中せず wide search が結果を返した場合、その fallback も明示します。",
+			"Search program selected by the keyword search engine for this row. Sources that support automatic wide-search fallback record that fallback explicitly; strict TAIR keyword search does not auto-fallback.",
+			"keyword 搜索引擎为这一行选择的搜索程序。支持自动宽搜索回退的数据源会在这里明确记录回退；严格 TAIR keyword 搜索不会自动 fallback。",
+			"この行に対して keyword 検索エンジンが選んだ検索プログラムです。自動 wide-search fallback を持つ source ではその fallback を明示しますが、厳密な TAIR keyword search は自動 fallback しません。",
 		)
 	case id == "gene_locus":
 		return columnHelp(

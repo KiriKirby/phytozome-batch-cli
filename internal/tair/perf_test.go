@@ -3,12 +3,15 @@ package tair
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -40,6 +43,18 @@ func BenchmarkTAIRFastaHeaderCache(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			if _, err := client.loadFastaHeaders(context.Background(), path); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("warm-cache-shared", func(b *testing.B) {
+		if _, err := client.loadFastaHeadersShared(context.Background(), path); err != nil {
+			b.Fatal(err)
+		}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if _, err := client.loadFastaHeadersShared(context.Background(), path); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -173,6 +188,60 @@ func TestTAIRLocalBlastThreadSweep(t *testing.T) {
 			t.Fatalf("blastp threads=%d: %v", threads, err)
 		}
 		t.Logf("tair_blast_thread_sweep threads=%d rows=%d ms=%d", threads, len(result.Rows), duration.Milliseconds())
+	}
+}
+
+func TestTAIR11ZenodoProbeLog(t *testing.T) {
+	if os.Getenv("PHGO_TAIR11_ZENODO_PROBE") == "" {
+		t.Skip("set PHGO_TAIR11_ZENODO_PROBE=1 to run TAIR11 Zenodo probe")
+	}
+	targets := []string{
+		"https://zenodo.org/api/records/17371665/files/gene_aliases_20241001.txt.gz/content",
+		"https://zenodo.org/api/records/17371665/files/Araport11_functional_descriptions_20241001.txt.gz/content",
+		"https://zenodo.org/api/records/17371665/files/Araport11_GFF3_genes_transposons.20241001.gff.gz/content",
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	for _, level := range []int{8, 16, 32, 64} {
+		start := time.Now()
+		type result struct{ status int }
+		results := make(chan result, len(targets)*level)
+		var wg sync.WaitGroup
+		for _, u := range targets {
+			for i := 0; i < level; i++ {
+				wg.Add(1)
+				go func(rawURL string) {
+					defer wg.Done()
+					req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, rawURL, nil)
+					if err != nil {
+						results <- result{status: -1}
+						return
+					}
+					req.Header.Set("User-Agent", "phytozome-go TAIR11 Zenodo probe")
+					resp, err := client.Do(req)
+					if err != nil {
+						results <- result{status: -1}
+						return
+					}
+					_, _ = io.CopyN(io.Discard, resp.Body, 32*1024)
+					_ = resp.Body.Close()
+					results <- result{status: resp.StatusCode}
+				}(u)
+			}
+		}
+		wg.Wait()
+		close(results)
+		ok := 0
+		failed := 0
+		statuses := map[int]int{}
+		for item := range results {
+			statuses[item.status]++
+			if item.status == http.StatusOK {
+				ok++
+			} else {
+				failed++
+			}
+		}
+		t.Logf("tair11_zenodo_probe concurrency=%d total=%d ok=%d failed=%d statuses=%v elapsed_ms=%d", level, len(targets)*level, ok, failed, statuses, time.Since(start).Milliseconds())
 	}
 }
 

@@ -33,8 +33,7 @@ const (
 )
 
 const (
-	fallbackSuffix     = " (fallback to wide search)"
-	cacheSchemaVersion = "tairkeyword-v1"
+	cacheSchemaVersion = "tairkeyword-v4"
 
 	identifierKindAny   = "any"
 	identifierKindGene  = "gene"
@@ -83,7 +82,7 @@ func (e *Engine) SearchKeywordRows(ctx context.Context, species model.SpeciesCan
 		Domain:      "www.arabidopsis.org",
 		Description: "search tair keyword engine rows",
 	}, func(runCtx context.Context) ([]model.KeywordResultRow, error) {
-		return e.searchKeywordRowsWithProgram(runCtx, species, keyword, e.selectProgram(keyword), true, "normal")
+		return e.searchKeywordRowsWithProgram(runCtx, species, keyword, e.selectProgram(keyword), false, "normal")
 	})
 }
 
@@ -160,16 +159,6 @@ func (e *Engine) searchKeywordRowsWithProgram(ctx context.Context, species model
 			return nil, err
 		}
 		searchType := program.Name()
-		if len(rows) == 0 && allowWideFallback && program.Name() != SearchTypeWide {
-			wide := wideSearchProgram{}
-			rows, err = wide.Search(ctx, e, species, keyword)
-			if err != nil {
-				return nil, err
-			}
-			if len(rows) > 0 {
-				searchType = program.Name() + fallbackSuffix
-			}
-		}
 		rows = decorateRows(rows, keyword, searchType)
 		e.mu.Lock()
 		e.cache[cacheKey] = cloneRows(rows)

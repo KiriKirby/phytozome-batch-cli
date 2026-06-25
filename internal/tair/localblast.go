@@ -64,7 +64,7 @@ func (c *Client) RunLocalBlast(ctx context.Context, req model.BlastRequest) (mod
 	if err != nil {
 		return model.BlastJob{}, err
 	}
-	fastaIndex, err := c.loadFastaHeaders(ctx, prepared.FASTAPath)
+	fastaIndex, err := c.loadFastaHeadersShared(ctx, prepared.FASTAPath)
 	if err != nil {
 		return model.BlastJob{}, err
 	}
@@ -170,6 +170,9 @@ func (c *Client) preparedLocalBlastDB(ctx context.Context, rel releaseInfo, prog
 }
 
 func localBlastDB(rel releaseInfo, program string) (string, string, error) {
+	if rel.Source == tairReleaseSourceENA {
+		return "", "", fmt.Errorf("TAIR %s ENA source does not expose a single official bulk FASTA asset for local BLAST; no fallback database is used", rel.Name)
+	}
 	switch program {
 	case "blastp", "blastx":
 		if rel.ProteinURL == "" {
@@ -494,7 +497,7 @@ func buildFastaIndex(path string) (map[string]fastaEntry, error) {
 			return
 		}
 		entry := fastaEntry{Defline: header, Length: length}
-		for _, key := range identifierKeys(fastaHeaderID(header)) {
+		for _, key := range fastaHeaderIdentifierKeys(header) {
 			index[key] = entry
 		}
 	}
