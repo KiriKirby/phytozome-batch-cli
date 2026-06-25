@@ -12516,23 +12516,40 @@ func normalizeGeneReportURL(input string) (string, bool) {
 	if err != nil || parsed.Host == "" {
 		return "", false
 	}
-	if !strings.EqualFold(parsed.Host, "phytozome-next.jgi.doe.gov") {
+	host := strings.ToLower(strings.TrimSpace(parsed.Host))
+	switch host {
+	case "phytozome-next.jgi.doe.gov":
+		segments := nonEmptyPathSegments(parsed.Path)
+		if len(segments) != 4 || !strings.EqualFold(segments[0], "report") {
+			return "", false
+		}
+		if !slices.Contains([]string{"gene", "transcript", "protein"}, strings.ToLower(segments[1])) {
+			return "", false
+		}
+		parsed.Scheme = "https"
+		parsed.Host = "phytozome-next.jgi.doe.gov"
+		parsed.RawQuery = ""
+		parsed.Fragment = ""
+		return parsed.String(), true
+	case "www.lemna.org", "lemna.org":
+		segments := nonEmptyPathSegments(parsed.Path)
+		if len(segments) != 1 || !strings.EqualFold(segments[0], "jbrowse2") {
+			return "", false
+		}
+		values := parsed.Query()
+		rootDir := strings.TrimSpace(values.Get("phgo_root"))
+		geneID := strings.TrimSpace(values.Get("phgo_gene"))
+		if rootDir == "" || geneID == "" {
+			return "", false
+		}
+		parsed.Scheme = "https"
+		parsed.Host = "www.lemna.org"
+		parsed.RawQuery = values.Encode()
+		parsed.Fragment = ""
+		return parsed.String(), true
+	default:
 		return "", false
 	}
-
-	segments := nonEmptyPathSegments(parsed.Path)
-	if len(segments) != 4 || !strings.EqualFold(segments[0], "report") {
-		return "", false
-	}
-	if !slices.Contains([]string{"gene", "transcript", "protein"}, strings.ToLower(segments[1])) {
-		return "", false
-	}
-
-	parsed.Scheme = "https"
-	parsed.Host = "phytozome-next.jgi.doe.gov"
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	return parsed.String(), true
 }
 
 func inferSourceDatabaseFromURL(rawURL string) string {
@@ -12572,15 +12589,27 @@ func parseGeneReportURL(rawURL string) (jbrowseName string, reportType string, i
 	if err != nil {
 		return "", "", "", fmt.Errorf("parse gene report URL: %w", err)
 	}
-
-	segments := nonEmptyPathSegments(parsed.Path)
-	if len(segments) != 4 || !strings.EqualFold(segments[0], "report") {
-		return "", "", "", fmt.Errorf("unsupported gene report URL path: %s", parsed.Path)
+	switch strings.ToLower(strings.TrimSpace(parsed.Host)) {
+	case "phytozome-next.jgi.doe.gov":
+		segments := nonEmptyPathSegments(parsed.Path)
+		if len(segments) != 4 || !strings.EqualFold(segments[0], "report") {
+			return "", "", "", fmt.Errorf("unsupported gene report URL path: %s", parsed.Path)
+		}
+		reportType = strings.ToLower(segments[1])
+		jbrowseName = segments[2]
+		identifier = segments[3]
+	case "www.lemna.org", "lemna.org":
+		segments := nonEmptyPathSegments(parsed.Path)
+		if len(segments) != 1 || !strings.EqualFold(segments[0], "jbrowse2") {
+			return "", "", "", fmt.Errorf("unsupported gene report URL path: %s", parsed.Path)
+		}
+		values := parsed.Query()
+		jbrowseName = strings.TrimSpace(values.Get("phgo_root"))
+		identifier = strings.TrimSpace(values.Get("phgo_gene"))
+		reportType = "gene"
+	default:
+		return "", "", "", fmt.Errorf("unsupported gene report host: %s", parsed.Host)
 	}
-
-	reportType = strings.ToLower(segments[1])
-	jbrowseName = segments[2]
-	identifier = segments[3]
 	if jbrowseName == "" || identifier == "" {
 		return "", "", "", fmt.Errorf("gene report URL is missing path identifiers")
 	}

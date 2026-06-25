@@ -454,6 +454,158 @@
     if (colour) target[key] = colour;
   }
 
+  function stableColourSchemeName(value) {
+    if (!value) return "None";
+    const direct = stringValue(callValue(value, ["getSchemeName$"])).trim();
+    const raw = (direct || stringValue(value)).trim();
+    if (!raw || raw === "[object Object]") return "None";
+    const lower = raw.toLowerCase();
+    const aliases = [
+      [/none|no colour|no color/, "None"],
+      [/clustalx|clustal/, "Clustalx"],
+      [/blosum\s*62|blosum62/, "BLOSUM62 Score"],
+      [/percent(age)?\s*identity|pid/, "Percentage Identity"],
+      [/zappo/, "Zappo"],
+      [/taylor/, "Taylor"],
+      [/hydrophobic/, "Hydrophobicity"],
+      [/helix/, "Helix Propensity"],
+      [/strand/, "Strand Propensity"],
+      [/turn/, "Turn Propensity"],
+      [/buried/, "Buried Index"],
+      [/nucleotide/, "Nucleotide"],
+      [/purine|pyrimidine/, "Purine/Pyrimidine"],
+      [/rna.*helices|helices/, "RNA Helices"],
+      [/t-?coffee|coffee/, "T-Coffee Scores"],
+      [/sequence\s*id|idcolour|id colour/, "Sequence ID"],
+      [/user defined/, "User Defined"]
+    ];
+    for (const [pattern, name] of aliases) {
+      if (pattern.test(lower)) return name;
+    }
+    return raw;
+  }
+
+  function javaClassName(value) {
+    if (!value) return "";
+    for (const key of ["__CLASS_NAME__", "clazzName", "className"]) {
+      if (value[key]) return String(value[key]);
+    }
+    try {
+      const cls = value.getClass$ && value.getClass$();
+      const name = stringValue(callValue(cls, ["getName$", "getCanonicalName$", "getSimpleName$"]));
+      if (name) return name;
+      if (cls && cls.__CLASS_NAME__) return String(cls.__CLASS_NAME__);
+    } catch (_error) {
+      // Class metadata is best-effort for SwingJS objects.
+    }
+    return "";
+  }
+
+  function isJalviewInstance(value, className) {
+    if (!value || !className) return false;
+    try {
+      if (window.Clazz && typeof window.Clazz.instanceOf === "function") {
+        return !!window.Clazz.instanceOf(value, className);
+      }
+    } catch (_error) {
+      // Fall back to class-name matching.
+    }
+    return javaClassName(value).includes(className);
+  }
+
+  function jalviewSchemeNameForStableName(name) {
+    const stable = stableColourSchemeName(name);
+    const names = {
+      "None": "None",
+      "Clustalx": "Clustal",
+      "BLOSUM62 Score": "Blosum62",
+      "Percentage Identity": "% Identity",
+      "Zappo": "Zappo",
+      "Taylor": "Taylor",
+      "Hydrophobicity": "Hydrophobic",
+      "Helix Propensity": "Helix Propensity",
+      "Strand Propensity": "Strand Propensity",
+      "Turn Propensity": "Turn Propensity",
+      "Buried Index": "Buried Index",
+      "Nucleotide": "Nucleotide",
+      "Purine/Pyrimidine": "Purine/Pyrimidine",
+      "RNA Helices": "RNA Helices",
+      "T-Coffee Scores": "T-Coffee Scores",
+      "Sequence ID": "Sequence ID"
+    };
+    return names[stable] || name || stable;
+  }
+
+  function jalviewSchemeNameFromClass(value) {
+    const name = javaClassName(value);
+    if (!name) return "";
+    const matches = [
+      [/ClustalxColourScheme$/, "Clustal"],
+      [/Blosum62ColourScheme$/, "Blosum62"],
+      [/PIDColourScheme$/, "% Identity"],
+      [/ZappoColourScheme$/, "Zappo"],
+      [/TaylorColourScheme$/, "Taylor"],
+      [/HydrophobicColourScheme$/, "Hydrophobic"],
+      [/HelixColourScheme$/, "Helix Propensity"],
+      [/StrandColourScheme$/, "Strand Propensity"],
+      [/TurnColourScheme$/, "Turn Propensity"],
+      [/BuriedColourScheme$/, "Buried Index"],
+      [/NucleotideColourScheme$/, "Nucleotide"],
+      [/PurinePyrimidineColourScheme$/, "Purine/Pyrimidine"],
+      [/RNAHelicesColour$/, "RNA Helices"],
+      [/TCoffeeColourScheme$/, "T-Coffee Scores"],
+      [/IdColourScheme$/, "Sequence ID"],
+      [/UserColourScheme$/, "User Defined"]
+    ];
+    for (const [pattern, schemeName] of matches) {
+      if (pattern.test(name)) return schemeName;
+    }
+    return "";
+  }
+
+  function colourSchemeRawName(scheme) {
+    if (!scheme) return "None";
+    for (const method of ["getSchemeName$", "getName$"]) {
+      const name = stringValue(callValue(scheme, [method])).trim();
+      if (name && name !== "[object Object]") return name;
+    }
+    const byClass = jalviewSchemeNameFromClass(scheme);
+    if (byClass) return byClass;
+    try {
+      const text = stringValue(scheme).trim();
+      if (text && text !== "[object Object]") return text;
+    } catch (_error) {
+      // Keep raw colour-scheme names best-effort.
+    }
+    return "None";
+  }
+
+  function currentColourSchemeState(frame, viewport) {
+    const scheme = viewport && callValue(viewport, ["getGlobalColourScheme$"]);
+    if (!scheme) return { type: "none", name: "None", display_name: "None" };
+    const rawName = colourSchemeRawName(scheme);
+    const stableName = stableColourSchemeName(rawName || jalviewSchemeNameFromClass(scheme));
+    if (isJalviewInstance(scheme, "jalview.schemes.UserColourScheme")) {
+      const appletParameter = stringValue(callValue(scheme, ["toAppletParameter$"])).trim();
+      return {
+        type: "user_defined",
+        name: rawName && rawName !== "None" ? rawName : "User Defined",
+        display_name: stableName && stableName !== "None" ? stableName : "User Defined",
+        applet_parameter: appletParameter
+      };
+    }
+    return {
+      type: "builtin",
+      name: jalviewSchemeNameForStableName(rawName),
+      display_name: stableName
+    };
+  }
+
+  function currentColourSchemeName(frame, viewport) {
+    const scheme = currentColourSchemeState(frame, viewport);
+    return scheme.display_name || stableColourSchemeName(scheme.name);
+  }
+
   function collectNamedValues(target, entries) {
     const out = {};
     for (const [key, names] of entries) {
@@ -561,14 +713,15 @@
       ["scale_protein_as_cdna", ["isScaleProteinAsCdna$", "getScaleProteinAsCdna$"]],
       ["char_width", ["getCharWidth$"]],
       ["char_height", ["getCharHeight$"]],
-      ["start_res", ["getStartRes$"]],
-      ["end_res", ["getEndRes$"]],
-      ["start_seq", ["getStartSeq$"]],
-      ["end_seq", ["getEndSeq$"]],
       ["residue_font", ["getFont$"]],
-      ["colour_scheme", ["getGlobalColourScheme$"]],
-      ["residue_shading", ["getResidueShading$"]]
+      ["above_pid_threshold", ["getAbovePIDThreshold$"]],
+      ["conservation_selected", ["getConservationSelected$"]],
+      ["colour_applies_to_all_groups", ["getColourAppliesToAllGroups$"]],
+      ["threshold", ["getThreshold$"]]
     ]));
+    const scheme = currentColourSchemeState(frame, viewport);
+    settings.colour_scheme_name = scheme.display_name || stableColourSchemeName(scheme.name);
+    settings.colour_scheme = scheme;
     return settings;
   }
 
@@ -578,9 +731,9 @@
     const colours = {};
     setHexIfPresent(colours, "text", callValue(viewport, ["getTextColour$"]));
     setHexIfPresent(colours, "conservation_text", callValue(viewport, ["getConservationColour$"]));
-    setHexIfPresent(colours, "background", callValue(viewport, ["getBackgroundColour$"]));
-    setIfPresent(colours, "colour_scheme", callValue(viewport, ["getGlobalColourScheme$"]));
-    setIfPresent(colours, "residue_shading", callValue(viewport, ["getResidueShading$"]));
+    const scheme = currentColourSchemeState(frame, viewport);
+    colours.scheme = scheme;
+    colours.colour_scheme_name = scheme.display_name || stableColourSchemeName(scheme.name);
     return colours;
   }
 
@@ -1070,7 +1223,10 @@
       ["show_colour_text", "setShowColourText$Z"],
       ["render_gaps", "setRenderGaps$Z"],
       ["wrap_alignment", "setWrapAlignment$Z"],
-      ["right_align_ids", "setRightAlignIds$Z"]
+      ["right_align_ids", "setRightAlignIds$Z"],
+      ["above_pid_threshold", "setAbovePIDThreshold$Z"],
+      ["conservation_selected", "setConservationSelected$Z"],
+      ["colour_applies_to_all_groups", "setColourAppliesToAllGroups$Z"]
     ];
     for (const [key, method] of boolSetters) {
       if (typeof settings[key] === "boolean" && typeof viewport[method] === "function") {
@@ -1100,6 +1256,120 @@
     return applied;
   }
 
+  function normalizeSavedColourScheme(state) {
+    const colours = state && state.colours || {};
+    const settings = state && state.settings || {};
+    const raw = colours.scheme && typeof colours.scheme === "object"
+      ? colours.scheme
+      : (settings.colour_scheme && typeof settings.colour_scheme === "object" ? settings.colour_scheme : null);
+    if (raw) {
+      const type = String(raw.type || "").trim().toLowerCase();
+      const name = String(raw.name || raw.display_name || raw.colour_scheme_name || "").trim();
+      const appletParameter = String(raw.applet_parameter || raw.appletParameter || "").trim();
+      if (type === "user_defined" || appletParameter) {
+        return {
+          type: "user_defined",
+          name: name || "User Defined",
+          display_name: raw.display_name || name || "User Defined",
+          applet_parameter: appletParameter
+        };
+      }
+      if (type === "none" || stableColourSchemeName(name) === "None") return { type: "none", name: "None", display_name: "None" };
+      if (type === "builtin" || name) {
+        return {
+          type: "builtin",
+          name: jalviewSchemeNameForStableName(name),
+          display_name: stableColourSchemeName(name)
+        };
+      }
+    }
+    const legacyName = stableColourSchemeName(colours.colour_scheme_name || settings.colour_scheme_name);
+    if (!legacyName || legacyName === "None") return { type: "none", name: "None", display_name: "None" };
+    return {
+      type: legacyName === "User Defined" ? "user_defined" : "builtin",
+      name: jalviewSchemeNameForStableName(legacyName),
+      display_name: legacyName,
+      applet_parameter: ""
+    };
+  }
+
+  function registeredColourScheme(name, frame, viewport) {
+    const jalviewName = jalviewSchemeNameForStableName(name);
+    if (!jalviewName || jalviewName === "None") return { name: "None", scheme: null, known: true };
+    try {
+      const schemesClass = clazzClass("jalview.schemes.ColourSchemes");
+      const instance = schemesClass && typeof schemesClass.getInstance$ === "function" ? schemesClass.getInstance$() : null;
+      if (instance && typeof instance.getColourScheme$S$jalview_api_AlignViewportI$jalview_datamodel_AnnotatedCollectionI$java_util_Map === "function") {
+        const alignment = mainAlignment(frame);
+        const hidden = viewport && callValue(viewport, ["getHiddenRepSequences$"]);
+        const scheme = instance.getColourScheme$S$jalview_api_AlignViewportI$jalview_datamodel_AnnotatedCollectionI$java_util_Map(jalviewName, viewport, alignment, hidden);
+        if (scheme) return { name: jalviewName, scheme, known: true };
+      }
+    } catch (error) {
+      debug("msa-state-colour-scheme-lookup-failed", { name: jalviewName, message: formatValue(error) });
+    }
+    return { name: jalviewName, scheme: null, known: false };
+  }
+
+  function userColourSchemeFromSaved(saved) {
+    const parameter = String(saved && saved.applet_parameter || "").trim();
+    if (!parameter) return null;
+    try {
+      const userSchemeClass = clazzClass("jalview.schemes.UserColourScheme");
+      const scheme = clazzNew(userSchemeClass && userSchemeClass.c$$S, [parameter]);
+      if (scheme && saved.name && typeof scheme.setName$S === "function") {
+        scheme.setName$S(saved.name);
+      }
+      return scheme;
+    } catch (error) {
+      debug("msa-state-user-colour-scheme-create-failed", { message: formatValue(error) });
+      return null;
+    }
+  }
+
+  function applyColourSchemeObject(frame, viewport, scheme, menuName) {
+    if (!frame && !viewport) return 0;
+    if (frame && menuName && typeof frame.changeColour_actionPerformed$S === "function") {
+      frame.changeColour_actionPerformed$S(menuName);
+      return 1;
+    }
+    if (frame && typeof frame.changeColour$jalview_schemes_ColourSchemeI === "function") {
+      frame.changeColour$jalview_schemes_ColourSchemeI(scheme);
+      return 1;
+    }
+    if (viewport && typeof viewport.setGlobalColourScheme$jalview_schemes_ColourSchemeI === "function") {
+      viewport.setGlobalColourScheme$jalview_schemes_ColourSchemeI(scheme);
+      return 1;
+    }
+    return 0;
+  }
+
+  function applySavedColourScheme(frame, state) {
+    const viewport = mainViewport(frame);
+    if (!viewport) return 0;
+    const saved = normalizeSavedColourScheme(state);
+    if (!saved || !saved.type) return 0;
+    try {
+      let applied = 0;
+      if (saved.type === "none") {
+        applied = applyColourSchemeObject(frame, viewport, null, "None");
+      } else if (saved.type === "user_defined") {
+        const scheme = userColourSchemeFromSaved(saved);
+        if (!scheme) return 0;
+        applied = applyColourSchemeObject(frame, viewport, scheme, "");
+      } else {
+        const resolved = registeredColourScheme(saved.name || saved.display_name, frame, viewport);
+        if (!resolved.known) return 0;
+        applied = applyColourSchemeObject(frame, viewport, resolved.scheme, resolved.name);
+      }
+      if (frame && typeof frame.setMenusForViewport$ === "function") frame.setMenusForViewport$();
+      return applied;
+    } catch (error) {
+      debug("msa-state-colour-scheme-apply-failed", { scheme: saved, message: formatValue(error) });
+      return 0;
+    }
+  }
+
   function applySavedMSAColours(frame, state) {
     const viewport = mainViewport(frame);
     const colours = state && state.colours || {};
@@ -1119,25 +1389,9 @@
       }
       return 0;
     };
-    const applyValue = (key, setterNames) => {
-      const value = colours[key];
-      if (value == null || value === "") return 0;
-      for (const setterName of setterNames) {
-        if (typeof viewport[setterName] !== "function") continue;
-        try {
-          viewport[setterName](value);
-          return 1;
-        } catch (_error) {
-          // Keep trying alternates.
-        }
-      }
-      return 0;
-    };
     applied += applyColour("text", ["setTextColour$java_awt_Color", "setTextColor$java_awt_Color"]);
     applied += applyColour("conservation_text", ["setConservationColour$java_awt_Color", "setConservationColor$java_awt_Color"]);
-    applied += applyColour("background", ["setBackgroundColour$java_awt_Color", "setBackgroundColor$java_awt_Color"]);
-    applied += applyValue("colour_scheme", ["setGlobalColourScheme$O", "setGlobalColorScheme$O"]);
-    applied += applyValue("residue_shading", ["setResidueShading$O"]);
+    applied += applySavedColourScheme(frame, state);
     return applied;
   }
 
@@ -2155,7 +2409,6 @@
     window.setTimeout(requestMSARepaint, 1000);
     scheduleSavedMSAStateRestore(350, 0);
     scheduleSavedMSAStateRestore(1200, 0);
-    window.setTimeout(() => scheduleMSAStateSave("startup", 200, true), 1800);
   }
 
   function resizeMainAlignmentFrame() {
@@ -2173,10 +2426,7 @@
     if (typeof window.__PHGOJalviewResizeMainAlignment === "function") {
       window.__PHGOJalviewResizeMainAlignment();
     }
-    window.setTimeout(() => {
-      resyncSwingColourSwatches();
-      fixSwingMenuPositioning("resize");
-    }, 0);
+    window.setTimeout(resyncSwingColourSwatches, 0);
   }
 
   let resizeTimer = 0;
@@ -2207,12 +2457,6 @@
 
     if (alignmentReady) {
       document.body.classList.add("phgo-jalview-ready");
-      window.setTimeout(() => fixSwingMenuPositioning("layout-ready"), 0);
-      window.setTimeout(() => fixSwingMenuPositioning("layout-ready-delayed"), 250);
-      if (!adaptLayout.msaStateSaveScheduled) {
-        adaptLayout.msaStateSaveScheduled = true;
-        scheduleMSAStateSave("layout-ready", 600, true);
-      }
     }
     return alignmentReady;
   }
@@ -2267,64 +2511,6 @@
     }
   }
 
-  function fixSwingMenuPositioning(reason) {
-    const root = document.getElementById("jalview-shell") || document.body;
-    const rootRect = root && typeof root.getBoundingClientRect === "function"
-      ? root.getBoundingClientRect()
-      : { left: 0, top: 0, width: window.innerWidth || 0, height: window.innerHeight || 0 };
-    const maxWidth = Math.max(0, Math.floor(rootRect.width || window.innerWidth || 0));
-    const maxHeight = Math.max(0, Math.floor(rootRect.height || window.innerHeight || 0));
-    const selectors = [
-      ".swingjsPopupMenu",
-      ".swingjs-popup",
-      ".swingjs-menu",
-      ".ui-j2smenu",
-      "[role='menu']",
-      "[id*='_MenuBarUI']",
-      "[id*='_PopupMenuUI']"
-    ];
-    try {
-      document.querySelectorAll(selectors.join(",")).forEach((node) => {
-        if (!(node instanceof HTMLElement)) return;
-        const rect = node.getBoundingClientRect();
-        if ((rect.width <= 0 && rect.height <= 0) || node.closest("#sysoutdiv")) return;
-        if (!node.closest("#jalview-alignment-div, #jalview-desktop-div, body")) return;
-        const style = window.getComputedStyle(node);
-        const isMenuBar = node.matches("[id*='_MenuBarUI']");
-        if (isMenuBar) {
-          node.style.setProperty("left", "0px", "important");
-          node.style.setProperty("top", "0px", "important");
-          node.style.setProperty("right", "auto", "important");
-          node.style.setProperty("max-width", `${maxWidth}px`, "important");
-          node.style.setProperty("transform", "none", "important");
-          return;
-        }
-        if (style.position === "fixed") return;
-        let left = rect.left - rootRect.left;
-        let top = rect.top - rootRect.top;
-        if (!Number.isFinite(left)) left = 0;
-        if (!Number.isFinite(top)) top = 0;
-        const width = Math.max(0, rect.width);
-        const height = Math.max(0, rect.height);
-        if (left < 0) left = 0;
-        if (top < 0) top = 0;
-        if (width > 0 && maxWidth > 0 && left + width > maxWidth) {
-          left = Math.max(0, maxWidth - width);
-        }
-        if (height > 0 && maxHeight > 0 && top + height > maxHeight) {
-          top = Math.max(0, maxHeight - height);
-        }
-        node.style.setProperty("left", `${Math.round(left)}px`, "important");
-        node.style.setProperty("top", `${Math.round(top)}px`, "important");
-        node.style.setProperty("right", "auto", "important");
-        node.style.setProperty("bottom", "auto", "important");
-        node.style.setProperty("transform", "none", "important");
-      });
-    } catch (error) {
-      debug("fix-swing-menu-positioning-failed", { reason, message: formatValue(error) });
-    }
-  }
-
   function hideMenusFromOutsideEvent(event) {
     const target = event && event.target;
     if (!target || !(target instanceof Element)) return;
@@ -2359,14 +2545,41 @@
     return null;
   }
 
+  function isSwingMenuDOMNode(node) {
+    if (!(node instanceof Element)) return false;
+    return !!node.closest([
+      ".ui-j2smenu",
+      ".ui-j2smenu-node",
+      ".swingjsPopupMenu",
+      ".swingjs-popup",
+      ".swingjs-menu",
+      "[role='menu']",
+      "[id*='_MenuUI']",
+      "[id*='_MenuItemUI']",
+      "[id*='_PopupMenuUI']",
+      "[id*='_MenuBarUI']"
+    ].join(","));
+  }
+
+  function clearSwingColourSwatchStyle(node) {
+    if (!(node instanceof HTMLElement) || !node.dataset.phgoColourSwatch) return;
+    delete node.dataset.phgoColourSwatch;
+    for (const prop of ["background-color", "background-image", "border", "min-width", "min-height", "box-sizing", "opacity"]) {
+      node.style.removeProperty(prop);
+    }
+  }
+
   function isSwingColourSwatchComponent(component) {
     if (!component) return false;
+    const node = swingComponentDOMNode(component);
+    if (isSwingMenuDOMNode(node)) return false;
     let tip = "";
     try {
       tip = String(primitiveValue(callValue(component, ["getToolTipText$"])) || "");
     } catch (_error) {
       tip = "";
     }
+    if (!/(colour|color)/i.test(tip)) return false;
     if (/colour|color/i.test(tip) && /(min|max|minimum|maximum|gap|hidden|value|set)/i.test(tip)) return true;
     try {
       const preferred = typeof component.getPreferredSize$ === "function" ? component.getPreferredSize$() : null;
@@ -2379,9 +2592,14 @@
   }
 
   function syncSwingColourSwatchComponent(component, color) {
+    const node = swingComponentDOMNode(component);
+    if (isSwingMenuDOMNode(node)) {
+      clearSwingColourSwatchStyle(node);
+      colourSwatchComponents.delete(component);
+      return;
+    }
     if (!isSwingColourSwatchComponent(component)) return;
     colourSwatchComponents.add(component);
-    const node = swingComponentDOMNode(component);
     if (!node) return;
     const actual = color || callValue(component, ["getBackground$"]);
     const css = javaColorToHex(actual, "");
@@ -2423,7 +2641,9 @@
     if (typeof originalSetEnabled === "function") {
       proto.setEnabled$Z = function(enabled) {
         const result = originalSetEnabled.apply(this, arguments);
-        window.setTimeout(() => syncSwingColourSwatchComponent(this, callValue(this, ["getBackground$"])), 0);
+        if (colourSwatchComponents.has(this)) {
+          window.setTimeout(() => syncSwingColourSwatchComponent(this, callValue(this, ["getBackground$"])), 0);
+        }
         return result;
       };
     }
@@ -2454,8 +2674,6 @@
     document.addEventListener("touchstart", hideMenusFromOutsideEvent, true);
     document.addEventListener("wheel", hideMenusFromOutsideEvent, true);
     document.addEventListener("keydown", hideMenusOnEscape, true);
-    document.addEventListener("pointerup", () => window.setTimeout(() => fixSwingMenuPositioning("pointerup"), 0), true);
-    document.addEventListener("click", () => window.setTimeout(() => fixSwingMenuPositioning("click"), 0), true);
     window.addEventListener("message", (event) => {
       const data = event.data || {};
       if (data.source === "phgo-jalview-host" && data.type === "resize") {
@@ -2468,9 +2686,6 @@
     window.setTimeout(adaptLayout, 0);
     window.setTimeout(adaptLayout, 250);
     window.setTimeout(adaptLayout, 1000);
-    window.setTimeout(() => fixSwingMenuPositioning("startup"), 0);
-    window.setTimeout(() => fixSwingMenuPositioning("startup-delayed"), 500);
-    window.setTimeout(() => fixSwingMenuPositioning("startup-late"), 1500);
     window.setTimeout(installSwingColourSwatchFix, 0);
     window.setTimeout(installSwingColourSwatchFix, 500);
     window.setTimeout(installSwingColourSwatchFix, 1500);

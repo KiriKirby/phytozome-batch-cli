@@ -279,7 +279,7 @@ func TestEnrichBlastRowsWithMappingsUsesTranscriptDirectlyForNucleotideHits(t *t
 	if rows[0].TranscriptID != "Sp9509d020g000340_T001" {
 		t.Fatalf("TranscriptID = %q, want direct subject transcript", rows[0].TranscriptID)
 	}
-	wantURL := "https://www.lemna.org/report/Sp_polyrhiza_9509/Sp9509d020g000340"
+	wantURL := "https://www.lemna.org/jbrowse2/?assembly=Sp9509d&config=https%3A%2F%2Fwww.lemna.org%2Fjbrowse2%2Fconfig.json&filter=Sp9509d020g000340&highlight=Sp9509d020g000340&phgo_gene=Sp9509d020g000340&phgo_root=Sp_polyrhiza_9509"
 	if rows[0].GeneReportURL != wantURL {
 		t.Fatalf("GeneReportURL = %q, want %q", rows[0].GeneReportURL, wantURL)
 	}
@@ -1201,7 +1201,7 @@ func TestLemnaKeywordReplayLiveBySearchType(t *testing.T) {
 	}{
 		{
 			name:           "report-url-gene",
-			term:           "https://www.lemna.org/report/Sp_polyrhiza_9509/Sp9509d020g000340",
+			term:           "https://www.lemna.org/jbrowse2/?assembly=Sp9509d&config=https%3A%2F%2Fwww.lemna.org%2Fjbrowse2%2Fconfig.json&filter=Sp9509d020g000340&highlight=Sp9509d020g000340&phgo_gene=Sp9509d020g000340&phgo_root=Sp_polyrhiza_9509",
 			wantSearchType: "report URL: gene",
 			minRows:        1,
 		},

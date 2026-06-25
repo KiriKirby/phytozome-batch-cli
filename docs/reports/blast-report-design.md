@@ -326,7 +326,7 @@ Use a horizontal segmented bar or tile mosaic:
 | Type | Color group | Meaning |
 | --- | --- | --- |
 | FASTA record | primary | input started with `>` and parsed into header + sequence |
-| report URL | secondary | normalized Phytozome report URL resolved to a query sequence |
+| report URL | secondary | normalized supported source URL such as a Phytozome report URL or lemna.org gene/browser URL resolved to a query sequence |
 | plain sequence | success | direct sequence tokens/lines used as sequence |
 | inline mixed line | warning | one line split into multiple URL/sequence tokens |
 | loaded file | purple/slate | input came from `load "file.txt"` |

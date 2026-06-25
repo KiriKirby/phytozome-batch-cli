@@ -51,7 +51,7 @@ func (f *fakeFinder) SearchKeywordRowsByBroadText(ctx context.Context, species m
 func TestEngineMapsLemnaPrograms(t *testing.T) {
 	finder := &fakeFinder{
 		reportRows: map[string][]model.KeywordResultRow{
-			"HTTPS://WWW.LEMNA.ORG/REPORT/SP_POLYRHIZA_9509/SP9509D020G000340": {{TranscriptID: "Sp9509d020g000340_T001", LabelName: "C4H"}},
+			"HTTPS://WWW.LEMNA.ORG/JBROWSE2/?ASSEMBLY=SP9509D&CONFIG=HTTPS%3A%2F%2FWWW.LEMNA.ORG%2FJBROWSE2%2FCONFIG.JSON&FILTER=SP9509D020G000340&HIGHLIGHT=SP9509D020G000340&PHGO_GENE=SP9509D020G000340&PHGO_ROOT=SP_POLYRHIZA_9509": {{TranscriptID: "Sp9509d020g000340_T001", LabelName: "C4H"}},
 		},
 		idRows: map[string][]model.KeywordResultRow{
 			"TRANSCRIPT|SP9509D020G000340_T001": {{TranscriptID: "Sp9509d020g000340_T001", LabelName: "C4H"}},
@@ -77,7 +77,7 @@ func TestEngineMapsLemnaPrograms(t *testing.T) {
 		searchType string
 		label      string
 	}{
-		{"https://www.lemna.org/report/Sp_polyrhiza_9509/Sp9509d020g000340", SearchTypeReportURL, "C4H"},
+		{"https://www.lemna.org/jbrowse2/?assembly=Sp9509d&config=https%3A%2F%2Fwww.lemna.org%2Fjbrowse2%2Fconfig.json&filter=Sp9509d020g000340&highlight=Sp9509d020g000340&phgo_gene=Sp9509d020g000340&phgo_root=Sp_polyrhiza_9509", SearchTypeReportURL, "C4H"},
 		{"Sp9509d020g000340_T001", SearchTypeTranscriptID, "C4H"},
 		{"Sp9509d020g000340", SearchTypeGeneID, "C4H"},
 		{"LOC_Os05g25640", SearchTypeRiceLocus, "C4H"},

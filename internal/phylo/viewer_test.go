@@ -137,9 +137,6 @@ func TestViewerAssetsIncludeJalviewBootstrapPage(t *testing.T) {
 		!strings.Contains(html, `[id*="_DesktopPaneUI"]`) ||
 		!strings.Contains(html, `#jalview-desktop-div .phgo-root-desktop-frame [id*="_MenuBarUI"]`) ||
 		!strings.Contains(html, `#jalview-alignment-div [id*="_MenuBarUI"]`) ||
-		!strings.Contains(html, `.phgo-root-desktop-frame .ui-j2smenu`) ||
-		!strings.Contains(html, `max-width: calc(100dvw - 8px)`) ||
-		!strings.Contains(html, `z-index: 2500 !important`) ||
 		!strings.Contains(html, `scrollbar-color: rgba(96, 94, 92, 0.62) rgba(243, 242, 241, 0.9)`) ||
 		!strings.Contains(html, `*::-webkit-scrollbar-thumb`) ||
 		!strings.Contains(html, `pointer-events: none`) ||
@@ -147,6 +144,9 @@ func TestViewerAssetsIncludeJalviewBootstrapPage(t *testing.T) {
 		strings.Contains(html, "body.phgo-jalview-ready #jalview-desktop-div,\n      #jalview-desktop-div.phgo-window-manager {\n        display: none !important") ||
 		strings.Contains(html, `aria-hidden="true"`) ||
 		strings.Contains(html, `phgo-hidden-desktop`) ||
+		strings.Contains(html, `.phgo-root-desktop-frame .ui-j2smenu,`) ||
+		strings.Contains(html, `max-width: calc(100dvw - 8px)`) ||
+		strings.Contains(html, `z-index: 2500 !important`) ||
 		strings.Contains(html, `#jalview-alignment-div .swingjs-window`) {
 		t.Fatalf("jalview bootstrap asset does not look like the local bootstrap page: %s", html)
 	}
@@ -203,9 +203,6 @@ func TestViewerAssetsIncludePHgoJalviewBridge(t *testing.T) {
 		!strings.Contains(js, `java.awt.image.BufferedImage`) ||
 		!strings.Contains(js, `data-msaexpor-renderer="jalview-vector"`) ||
 		!strings.Contains(js, `installSwingColourSwatchFix`) ||
-		!strings.Contains(js, `function fixSwingMenuPositioning(reason)`) ||
-		!strings.Contains(js, `fixSwingMenuPositioning("startup")`) ||
-		!strings.Contains(js, `fixSwingMenuPositioning("layout-ready")`) ||
 		!strings.Contains(js, `ensureMSAExportWindowMounted`) ||
 		!strings.Contains(js, `const leftLabelPadding = Math.max(24, Math.ceil(charWidth * 3));`) ||
 		!strings.Contains(js, `SwingJS child-window content pane is not available for msaexpor`) ||
@@ -233,9 +230,16 @@ func TestViewerAssetsIncludePHgoJalviewBridge(t *testing.T) {
 		!strings.Contains(js, `payloadUpdatedAt`) ||
 		!strings.Contains(js, `currentPayloadUpdatedAt`) ||
 		!strings.Contains(js, `setConservationColour$java_awt_Color`) ||
-		!strings.Contains(js, `setBackgroundColour$java_awt_Color`) ||
-		!strings.Contains(js, `setGlobalColourScheme$O`) ||
-		!strings.Contains(js, `setResidueShading$O`) ||
+		!strings.Contains(js, `currentColourSchemeState`) ||
+		!strings.Contains(js, `colours.scheme = scheme`) ||
+		!strings.Contains(js, `normalizeSavedColourScheme`) ||
+		!strings.Contains(js, `registeredColourScheme`) ||
+		!strings.Contains(js, `userColourSchemeFromSaved`) ||
+		!strings.Contains(js, `toAppletParameter$`) ||
+		!strings.Contains(js, `jalview.schemes.UserColourScheme`) ||
+		!strings.Contains(js, `colour_scheme_name`) ||
+		!strings.Contains(js, `applySavedColourScheme`) ||
+		!strings.Contains(js, `changeColour_actionPerformed$S`) ||
 		!strings.Contains(js, `Reloading MSA...`) ||
 		!strings.Contains(js, `checkboxColumnWidth`) ||
 		strings.Contains(js, `installApplyMenuFallback`) ||
@@ -248,6 +252,19 @@ func TestViewerAssetsIncludePHgoJalviewBridge(t *testing.T) {
 		strings.Contains(js, `window.setInterval(updateMSACheckboxLayer`) ||
 		strings.Contains(js, `phgo-hidden-desktop`) ||
 		strings.Contains(js, `notify("layout-warning"`) ||
+		strings.Contains(js, `function fixSwingMenuPositioning(reason)`) ||
+		strings.Contains(js, `fixSwingMenuPositioning("startup")`) ||
+		strings.Contains(js, `scheduleMSAStateSave("startup"`) ||
+		strings.Contains(js, `scheduleMSAStateSave("layout-ready"`) ||
+		strings.Contains(js, `setBackgroundColour$java_awt_Color`) ||
+		strings.Contains(js, `setResidueShading$O`) ||
+		strings.Contains(js, `setGlobalColourScheme$O`) ||
+		strings.Contains(js, `["colour_scheme", ["getGlobalColourScheme$"]]`) ||
+		strings.Contains(js, `["residue_shading", ["getResidueShading$"]]`) ||
+		strings.Contains(js, `colours.colour_scheme ||`) ||
+		strings.Contains(js, `settings.colour_scheme ||`) ||
+		strings.Contains(js, `const components = menu && typeof menu.getMenuComponents$`) ||
+		strings.Contains(js, `colourSchemeObjectByName`) ||
 		!strings.Contains(js, `resizeMainAlignmentFrame`) ||
 		!strings.Contains(js, `window.__PHGOJalviewScheduleResizeMainAlignment`) ||
 		strings.Contains(js, `desktop.instance.setBounds$I$I$I$I`) ||
@@ -494,6 +511,18 @@ func TestVendoredJalviewMSAExportImageRoutesToMSAExpor(t *testing.T) {
 	}
 }
 
+func TestVendoredSwingJSShowsTopLevelPopupMenuItems(t *testing.T) {
+	body, err := viewerAsset("assets/jalviewjs/swingjs/j2s/swingjs/jquery/j2sMenu.js")
+	if err != nil {
+		t.Fatalf("vendored SwingJS j2sMenu asset missing: %v", err)
+	}
+	js := string(body)
+	if !strings.Contains(js, `menu.$ulTop.children(".ui-j2smenu-item").css("display", "block");`) ||
+		!strings.Contains(js, `menu.$ulTop.hide().j2smenu("noclickout").show();`) {
+		t.Fatalf("SwingJS popup menu show path should restore direct top-level menu items before showing")
+	}
+}
+
 func TestVendoredJalviewCoreHasPHgoSourcePatches(t *testing.T) {
 	core, err := viewerAsset("assets/jalviewjs/swingjs/j2s/core/corejvexamplefile.js")
 	if err != nil {
@@ -536,6 +565,7 @@ func TestVendoredJalviewCoreHasPHgoSourcePatches(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		`this.add$javax_swing_JMenuItem(this.pdbStructureDialog);`,
+		`this.add$javax_swing_JMenuItem(this.rnaStructureMenu);`,
 		`this.editMenu.add$javax_swing_JMenuItem(this.toggle);`,
 		`label.spaces_converted_to_underscores`,
 		`.replace$C$C(" ", this.b$['jalview.gui.PopupMenu'].ap.av.getGapCharacter$())`,
@@ -549,6 +579,26 @@ func TestVendoredJalviewCoreHasPHgoSourcePatches(t *testing.T) {
 	} {
 		if strings.Contains(js, forbidden) {
 			t.Fatalf("vendored JalviewJS core still contains disabled PHgo MSA behavior %q", forbidden)
+		}
+	}
+}
+
+func TestVendoredJalviewPopupMenuRemovesVarna2DStructure(t *testing.T) {
+	for _, asset := range []string{
+		"assets/jalviewjs/swingjs/j2s/jalview/gui/PopupMenu.js",
+		"assets/jalviewjs/swingjs/j2s/core/core_jalview.js",
+		"assets/jalviewjs/swingjs/j2s/core/corejalview.js",
+		"assets/jalviewjs/swingjs/j2s/core/corejvexamplefile.js",
+		"assets/jalviewjs/swingjs/j2s/core/core_jalview.z.js",
+		"assets/jalviewjs/swingjs/j2s/core/corejvexamplefile.z.js",
+	} {
+		body, err := viewerAsset(asset)
+		if err != nil {
+			t.Fatalf("%s missing: %v", asset, err)
+		}
+		js := string(body)
+		if strings.Contains(js, `this.add$javax_swing_JMenuItem(this.rnaStructureMenu);`) {
+			t.Fatalf("%s still adds the VARNA/RNA 2D structure menu to the right-click popup", asset)
 		}
 	}
 }

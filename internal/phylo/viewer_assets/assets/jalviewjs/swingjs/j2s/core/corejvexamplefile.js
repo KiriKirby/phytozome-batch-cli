@@ -124043,7 +124043,6 @@ this.b$['jalview.gui.PopupMenu'].hideInsertions_actionPerformed$java_awt_event_A
 this.groupMenu.add$javax_swing_JMenuItem(this.sequenceSelDetails);
 this.add$javax_swing_JMenuItem(this.groupMenu);
 this.add$javax_swing_JMenuItem(this.sequenceMenu);
-this.add$javax_swing_JMenuItem(this.rnaStructureMenu);
 if (this.sequence != null ) {
 this.add$javax_swing_JMenuItem(this.hideInsertions);
 }this.sequenceMenu.add$javax_swing_JMenuItem(this.seqShowAnnotationsMenu);

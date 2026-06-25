@@ -81,6 +81,11 @@ func TestNormalizeGeneReportURL(t *testing.T) {
 			want:  "https://phytozome-next.jgi.doe.gov/report/protein/S_polyrhiza_v2/Spipo15G0028500",
 			ok:    true,
 		},
+		{
+			input: "https://lemna.org/jbrowse2/?assembly=Sp9509d&config=https%3A%2F%2Fwww.lemna.org%2Fjbrowse2%2Fconfig.json&filter=Sp9509d020g000340&highlight=Sp9509d020g000340&phgo_gene=Sp9509d020g000340&phgo_root=Sp_polyrhiza_9509",
+			want:  "https://www.lemna.org/jbrowse2/?assembly=Sp9509d&config=https%3A%2F%2Fwww.lemna.org%2Fjbrowse2%2Fconfig.json&filter=Sp9509d020g000340&highlight=Sp9509d020g000340&phgo_gene=Sp9509d020g000340&phgo_root=Sp_polyrhiza_9509",
+			ok:    true,
+		},
 	}
 
 	for _, tc := range tests {
@@ -5124,7 +5129,7 @@ func TestKeywordRowsToBlastItemsPreservesKeywordMetadata(t *testing.T) {
 		Genome:              "Spirodela polyrhiza 9509 REF-OXFORD-3.0",
 		Description:         "4-coumarate--CoA ligase",
 		Comments:            "AHDR note",
-		GeneReportURL:       "https://www.lemna.org/report/Sp_polyrhiza_9509/Sp9509d011g001470",
+		GeneReportURL:       "https://www.lemna.org/jbrowse2/?assembly=Sp9509d&config=https%3A%2F%2Fwww.lemna.org%2Fjbrowse2%2Fconfig.json&filter=Sp9509d011g001470&highlight=Sp9509d011g001470&phgo_gene=Sp9509d011g001470&phgo_root=Sp_polyrhiza_9509",
 	}}
 	items := keywordRowsToBlastItems(model.SpeciesCandidate{
 		ProteomeID:  18,

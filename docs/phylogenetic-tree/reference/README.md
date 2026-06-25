@@ -72,6 +72,9 @@ confidence level.
   Per-parameter ledger showing whether each PHgo tree UI row is consumed by the
   MEGA-backed runtime, display-only, MEGA-recorded without downstream algorithm
   use, or compatibility-only.
+- [Jalview MSA State Contract](./14-jalview-msa-state-contract.md)
+  Defines manual Jalview File > Save persistence for MSA state, including
+  built-in/user-defined colour scheme serialization and PHgo popup-menu bounds.
 
 ## Non-Negotiable Rules
 

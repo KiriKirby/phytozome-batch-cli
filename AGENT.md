@@ -485,7 +485,7 @@ This file tracks the intended shape of `phytozome GO` and its release packaging,
   - query input prompts should say exactly what kinds of inputs are accepted
   - list/selection pages should say what the commands do before asking for input
 - BLAST batch input rules:
-  - accept one query per line, FASTA entries, Phytozome report URLs, or a keyword list copied from `list`
+  - accept one query per line, FASTA entries, supported source report/browser URLs such as Phytozome report URLs and lemna.org JBrowse gene links, or a keyword list copied from `list`
   - accept `load "file.txt"` from the program directory as a batch input source
   - when more than one query is supplied, validate that pasted label names are either present for all items or omitted for all items
   - allow `~` as the explicit blank placeholder for per-query labels

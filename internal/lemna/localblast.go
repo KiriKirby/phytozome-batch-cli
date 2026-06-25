@@ -1846,7 +1846,7 @@ func enrichBlastRowsWithMappings(rel releaseInfo, rows *[]model.BlastResultRow, 
 					r.TranscriptID = tok
 				}
 				if r.GeneReportURL == "" || r.GeneReportURL == rel.ReleaseURL {
-					r.GeneReportURL = lemnaGeneReportURL(rel.RootDir, gid)
+					r.GeneReportURL = lemnaGeneReportURL(rel.RootDir, gid, "", "", "")
 				}
 				if r.JBrowseName == "" {
 					r.JBrowseName = rel.RootDir
@@ -1864,7 +1864,7 @@ func enrichBlastRowsWithMappings(rel releaseInfo, rows *[]model.BlastResultRow, 
 				}
 				if gid, ok2 := lookupNormalizedMapValue(transToGene, tid); ok2 && gid != "" {
 					if r.GeneReportURL == "" || r.GeneReportURL == rel.ReleaseURL {
-						r.GeneReportURL = lemnaGeneReportURL(rel.RootDir, gid)
+						r.GeneReportURL = lemnaGeneReportURL(rel.RootDir, gid, "", "", "")
 					}
 					// Set TargetID to release proteome id as identifier for export convenience.
 					if r.TargetID == 0 {
@@ -1881,7 +1881,7 @@ func enrichBlastRowsWithMappings(rel releaseInfo, rows *[]model.BlastResultRow, 
 		if !gffMatched && strings.TrimSpace(r.TranscriptID) != "" {
 			if gid, ok := lookupNormalizedMapValue(transToGene, r.TranscriptID); ok && gid != "" {
 				if r.GeneReportURL == "" || r.GeneReportURL == rel.ReleaseURL {
-					r.GeneReportURL = lemnaGeneReportURL(rel.RootDir, gid)
+					r.GeneReportURL = lemnaGeneReportURL(rel.RootDir, gid, "", "", "")
 				}
 				if r.JBrowseName == "" {
 					r.JBrowseName = rel.RootDir
@@ -1934,15 +1934,6 @@ func enrichBlastRowsWithMappings(rel releaseInfo, rows *[]model.BlastResultRow, 
 			r.TargetID = rel.BlastNDBID
 		}
 	}
-}
-
-func lemnaGeneReportURL(rootDir string, geneID string) string {
-	rootDir = strings.TrimSpace(rootDir)
-	geneID = strings.TrimSpace(geneID)
-	if rootDir == "" || geneID == "" {
-		return ""
-	}
-	return fmt.Sprintf("https://www.lemna.org/report/%s/%s", rootDir, geneID)
 }
 
 func uniprotAccessionFromAHRD(record ahrdRecord) string {

@@ -72,6 +72,7 @@ type Client struct {
 	releasesByJBrowseName  map[string]releaseInfo
 	ahrdCache              map[string]map[string]ahrdRecord
 	proteinTranscriptCache map[string]proteinTranscriptMaps
+	geneLocationCache      map[string]map[string]lemnaGeneLocation
 	fastaIndexCache        map[string]map[string]fastaEntry
 	proteinReleaseCache    map[string]map[string]string
 	nucleotideReleaseCache map[string]map[string]string
@@ -89,6 +90,14 @@ type Client struct {
 type proteinTranscriptMaps struct {
 	protToTrans map[string]string
 	transToGene map[string]string
+}
+
+type lemnaGeneLocation struct {
+	Assembly string `json:"assembly"`
+	SeqID    string `json:"seq_id"`
+	Start    string `json:"start"`
+	End      string `json:"end"`
+	Strand   string `json:"strand"`
 }
 
 type speciesMetaResult struct {
@@ -748,6 +757,7 @@ func NewClient(httpClient *http.Client) *Client {
 		releasesByJBrowseName:  make(map[string]releaseInfo),
 		ahrdCache:              make(map[string]map[string]ahrdRecord),
 		proteinTranscriptCache: make(map[string]proteinTranscriptMaps),
+		geneLocationCache:      make(map[string]map[string]lemnaGeneLocation),
 		fastaIndexCache:        make(map[string]map[string]fastaEntry),
 		proteinReleaseCache:    make(map[string]map[string]string),
 		nucleotideReleaseCache: make(map[string]map[string]string),
@@ -1255,6 +1265,37 @@ func (c *Client) FetchGeneQuerySequence(ctx context.Context, species model.Speci
 		}
 	}
 	return nil, fmt.Errorf("no lemna.org gene or transcript matched %q", identifier)
+}
+
+func (c *Client) FetchProteinQuerySequence(ctx context.Context, species model.SpeciesCandidate, proteinID string) (*model.QuerySequenceSource, error) {
+	rows, err := c.SearchKeywordRows(ctx, species, proteinID)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		if strings.EqualFold(strings.TrimSpace(row.ProteinID), strings.TrimSpace(proteinID)) ||
+			strings.EqualFold(strings.TrimSpace(row.SequenceID), strings.TrimSpace(proteinID)) ||
+			strings.EqualFold(strings.TrimSpace(row.TranscriptID), strings.TrimSpace(proteinID)) {
+			sequenceID := firstNonEmpty(row.SequenceID, row.ProteinID, row.TranscriptID)
+			sequence, err := c.FetchProteinSequence(ctx, species.ProteomeID, sequenceID)
+			if err != nil {
+				return nil, err
+			}
+			return &model.QuerySequenceSource{
+				Sequence:          sequence.Sequence,
+				SourceDatabase:    c.Name(),
+				SourceProteomeID:  species.ProteomeID,
+				SourceJBrowseName: species.JBrowseName,
+				SourceGenomeLabel: species.GenomeLabel,
+				GeneID:            row.GeneIdentifier,
+				TranscriptID:      row.TranscriptID,
+				ProteinID:         sequenceID,
+				OrganismShort:     species.JBrowseName,
+				Annotation:        species.GenomeLabel,
+			}, nil
+		}
+	}
+	return nil, fmt.Errorf("no lemna.org protein matched %q", proteinID)
 }
 
 func (c *Client) ResolveQuerySequence(ctx context.Context, species model.SpeciesCandidate, input string) (*model.QuerySequenceSource, bool, error) {
@@ -2522,7 +2563,7 @@ func buildKeywordRowFromGFF(species model.SpeciesCandidate, release releaseInfo,
 		Description:         description,
 		Comments:            firstNonEmpty(attrs["Note"], attrs["comment"]),
 		AutoDefine:          firstNonEmpty(attrs["product"], attrs["Name"]),
-		GeneReportURL:       lemnaGeneReportURL(release.RootDir, firstNonEmpty(parent, id)),
+		GeneReportURL:       lemnaGeneReportURL(release.RootDir, firstNonEmpty(parent, id), gff.SeqID, gff.Start, gff.End),
 		SequenceHeaderLabel: species.DisplayLabel(),
 		SequenceID:          sequenceID,
 		ExtraColumns:        extra,
@@ -2536,6 +2577,74 @@ func officialCloneByRootDir(rootDir string) (officialClone, bool) {
 		}
 	}
 	return officialClone{}, false
+}
+
+func lemnaAssemblyName(rootDir string) string {
+	rootDir = strings.TrimSpace(rootDir)
+	clone, ok := officialCloneByRootDir(rootDir)
+	if !ok {
+		return ""
+	}
+	switch rootDir {
+	case "Sp_polyrhiza_9509":
+		return "Sp9509d"
+	case "Le_gibba_7742a":
+		return "Lg7742Ab"
+	case "Le_japonica_7182":
+		return "Lj7182a"
+	case "Le_japonica_8627":
+		return "Lj8627b"
+	case "Le_japonica_9421":
+		return "Lj9421a"
+	case "Le_minor_7210":
+		return "Lm7210a"
+	case "Le_minor_9252":
+		return "Lm9252a"
+	case "Le_turionifera_9434":
+		return "Lt9434a"
+	case "Wo_australiana_8730":
+		return "Wa8730c"
+	}
+	prefix := ""
+	switch clone.ShortName {
+	case "Sp. polyrhiza":
+		prefix = "Sp"
+	case "Le. gibba":
+		prefix = "Lg"
+	case "Le. japonica":
+		prefix = "Lj"
+	case "Le. minor":
+		prefix = "Lm"
+	case "Le. turionifera":
+		prefix = "Lt"
+	case "Wo. australiana":
+		prefix = "Wa"
+	}
+	if prefix == "" || clone.CloneID == "" {
+		return ""
+	}
+	return prefix + clone.CloneID
+}
+
+func lemnaGeneReportURL(rootDir string, geneID string, seqID string, start string, end string) string {
+	rootDir = strings.TrimSpace(rootDir)
+	geneID = strings.TrimSpace(geneID)
+	if rootDir == "" || geneID == "" {
+		return ""
+	}
+	values := url.Values{}
+	values.Set("config", baseURL+"/jbrowse2/config.json")
+	if assembly := lemnaAssemblyName(rootDir); assembly != "" {
+		values.Set("assembly", assembly)
+	}
+	if strings.TrimSpace(seqID) != "" && strings.TrimSpace(start) != "" && strings.TrimSpace(end) != "" {
+		values.Set("loc", fmt.Sprintf("%s:%s..%s", strings.TrimSpace(seqID), strings.TrimSpace(start), strings.TrimSpace(end)))
+	}
+	values.Set("highlight", geneID)
+	values.Set("filter", geneID)
+	values.Set("phgo_root", rootDir)
+	values.Set("phgo_gene", geneID)
+	return strings.TrimRight(baseURL, "/") + "/jbrowse2/?" + values.Encode()
 }
 
 func isSearchableFeatureType(featureType string) bool {

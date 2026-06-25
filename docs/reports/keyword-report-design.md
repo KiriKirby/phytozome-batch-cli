@@ -138,7 +138,7 @@ Current lemna keyword behavior:
 - The workflow resolves a lemna release and searches release-backed GFF3 rows.
 - GFF3 rows populate dynamic `ExtraColumns` such as `gff_seqid`, `gff_source`, `gff_type`, `gff_start`, `gff_end`, `gff_score`, `gff_strand`, `gff_phase`, `gff_attributes`, `lemna_release`, `lemna_gff_url`, and `attr_*` attributes.
 - AHRD records are loaded during normal workflow when available and add dynamic fields such as `ahrd_protein_accession`, `ahrd_blast_hit_accession`, `ahrd_quality_code`, `ahrd_human_readable_description`, `ahrd_interpro`, and `ahrd_gene_ontology_term`.
-- lemna rows use release URL as `GeneReportURL` because AHRD records do not provide stable gene report URLs.
+- lemna rows use real lemna.org JBrowse gene links when GFF coordinates are available, and may still fall back to release-level URLs for rows that lack enough location metadata.
 
 The report describes these mechanisms only as mechanisms that already ran. It must not call them.
 

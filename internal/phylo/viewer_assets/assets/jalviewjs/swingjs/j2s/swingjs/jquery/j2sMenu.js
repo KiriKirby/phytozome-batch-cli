@@ -717,6 +717,7 @@ Swing.showMenu = function(menu, x, y) {
   if (menu._tainted)
 	  Swing.updateMenu(menu);
   menu.setPosition(x, y);
+  menu.$ulTop.children(".ui-j2smenu-item").css("display", "block");
   menu.$ulTop.hide().j2smenu("noclickout").show();  
   menu._visible = true;
   menu.timestamp = System.currentTimeMillis$();

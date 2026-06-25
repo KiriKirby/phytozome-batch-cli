@@ -507,15 +507,24 @@ func LemnaGeneReportKeyword(value string) (rootDir string, identifier string, ok
 		return "", "", false
 	}
 	segments := nonEmptyPathSegments(parsed.Path)
-	if len(segments) != 3 || !strings.EqualFold(segments[0], "report") {
-		return "", "", false
+	if len(segments) == 3 && strings.EqualFold(segments[0], "report") {
+		rootDir = strings.TrimSpace(segments[1])
+		identifier = strings.TrimSpace(segments[2])
+		if rootDir == "" || identifier == "" {
+			return "", "", false
+		}
+		return rootDir, identifier, true
 	}
-	rootDir = strings.TrimSpace(segments[1])
-	identifier = strings.TrimSpace(segments[2])
-	if rootDir == "" || identifier == "" {
-		return "", "", false
+	if len(segments) == 1 && strings.EqualFold(segments[0], "jbrowse2") {
+		values := parsed.Query()
+		rootDir = strings.TrimSpace(values.Get("phgo_root"))
+		identifier = strings.TrimSpace(values.Get("phgo_gene"))
+		if rootDir == "" || identifier == "" {
+			return "", "", false
+		}
+		return rootDir, identifier, true
 	}
-	return rootDir, identifier, true
+	return "", "", false
 }
 
 func looksLikeSpecificIdentifier(value string) bool {

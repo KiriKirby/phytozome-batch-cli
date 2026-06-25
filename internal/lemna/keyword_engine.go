@@ -579,7 +579,7 @@ func keywordRowFromAHRD(species model.SpeciesCandidate, release releaseInfo, sea
 		Description:         record.HumanReadableDescription,
 		SequenceHeaderLabel: species.DisplayLabel(),
 		SequenceID:          firstNonEmpty(record.ProteinAccession, transcriptID),
-		GeneReportURL:       lemnaGeneReportURL(release.RootDir, stripTranscriptSuffix(transcriptID)),
+		GeneReportURL:       lemnaGeneReportURL(release.RootDir, stripTranscriptSuffix(transcriptID), "", "", ""),
 	}
 	enrichKeywordRowWithAHRD(&row, searchTerm, record)
 	return row
