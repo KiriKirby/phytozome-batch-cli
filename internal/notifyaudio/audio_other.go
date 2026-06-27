@@ -2,6 +2,6 @@
 
 package notifyaudio
 
-func playMIDIFile(path string) error {
+func playMIDIBytes(data []byte) error {
 	return nil
 }

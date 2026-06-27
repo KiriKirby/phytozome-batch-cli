@@ -1,25 +1,21 @@
 package notifyaudio
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 )
 
-func TestParseRepositoryMIDICues(t *testing.T) {
-	files, err := filepath.Glob(filepath.Join("..", "..", "assets", "sounds", "*.mid"))
-	if err != nil {
-		t.Fatal(err)
+func TestParseEmbeddedMIDICues(t *testing.T) {
+	cues := map[string][]byte{
+		startupMID: startupMIDI,
+		blastMID:   blastMIDI,
+		keywordMID: keywordMIDI,
+		canvasMID:  canvasMIDI,
+		doneMID:    doneMIDI,
 	}
-	if len(files) == 0 {
-		t.Fatal("no MIDI cue files found")
-	}
-	for _, file := range files {
-		file := file
-		t.Run(filepath.Base(file), func(t *testing.T) {
-			data, err := os.ReadFile(file)
-			if err != nil {
-				t.Fatal(err)
+	for name, data := range cues {
+		t.Run(name, func(t *testing.T) {
+			if len(data) == 0 {
+				t.Fatalf("embedded cue is empty")
 			}
 			seq, err := parseSMF(data)
 			if err != nil {

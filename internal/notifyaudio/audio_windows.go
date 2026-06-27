@@ -5,8 +5,6 @@ package notifyaudio
 import (
 	"fmt"
 	"math"
-	"os"
-	"strings"
 	"time"
 	"unsafe"
 
@@ -14,38 +12,14 @@ import (
 )
 
 var (
-	winmmDLL      = windows.NewLazySystemDLL("winmm.dll")
-	mciSendString = winmmDLL.NewProc("mciSendStringW")
-	midiOutOpen   = winmmDLL.NewProc("midiOutOpen")
-	midiOutClose  = winmmDLL.NewProc("midiOutClose")
-	midiOutReset  = winmmDLL.NewProc("midiOutReset")
-	midiOutShort  = winmmDLL.NewProc("midiOutShortMsg")
+	winmmDLL    = windows.NewLazySystemDLL("winmm.dll")
+	midiOutOpen = winmmDLL.NewProc("midiOutOpen")
+	midiOutClose = winmmDLL.NewProc("midiOutClose")
+	midiOutReset = winmmDLL.NewProc("midiOutReset")
+	midiOutShort = winmmDLL.NewProc("midiOutShortMsg")
 )
 
-func playMIDIFile(path string) error {
-	if err := playMIDIMCI(path); err == nil {
-		return nil
-	}
-	return playMIDIDirect(path)
-}
-
-func playMIDIMCI(path string) error {
-	alias := fmt.Sprintf("phgo_midi_%d", time.Now().UnixNano())
-	escapedPath := strings.ReplaceAll(path, `"`, `""`)
-	if err := mciCommand(fmt.Sprintf(`open "%s" type sequencer alias %s`, escapedPath, alias)); err != nil {
-		return err
-	}
-	defer func() {
-		_ = mciCommand("close " + alias)
-	}()
-	return mciCommand("play " + alias + " from 0 wait")
-}
-
-func playMIDIDirect(path string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
+func playMIDIBytes(data []byte) error {
 	seq, err := parseSMF(data)
 	if err != nil {
 		return err
@@ -81,21 +55,6 @@ func playMIDIDirect(path string) error {
 		}
 	}
 	time.Sleep(80 * time.Millisecond)
-	return nil
-}
-
-func mciCommand(command string) error {
-	ptr, err := windows.UTF16PtrFromString(command)
-	if err != nil {
-		return err
-	}
-	ret, _, callErr := mciSendString.Call(uintptr(unsafe.Pointer(ptr)), 0, 0, 0)
-	if ret != 0 {
-		if callErr != windows.ERROR_SUCCESS && callErr != nil {
-			return callErr
-		}
-		return fmt.Errorf("mci command failed: %s", command)
-	}
 	return nil
 }
 

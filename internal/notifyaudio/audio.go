@@ -1,13 +1,9 @@
 package notifyaudio
 
 import (
+	_ "embed"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
-	"sync"
-
-	"github.com/KiriKirby/phytozome-go/internal/appfs"
 )
 
 const (
@@ -18,19 +14,25 @@ const (
 	doneMID    = "done.mid"
 )
 
-var cuePathCache sync.Map
-var warmupOnce sync.Once
+//go:embed cues/startup.mid
+var startupMIDI []byte
 
-func init() {
-	Warmup()
-}
+//go:embed cues/blast.mid
+var blastMIDI []byte
+
+//go:embed cues/keyword.mid
+var keywordMIDI []byte
+
+//go:embed cues/canvas.mid
+var canvasMIDI []byte
+
+//go:embed cues/done.mid
+var doneMIDI []byte
 
 func Warmup() {
-	warmupOnce.Do(func() {
-		for _, fileName := range []string{startupMID, blastMID, keywordMID, canvasMID, doneMID} {
-			_, _ = cuePath(fileName)
-		}
-	})
+	for _, fileName := range []string{startupMID, blastMID, keywordMID, canvasMID, doneMID} {
+		_, _ = cueBytes(fileName)
+	}
 }
 
 func PlayStartup() {
@@ -54,46 +56,32 @@ func PlayDone() {
 }
 
 func playCueAsync(fileName string) {
-	Warmup()
 	go func() {
-		path, err := cuePath(fileName)
-		if err != nil || strings.TrimSpace(path) == "" {
+		data, err := cueBytes(fileName)
+		if err != nil || len(data) == 0 {
 			return
 		}
-		_ = playMIDIFile(path)
+		_ = playMIDIBytes(data)
 	}()
 }
 
-func cuePath(fileName string) (string, error) {
-	fileName = strings.TrimSpace(fileName)
-	if fileName == "" {
-		return "", fmt.Errorf("empty midi cue file")
+func cueBytes(fileName string) ([]byte, error) {
+	switch strings.TrimSpace(fileName) {
+	case startupMID:
+		return startupMIDI, nil
+	case blastMID:
+		return blastMIDI, nil
+	case keywordMID:
+		return keywordMIDI, nil
+	case canvasMID:
+		return canvasMIDI, nil
+	case doneMID:
+		return doneMIDI, nil
+	default:
+		return nil, fmt.Errorf("embedded midi cue %s was not found", fileName)
 	}
-	if cached, ok := cuePathCache.Load(fileName); ok {
-		return cached.(string), nil
-	}
-	appDir, err := appfs.ApplicationDir()
-	if err != nil {
-		return "", err
-	}
-	candidates := []string{
-		filepath.Join(appDir, "assets", "sounds", fileName),
-		filepath.Join(appDir, "..", "assets", "sounds", fileName),
-		filepath.Join(appDir, "..", "..", "assets", "sounds", fileName),
-	}
-	if wd, err := os.Getwd(); err == nil {
-		candidates = append(candidates, filepath.Join(wd, "assets", "sounds", fileName))
-	}
-	for _, candidate := range candidates {
-		candidate = filepath.Clean(candidate)
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			if abs, err := filepath.Abs(candidate); err == nil {
-				cuePathCache.Store(fileName, abs)
-				return abs, nil
-			}
-			cuePathCache.Store(fileName, candidate)
-			return candidate, nil
-		}
-	}
-	return "", fmt.Errorf("midi cue %s was not found", fileName)
+}
+
+func init() {
+	Warmup()
 }
