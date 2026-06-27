@@ -78,9 +78,6 @@ func (r MegaPHGORuntime) Run(ctx context.Context, plan RunPlan) (RunResult, erro
 		return RunResult{Plan: plan, ArtifactDir: plan.BaseDir, ErrorText: err.Error()}, err
 	}
 	defer cleanup()
-	if err := ctx.Err(); err != nil {
-		return RunResult{Plan: plan, ArtifactDir: plan.BaseDir, ErrorText: err.Error()}, err
-	}
 	cmd := exec.CommandContext(ctx, preparedExe, requestPath)
 	cmd.Dir = plan.BaseDir
 	stdoutPath, stderrPath, exitText, runErr := runMegaPHGORuntimeCommand(cmd, plan.BaseDir)
