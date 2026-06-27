@@ -36,4 +36,4 @@ Detail/export emphasis:
 
 ## Special prompts
 
-- do not expose as a front-line search type without clear “specialist metadata” wording
+- do not expose as a front-line search type without clear “specialist metadata�?wording

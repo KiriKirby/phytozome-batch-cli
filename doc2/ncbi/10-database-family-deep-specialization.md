@@ -75,7 +75,7 @@ Shared rules:
 
 - emphasize significance, review status, phenotype, condition, and evidence
 - keep gene/protein links visible, but do not force sequence-first framing
-- support “jump to related gene / ClinVar / MedGen / GTR / OMIM” actions as first-class review operations
+- support “jump to related gene / ClinVar / MedGen / GTR / OMIM�?actions as first-class review operations
 - update/withdrawal/access-status prompts matter more than FASTA
 
 Current product rule:
@@ -146,7 +146,7 @@ Shared rules:
 
 - summary-first integration
 - likely disabled for Canvas/FASTA permanently
-- expose only after the UI can clearly signal “specialist metadata mode”
+- expose only after the UI can clearly signal “specialist metadata mode�?
 
 Current product rule:
 
@@ -154,7 +154,7 @@ Current product rule:
 
 ## Product consequence
 
-The product should never again treat “NCBI” as one workflow shape. The correct level of specialization is:
+The product should never again treat “NCBI�?as one workflow shape. The correct level of specialization is:
 
 1. source family = `ncbi`
 2. result domain family

@@ -180,6 +180,6 @@ It should focus on real managed execution boundaries and the module families tha
 For classification questions, use these documents in this order:
 
 1. this file
-2. `docs/phygoboost/work-inventory.md`
-3. `docs/phygoboost/architecture.md`
-4. `docs/phygoboost/workflow-contracts.md`
+2. `doc2/phygoboost/work-inventory.md`
+3. `doc2/phygoboost/architecture.md`
+4. `doc2/phygoboost/workflow-contracts.md`

@@ -17,7 +17,7 @@ import (
 )
 
 func main() {
-	outDir := flag.String("out", filepath.Join("docs", "reports", "samples"), "directory for the sample PDF")
+	outDir := flag.String("out", filepath.Join("doc2", "reports", "samples"), "directory for the sample PDF")
 	name := flag.String("name", "", "optional output file name")
 	mode := flag.String("mode", "keyword", "sample report mode: keyword or blast")
 	scenario := flag.String("scenario", "", "optional sample scenario: keyword-lemna, keyword-phytozome, blast-lemna, blast-phytozome, blast-phytozome-no-refs")

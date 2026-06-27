@@ -104,6 +104,7 @@ What these scripts do:
 - `scripts\build-codex.ps1` is the normal local build entrypoint; without `-Publish` it runs Windows-only build/test work and writes development artifacts only under `bin\`
 - `scripts\build-codex.ps1 -Publish` is the release entrypoint and forwards to the full cross-platform `scripts\build-release.ps1`
 - The published project website now lives directly under `docs\`; the embedded changelog page is `docs\nac.html` and the site favicon is `docs\favicon.png`
+- Project design and implementation documentation lives under `doc2\`; keep new Markdown documentation there instead of in the website root
 - `scripts\build-windows-dev.ps1` is the underlying Windows-only development build/test helper
 - `scripts\prepare-windows-wezterm.ps1` downloads and prepares the selected WezTerm Windows runtime under `bin\tooling\windows-wezterm\`
 - `scripts\package-windows-wezterm.ps1` stages a distributable bundle in `bin\phytozome-go_windows_amd64_wezterm\`
@@ -145,7 +146,7 @@ Canvas tree preview uses the same local viewer stack, but each Canvas page keeps
 
 When an older `.pgo` snapshot still references legacy `output/tree/...` tree artifacts, PHgo remaps those restored files into `.cache/tree/...` during snapshot open instead of recreating the old output-side tree cache.
 
-The snapshot format is documented in `docs/session-snapshot-system.md`.
+The snapshot format is documented in `doc2/session-snapshot-system.md`.
 
 ## Global Navigation Commands
 

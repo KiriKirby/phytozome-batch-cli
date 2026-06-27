@@ -48,4 +48,4 @@ Detail/export emphasis:
 
 ## Special prompts
 
-- cluster rows should offer “jump to member proteins” rather than pretending to be sequence-export rows by default
+- cluster rows should offer “jump to member proteins�?rather than pretending to be sequence-export rows by default

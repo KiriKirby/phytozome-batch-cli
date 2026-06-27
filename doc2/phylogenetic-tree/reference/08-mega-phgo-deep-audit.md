@@ -46,10 +46,10 @@ and fixes applied.
 - Existing docs already define strict runtime-only computation and snapshot
   contracts. This audit extends them with a file-by-file check and concrete
   fixes.
-- `docs/phylogenetic-tree/reference/07-mega-tree-options-index.md` already contains a MEGA
+- `doc2/phylogenetic-tree/reference/07-mega-tree-options-index.md` already contains a MEGA
   12.1-backed tree option matrix. This audit revisits Minimum Evolution status
   against source and runtime probes.
-- `docs/phylogenetic-tree/phgo-runtime-pipeline.md` had stale text saying only
+- `doc2/phylogenetic-tree/phgo-runtime-pipeline.md` had stale text saying only
   Neighbor-Joining was verified and describing PHgo-side conversion behavior. Current
   code exposes all five MEGA-backed tree methods and treats target mode as the
   only TUI data-mode choice.

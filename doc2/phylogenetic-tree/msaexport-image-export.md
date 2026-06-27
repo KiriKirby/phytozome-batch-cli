@@ -148,7 +148,7 @@ Primary sources include:
 - current page-level metadata needed for styling or export naming
 - current live Jalview/MSA renderer state needed to match residue, group, feature, label, and font styling
 
-Implementation-level details for settings, DSL parsing, rendering, and tests are defined in [`docs/phylogenetic-tree/msaexpor/`](./msaexpor/README.md).
+Implementation-level details for settings, DSL parsing, rendering, and tests are defined in [`doc2/phylogenetic-tree/msaexpor/`](./msaexpor/README.md).
 
 ### Mutation rules
 

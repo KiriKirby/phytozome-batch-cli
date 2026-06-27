@@ -5,7 +5,7 @@ This document defines the linked-navigation graph that `phytozome GO` should eve
 ## Design rule
 
 - use explicit `linkname` whenever practical
-- keep “open link browser” and “follow default jump” separate
+- keep “open link browser�?and “follow default jump�?separate
 - preserve `dbfrom`, `dbto`, `linkname`, source IDs, and resolved target IDs in snapshot/export metadata when a linked workflow materially changes the result set
 
 ## Priority jump chains
