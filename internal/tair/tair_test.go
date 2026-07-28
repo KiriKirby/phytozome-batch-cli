@@ -150,13 +150,16 @@ func TestParseENACodingTSVAndKeywordRow(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("rows = %d, want 1", len(rows))
 	}
-	rel := releaseInfo{Name: "TAIR12", Label: "TAIR12", Source: tairReleaseSourceENA, SourceURL: "https://www.ebi.ac.uk/ena/browser/view/PRJEB100887", ENAStudyAccession: tairENAStudyPRJEB100887, ReportURLBase: "https://www.ebi.ac.uk/ena/browser/view/"}
+	rel := releaseInfo{Name: "TAIR12", Label: "TAIR12", Source: tairReleaseSourceENA, SourceURL: "https://www.ebi.ac.uk/ena/browser/view/PRJEB100887", ENAStudyAccession: tairENAStudyPRJEB100887}
 	row := keywordRowFromENACoding(model.SpeciesCandidate{JBrowseName: "TAIR12", GenomeLabel: "TAIR12"}, rel, rows[0], "AT2G37040")
 	if row.GeneIdentifier != "AT2G37040" || row.SequenceID != "CAO7037755" || row.ProteinID != "CAO7037755.1" {
 		t.Fatalf("unexpected ENA keyword row identifiers: %#v", row)
 	}
-	if row.ExtraColumns["ena_study_accession"] != tairENAStudyPRJEB100887 || !strings.Contains(row.GeneReportURL, "CAO7037755") {
+	if row.ExtraColumns["ena_study_accession"] != tairENAStudyPRJEB100887 || row.ExtraColumns["ena_accession"] != "CAO7037755" {
 		t.Fatalf("unexpected ENA metadata: %#v", row.ExtraColumns)
+	}
+	if row.GeneReportURL != "" {
+		t.Fatalf("GeneReportURL = %q, want empty because ENA coding rows do not carry a source page URL", row.GeneReportURL)
 	}
 	if row.LabelName == "" || !strings.Contains(row.Description, "phenylalanine") {
 		t.Fatalf("expected label/description from ENA product: %#v", row)
@@ -321,7 +324,6 @@ func TestFindRowForENASourceDoesNotUseLiveTAIRFallback(t *testing.T) {
 		Label:             "TAIR12-strict-find",
 		Source:            tairReleaseSourceENA,
 		ENAStudyAccession: study,
-		ReportURLBase:     "https://www.ebi.ac.uk/ena/browser/view/",
 	}
 	version := model.SpeciesCandidate{ProteomeID: 991212, JBrowseName: "TAIR12-strict-find", GenomeLabel: "TAIR12-strict-find"}
 	row, err := client.findRow(context.Background(), version, "AT2G37040")
@@ -353,10 +355,9 @@ func TestFindRowForGFFReleaseDoesNotUseLiveTAIRFallback(t *testing.T) {
 		return nil, nil
 	})})
 	rel := releaseInfo{
-		Name:          "TAIR10-strict-find",
-		Label:         "TAIR10-strict-find",
-		GFFURL:        gffPath,
-		ReportURLBase: baseURL + "/servlets/TairObject?type=locus&name=",
+		Name:   "TAIR10-strict-find",
+		Label:  "TAIR10-strict-find",
+		GFFURL: gffPath,
 	}
 	client.releases[strings.ToLower(rel.Name)] = rel
 	version := model.SpeciesCandidate{ProteomeID: 991010, JBrowseName: rel.Name, GenomeLabel: rel.Label}
@@ -594,11 +595,10 @@ func TestBuildIndexMergesTAIR12GeneAndTranscriptRows(t *testing.T) {
 	}
 	client := NewClient(nil)
 	rel := releaseInfo{
-		Name:          "TAIR12-test",
-		Label:         "TAIR12-test",
-		GFFURL:        gffPath,
-		ProteinURL:    fastaPath,
-		ReportURLBase: baseURL + "/servlets/TairObject?type=locus&name=",
+		Name:       "TAIR12-test",
+		Label:      "TAIR12-test",
+		GFFURL:     gffPath,
+		ProteinURL: fastaPath,
 	}
 	version := model.SpeciesCandidate{ProteomeID: 370201, JBrowseName: rel.Name, GenomeLabel: rel.Label}
 	idx, err := client.buildIndex(context.Background(), rel, version)
@@ -668,11 +668,10 @@ func TestBuildIndexDoesNotRequireProteinFASTAAvailability(t *testing.T) {
 
 	client := NewClient(&http.Client{})
 	rel := releaseInfo{
-		Name:          "TAIR12-no-protein",
-		Label:         "TAIR12-no-protein",
-		GFFURL:        gffPath,
-		ProteinURL:    stallServer.URL + "/TAIR12_pep.fasta",
-		ReportURLBase: baseURL + "/servlets/TairObject?type=locus&name=",
+		Name:       "TAIR12-no-protein",
+		Label:      "TAIR12-no-protein",
+		GFFURL:     gffPath,
+		ProteinURL: stallServer.URL + "/TAIR12_pep.fasta",
 	}
 	version := model.SpeciesCandidate{ProteomeID: 370201, JBrowseName: rel.Name, GenomeLabel: rel.Label}
 
@@ -733,7 +732,6 @@ func TestBuildIndexMergesTAIR11GeneAliasAsset(t *testing.T) {
 		GFFURL:         gffPath,
 		DescriptionURL: descPath,
 		GeneAliasURL:   aliasPath,
-		ReportURLBase:  baseURL + "/servlets/TairObject?type=locus&name=",
 	}
 	version := model.SpeciesCandidate{ProteomeID: 371111, JBrowseName: rel.Name, GenomeLabel: rel.Label}
 	idx, err := client.buildIndex(context.Background(), rel, version)
@@ -1019,10 +1017,9 @@ func TestFetchProteinSequenceScansSingleEntryWithoutFullIndexWarmup(t *testing.T
 	}
 	client := NewClient(nil)
 	rel := releaseInfo{
-		Name:          "TAIR10-fetch-one",
-		Label:         "TAIR10-fetch-one",
-		ProteinURL:    fastaPath,
-		ReportURLBase: baseURL + "/servlets/TairObject?type=locus&name=",
+		Name:       "TAIR10-fetch-one",
+		Label:      "TAIR10-fetch-one",
+		ProteinURL: fastaPath,
 	}
 	client.releases[strings.ToLower(rel.Name)] = rel
 	data, err := func() (model.ProteinSequenceData, error) {

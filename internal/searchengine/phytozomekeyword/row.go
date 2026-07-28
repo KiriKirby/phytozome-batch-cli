@@ -51,9 +51,11 @@ func buildKeywordResultRow(searchTerm string, searchType string, species model.S
 		Description:         firstNonEmpty(gene.Deflines...),
 		Comments:            strings.Join(gene.Comments, "\n"),
 		AutoDefine:          strings.TrimSpace(gene.AutoDefline),
-		GeneReportURL:       fmt.Sprintf("https://phytozome-next.jgi.doe.gov/report/gene/%s/%s", species.JBrowseName, geneID),
 		SequenceHeaderLabel: strings.TrimSpace(gene.Organism.OrganismName + " " + gene.Organism.AnnotationVersion),
 		SequenceID:          strings.TrimSpace(transcript.SecondaryIdentifier),
+	}
+	if strings.TrimSpace(searchType) == SearchTypeReportURL {
+		model.SetInputSourcePageURL(&row, searchTerm)
 	}
 	return row, nil
 }

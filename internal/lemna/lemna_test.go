@@ -279,9 +279,8 @@ func TestEnrichBlastRowsWithMappingsUsesTranscriptDirectlyForNucleotideHits(t *t
 	if rows[0].TranscriptID != "Sp9509d020g000340_T001" {
 		t.Fatalf("TranscriptID = %q, want direct subject transcript", rows[0].TranscriptID)
 	}
-	wantURL := "https://www.lemna.org/jbrowse2/?assembly=Sp9509d&config=https%3A%2F%2Fwww.lemna.org%2Fjbrowse2%2Fconfig.json&filter=Sp9509d020g000340&highlight=Sp9509d020g000340&phgo_gene=Sp9509d020g000340&phgo_root=Sp_polyrhiza_9509"
-	if rows[0].GeneReportURL != wantURL {
-		t.Fatalf("GeneReportURL = %q, want %q", rows[0].GeneReportURL, wantURL)
+	if rows[0].GeneReportURL != "" {
+		t.Fatalf("GeneReportURL = %q, want empty because local mappings do not provide real source page URLs", rows[0].GeneReportURL)
 	}
 	if rows[0].JBrowseName != "Sp_polyrhiza_9509" {
 		t.Fatalf("JBrowseName = %q, want Sp_polyrhiza_9509", rows[0].JBrowseName)
@@ -1224,34 +1223,6 @@ func TestLemnaKeywordReplayLiveBySearchType(t *testing.T) {
 			minRows:        1,
 		},
 		{
-			name:            "rice-locus-curated-fallback",
-			term:            "LOC_Os05g25640",
-			wantSearchType:  "rice LOC_Os locus",
-			wantLabelPrefix: "C4H",
-			minRows:         1,
-		},
-		{
-			name:            "refseq-curated-fallback",
-			term:            "XP_015639656",
-			wantSearchType:  "RefSeq XP protein",
-			wantLabelPrefix: "C4H",
-			minRows:         1,
-		},
-		{
-			name:            "rice-alias-curated-fallback",
-			term:            "OsC4H1",
-			wantSearchType:  "gene alias / symbol",
-			wantLabelPrefix: "C4H",
-			minRows:         1,
-		},
-		{
-			name:            "cytochrome-family-curated-fallback",
-			term:            "CYP73A38",
-			wantSearchType:  "CYP73 family symbol",
-			wantLabelPrefix: "C4H",
-			minRows:         1,
-		},
-		{
 			name:           "keyword",
 			term:           "phenylalanine ammonia lyase",
 			wantSearchType: "keyword",
@@ -1328,7 +1299,7 @@ func TestLemnaKeywordWideReplayLive(t *testing.T) {
 	}
 }
 
-func TestLemnaKeywordReplayLiveRice4CLMatrix(t *testing.T) {
+func TestLemnaKeywordReplayLiveNoHardcodedRiceAliasRedirects(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping network-backed lemna 4CL replay in short mode")
 	}
@@ -1348,91 +1319,25 @@ func TestLemnaKeywordReplayLiveRice4CLMatrix(t *testing.T) {
 		IsOfficial:  true,
 	}
 
-	aliasTests := []struct {
-		name  string
-		term  string
-		label string
-	}{
-		{"alias-1", "Os4CL1", "Os4CL1"},
-		{"alias-1-lower", "os4cl1", "Os4CL1"},
-		{"alias-2", "Os4CL2", "Os4CL2"},
-		{"alias-3", "Os4CL3", "Os4CL3"},
-		{"alias-4", "Os4CL4", "Os4CL4"},
-		{"alias-5", "Os4CL5", "Os4CL5"},
-	}
-	for _, tt := range aliasTests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			rows, err := client.SearchKeywordRows(ctx, species, tt.term)
-			if err != nil {
-				t.Fatalf("SearchKeywordRows(%q): %v", tt.term, err)
-			}
-			if len(rows) == 0 {
-				t.Fatalf("SearchKeywordRows(%q) returned no rows", tt.term)
-			}
-			if rows[0].SearchType != "gene alias / symbol" {
-				t.Fatalf("SearchKeywordRows(%q) searchType=%q, want %q", tt.term, rows[0].SearchType, "gene alias / symbol")
-			}
-			if rows[0].LabelName != tt.label {
-				t.Fatalf("SearchKeywordRows(%q) label=%q, want %q", tt.term, rows[0].LabelName, tt.label)
-			}
-			if !strings.Contains(strings.ToLower(rows[0].Description), "4-coumarate") {
-				t.Fatalf("SearchKeywordRows(%q) description=%q, want 4-coumarate hit", tt.term, rows[0].Description)
-			}
-		})
-	}
-
-	zeroTests := []string{
-		"Os08g14760.1",
-		"os08g14760.1",
-		"Os02g46970.1",
-		"Os02g08100.1",
-		"Os06g44620.1",
-		"Os08g34790.1",
-	}
-	for _, term := range zeroTests {
+	for _, term := range []string{
+		"Os4CL1",
+		"os4cl1",
+		"OsC4H1",
+		"CYP73A38",
+		"LOC_Os05g25640",
+		"XP_015639656",
+	} {
 		term := term
-		t.Run("controlled-zero-"+strings.ReplaceAll(strings.ToLower(term), ".", "_"), func(t *testing.T) {
+		t.Run("no-hardcoded-redirect-"+strings.ReplaceAll(strings.ToLower(term), ".", "_"), func(t *testing.T) {
 			rows, err := client.SearchKeywordRows(ctx, species, term)
 			if err != nil {
 				t.Fatalf("SearchKeywordRows(%q): %v", term, err)
 			}
-			if len(rows) != 0 {
-				t.Fatalf("SearchKeywordRows(%q) rows=%d, want 0 to avoid false-positive remaps; first=%#v", term, len(rows), rows[0])
-			}
-		})
-	}
-
-	xpCases := []struct {
-		name  string
-		term  string
-		label string
-	}{
-		{"xp-1", "XP_015650724.1", "Os4CL1"},
-		{"xp-1-lower", "xp_015650724.1", "Os4CL1"},
-		{"xp-2", "XP_015624111.1", "Os4CL2"},
-		{"xp-3", "XP_015625716.1", "Os4CL3"},
-		{"xp-4", "XP_015643415.1", "Os4CL4"},
-		{"xp-5", "XP_015650830.1", "Os4CL5"},
-	}
-	for _, tt := range xpCases {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			rows, err := client.SearchKeywordRows(ctx, species, tt.term)
-			if err != nil {
-				t.Fatalf("SearchKeywordRows(%q): %v", tt.term, err)
-			}
-			if len(rows) == 0 {
-				t.Fatalf("SearchKeywordRows(%q) returned no rows", tt.term)
-			}
-			if rows[0].SearchType != "RefSeq XP protein" {
-				t.Fatalf("SearchKeywordRows(%q) searchType=%q, want %q", tt.term, rows[0].SearchType, "RefSeq XP protein")
-			}
-			if rows[0].LabelName != tt.label {
-				t.Fatalf("SearchKeywordRows(%q) label=%q, want %q", tt.term, rows[0].LabelName, tt.label)
-			}
-			if !strings.Contains(strings.ToLower(rows[0].Description), "4-coumarate") {
-				t.Fatalf("SearchKeywordRows(%q) description=%q, want 4-coumarate hit", tt.term, rows[0].Description)
+			for _, row := range rows {
+				lowerType := strings.ToLower(row.SearchType)
+				if strings.Contains(lowerType, "curated") || strings.Contains(lowerType, "refseq xp protein") || strings.Contains(lowerType, "cyp73 family") || strings.Contains(lowerType, "rice loc_os locus") {
+					t.Fatalf("SearchKeywordRows(%q) used removed hardcoded search type: %#v", term, row)
+				}
 			}
 		})
 	}

@@ -118,49 +118,13 @@ func TestPhytozomeKeywordReplayLiveBySearchType(t *testing.T) {
 		{
 			name:           "rice-locus",
 			term:           "LOC_Os05g25640",
-			wantSearchType: "rice LOC_Os locus",
+			wantSearchType: "Phytozome identifier",
 			minRows:        1,
 		},
 		{
 			name:           "rice-locus-case-insensitive",
 			term:           "loc_os05g25640",
-			wantSearchType: "rice LOC_Os locus",
-			minRows:        1,
-		},
-		{
-			name:           "refseq",
-			term:           "XP_015639656",
-			wantSearchType: "RefSeq XP protein",
-			minRows:        1,
-		},
-		{
-			name:           "refseq-case-insensitive",
-			term:           "xp_015639656",
-			wantSearchType: "RefSeq XP protein",
-			minRows:        1,
-		},
-		{
-			name:           "rice-alias",
-			term:           "OsC4H1",
-			wantSearchType: "rice gene alias",
-			minRows:        1,
-		},
-		{
-			name:           "rice-alias-case-insensitive",
-			term:           "osc4h1",
-			wantSearchType: "rice gene alias",
-			minRows:        1,
-		},
-		{
-			name:           "cytochrome-family",
-			term:           "CYP73A38",
-			wantSearchType: "CYP73 family symbol",
-			minRows:        1,
-		},
-		{
-			name:           "cytochrome-family-case-insensitive",
-			term:           "cyp73a38",
-			wantSearchType: "CYP73 family symbol",
+			wantSearchType: "Phytozome identifier",
 			minRows:        1,
 		},
 	}
@@ -223,7 +187,7 @@ func TestPhytozomeKeywordWideReplayLive(t *testing.T) {
 	}
 }
 
-func TestPhytozomeKeywordReplayLiveRice4CLMatrix(t *testing.T) {
+func TestPhytozomeKeywordReplayLiveNoHardcodedRiceAliasRedirects(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping network-backed phytozome 4CL replay in short mode")
 	}
@@ -241,48 +205,16 @@ func TestPhytozomeKeywordReplayLiveRice4CLMatrix(t *testing.T) {
 		GenomeLabel: "Oryza sativa v7.0",
 	}
 
-	tests := []struct {
-		name           string
-		term           string
-		wantSearchType string
-		wantGenePrefix string
-	}{
-		{"alias-1", "Os4CL1", "rice gene alias", "LOC_Os08g14760"},
-		{"alias-1-lower", "os4cl1", "rice gene alias", "LOC_Os08g14760"},
-		{"alias-2", "Os4CL2", "rice gene alias", "LOC_Os02g46970"},
-		{"alias-3", "Os4CL3", "rice gene alias", "LOC_Os02g08100"},
-		{"alias-4", "Os4CL4", "rice gene alias", "LOC_Os06g44620"},
-		{"alias-5", "Os4CL5", "rice gene alias", "LOC_Os08g34790"},
-		{"locus-1", "Os08g14760.1", "rice LOC_Os locus", "LOC_Os08g14760"},
-		{"locus-1-lower", "os08g14760.1", "rice LOC_Os locus", "LOC_Os08g14760"},
-		{"locus-2", "Os02g46970.1", "rice LOC_Os locus", "LOC_Os02g46970"},
-		{"locus-3", "Os02g08100.1", "rice LOC_Os locus", "LOC_Os02g08100"},
-		{"locus-4", "Os06g44620.1", "rice LOC_Os locus", "LOC_Os06g44620"},
-		{"locus-5", "Os08g34790.1", "rice LOC_Os locus", "LOC_Os08g34790"},
-		{"xp-1", "XP_015650724.1", "RefSeq XP protein", "LOC_Os08g14760"},
-		{"xp-1-lower", "xp_015650724.1", "RefSeq XP protein", "LOC_Os08g14760"},
-		{"xp-2", "XP_015624111.1", "RefSeq XP protein", "LOC_Os02g46970"},
-		{"xp-3", "XP_015625716.1", "RefSeq XP protein", "LOC_Os02g08100"},
-		{"xp-4", "XP_015643415.1", "RefSeq XP protein", "LOC_Os06g44620"},
-		{"xp-5", "XP_015650830.1", "RefSeq XP protein", "LOC_Os08g34790"},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			rows, err := client.SearchKeywordRows(ctx, species, tt.term)
-			if err != nil {
-				t.Fatalf("SearchKeywordRows(%q): %v", tt.term, err)
+	for _, term := range []string{"Os4CL1", "os4cl1", "OsC4H1", "CYP73A38"} {
+		rows, err := client.SearchKeywordRows(ctx, species, term)
+		if err != nil {
+			t.Fatalf("SearchKeywordRows(%q): %v", term, err)
+		}
+		for _, row := range rows {
+			lowerType := strings.ToLower(row.SearchType)
+			if strings.Contains(lowerType, "rice") || strings.Contains(lowerType, "cyp73") || strings.Contains(lowerType, "refseq") {
+				t.Fatalf("SearchKeywordRows(%q) used removed hardcoded search type: %#v", term, row)
 			}
-			if len(rows) == 0 {
-				t.Fatalf("SearchKeywordRows(%q) returned no rows", tt.term)
-			}
-			if rows[0].SearchType != tt.wantSearchType {
-				t.Fatalf("SearchKeywordRows(%q) searchType=%q, want %q", tt.term, rows[0].SearchType, tt.wantSearchType)
-			}
-			if !strings.Contains(rows[0].GeneIdentifier, tt.wantGenePrefix) {
-				t.Fatalf("SearchKeywordRows(%q) gene=%q, want prefix %q", tt.term, rows[0].GeneIdentifier, tt.wantGenePrefix)
-			}
-		})
+		}
 	}
 }

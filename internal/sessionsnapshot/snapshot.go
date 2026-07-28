@@ -533,6 +533,7 @@ func WriteFile(path string, snapshot Snapshot) error {
 	if snapshot.Context.CreatedAt.IsZero() {
 		snapshot.Context.CreatedAt = time.Now()
 	}
+	sanitizeSnapshotSourceWebURLs(&snapshot)
 
 	modules := []manifestModule{}
 	payloads := map[string]any{}
@@ -791,7 +792,82 @@ func ReadFile(path string) (Snapshot, error) {
 			snapshot.Context.FormatVersion = FormatVersion
 		}
 	}
+	sanitizeSnapshotSourceWebURLs(&snapshot)
 	return snapshot, nil
+}
+
+func sanitizeSnapshotSourceWebURLs(snapshot *Snapshot) {
+	if snapshot == nil {
+		return
+	}
+	if snapshot.Keyword != nil {
+		for groupIndex := range snapshot.Keyword.Groups {
+			model.SanitizeKeywordResultRowsSourceWebURLs(snapshot.Keyword.Groups[groupIndex].Rows)
+		}
+	}
+	if snapshot.Blast != nil {
+		for runIndex := range snapshot.Blast.Runs {
+			model.SanitizeBlastResultRowsSourceWebURLs(snapshot.Blast.Runs[runIndex].Results.Rows)
+		}
+	}
+	if snapshot.Canvas != nil {
+		sanitizeSnapshotCanvasItemsSourceWebURLs(snapshot.Canvas.Items)
+	}
+	if snapshot.RuntimeCache != nil {
+		for entryIndex := range snapshot.RuntimeCache.KeywordTermRows {
+			model.SanitizeKeywordResultRowsSourceWebURLs(snapshot.RuntimeCache.KeywordTermRows[entryIndex].Rows)
+		}
+	}
+	if snapshot.Handoff != nil {
+		model.SanitizeKeywordResultRowsSourceWebURLs(snapshot.Handoff.TransferKeywordRows)
+		model.SanitizeBlastResultRowsSourceWebURLs(snapshot.Handoff.TransferBlastRows)
+		sanitizeModelCanvasItemsSourceWebURLs(snapshot.Handoff.TransferCanvasItems)
+		if snapshot.Handoff.LastBlastRowContext != nil {
+			model.SanitizeBlastResultRowsSourceWebURLs(snapshot.Handoff.LastBlastRowContext.Rows)
+			model.SanitizeBlastResultRowsSourceWebURLs(snapshot.Handoff.LastBlastRowContext.AllRows)
+		}
+		if snapshot.Handoff.LastKeywordGroups != nil {
+			for groupIndex := range snapshot.Handoff.LastKeywordGroups {
+				model.SanitizeKeywordResultRowsSourceWebURLs(snapshot.Handoff.LastKeywordGroups[groupIndex].Rows)
+			}
+		}
+		if snapshot.Handoff.LastBlastReview != nil {
+			for runIndex := range snapshot.Handoff.LastBlastReview.Runs {
+				model.SanitizeBlastResultRowsSourceWebURLs(snapshot.Handoff.LastBlastReview.Runs[runIndex].Results.Rows)
+			}
+			for runIndex := range snapshot.Handoff.LastBlastReview.OriginalRuns {
+				model.SanitizeBlastResultRowsSourceWebURLs(snapshot.Handoff.LastBlastReview.OriginalRuns[runIndex].Results.Rows)
+			}
+		}
+	}
+}
+
+func sanitizeSnapshotCanvasItemsSourceWebURLs(items []CanvasItemV2) {
+	for itemIndex := range items {
+		for rowIndex := range items[itemIndex].Rows {
+			row := &items[itemIndex].Rows[rowIndex]
+			if row.KeywordRow != nil {
+				model.SanitizeKeywordResultRowSourceWebURL(row.KeywordRow)
+			}
+			if row.BlastRow != nil {
+				row.BlastRow.GeneReportURL = ""
+			}
+		}
+	}
+}
+
+func sanitizeModelCanvasItemsSourceWebURLs(items []model.CanvasItem) {
+	for itemIndex := range items {
+		for rowIndex := range items[itemIndex].Rows {
+			row := &items[itemIndex].Rows[rowIndex]
+			if row.KeywordRow != nil {
+				model.SanitizeKeywordResultRowSourceWebURL(row.KeywordRow)
+			}
+			if row.BlastRow != nil {
+				row.BlastRow.GeneReportURL = ""
+			}
+		}
+	}
 }
 
 func ResolveOpenPath(input string, outputDir string) (string, error) {

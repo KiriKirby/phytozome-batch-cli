@@ -37,9 +37,9 @@ const (
 	baseURL                     = "https://www.arabidopsis.org"
 	downloadAPI                 = "https://www.arabidopsis.org/api/download-files/download?filePath="
 	tairFTPBase                 = "ftp://ftp.arabidopsis.org/home/tair/"
-	tairKeywordIndexCacheSchema = "tair-keyword-index-v7"
+	tairKeywordIndexCacheSchema = "tair-keyword-index-v8"
 	tairENAStudyPRJEB100887     = "PRJEB100887"
-	tairFamilyRowsCacheSchema   = "tair-family-rows-v2"
+	tairFamilyRowsCacheSchema   = "tair-family-rows-v3"
 	tairLiveFamilyCacheSchema   = "tair-live-family-v2"
 	tairDownloadTimeout         = 25 * time.Second
 )
@@ -90,7 +90,6 @@ type releaseInfo struct {
 	DescriptionURL         string `json:"description_url"`
 	GeneAliasURL           string `json:"gene_alias_url"`
 	RepresentativeModelURL string `json:"representative_model_url"`
-	ReportURLBase          string `json:"report_url_base"`
 }
 
 type tairIndex struct {
@@ -204,7 +203,6 @@ func defaultReleases() []releaseInfo {
 			CDSURL:                 "",
 			DescriptionURL:         "",
 			RepresentativeModelURL: "",
-			ReportURLBase:          "https://www.ebi.ac.uk/ena/browser/view/",
 		},
 		{
 			Name:                   "TAIR11",
@@ -219,7 +217,6 @@ func defaultReleases() []releaseInfo {
 			DescriptionURL:         "https://zenodo.org/api/records/17371665/files/Araport11_functional_descriptions_20241001.txt.gz/content",
 			GeneAliasURL:           "https://zenodo.org/api/records/17371665/files/gene_aliases_20241001.txt.gz/content",
 			RepresentativeModelURL: "",
-			ReportURLBase:          baseURL + "/servlets/TairObject?type=locus&name=",
 		},
 		{
 			Name:                   "Araport11",
@@ -232,7 +229,6 @@ func defaultReleases() []releaseInfo {
 			CDSURL:                 downloadURL("Genes/Araport11_genome_release/Araport11_blastsets/Araport11_cds_20220914_representative_gene_model.gz"),
 			DescriptionURL:         "",
 			RepresentativeModelURL: downloadURL("Genes/Araport11_genome_release/Araport11_TAIRAccessionID_AGI_mapping.txt"),
-			ReportURLBase:          baseURL + "/servlets/TairObject?type=locus&name=",
 		},
 		{
 			Name:                   "TAIR10",
@@ -245,7 +241,6 @@ func defaultReleases() []releaseInfo {
 			CDSURL:                 downloadURL("Sequences/blast_datasets/TAIR10_blastsets/TAIR10_cds_20110103_representative_gene_model_updated"),
 			DescriptionURL:         downloadURL("Genes/TAIR10_genome_release/TAIR10_functional_descriptions_20130831.txt"),
 			RepresentativeModelURL: downloadURL("Genes/TAIR10_genome_release/TAIR10_gene_lists/TAIR10_representative_gene_models"),
-			ReportURLBase:          baseURL + "/servlets/TairObject?type=locus&name=",
 		},
 		{
 			Name:                   "TAIR9",
@@ -258,7 +253,6 @@ func defaultReleases() []releaseInfo {
 			CDSURL:                 downloadURL("Sequences/blast_datasets/TAIR9_blastsets/TAIR9_cds_20090619"),
 			DescriptionURL:         downloadURL("Genes/TAIR9_genome_release/TAIR9_functional_descriptions"),
 			RepresentativeModelURL: downloadURL("Genes/TAIR9_genome_release/TAIR9_representative_gene_model.txt"),
-			ReportURLBase:          baseURL + "/servlets/TairObject?type=locus&name=",
 		},
 		{
 			Name:                   "TAIR8",
@@ -271,7 +265,6 @@ func defaultReleases() []releaseInfo {
 			CDSURL:                 downloadURL("Sequences/blast_datasets/TAIR8_blastsets/TAIR8_cds_20080412"),
 			DescriptionURL:         downloadURL("Genes/TAIR8_genome_release/TAIR8_functional_descriptions"),
 			RepresentativeModelURL: downloadURL("Genes/TAIR8_genome_release/TAIR8_representative_gene_model"),
-			ReportURLBase:          baseURL + "/servlets/TairObject?type=locus&name=",
 		},
 		{
 			Name:                   "TAIR7",
@@ -284,7 +277,6 @@ func defaultReleases() []releaseInfo {
 			CDSURL:                 downloadURL("Sequences/blast_datasets/TAIR7_blastsets/TAIR7_cds_20070425"),
 			DescriptionURL:         downloadURL("Genes/TAIR7_genome_release/TAIR7_functional_descriptions"),
 			RepresentativeModelURL: "",
-			ReportURLBase:          baseURL + "/servlets/TairObject?type=locus&name=",
 		},
 		{
 			Name:                   "TAIR6",
@@ -297,7 +289,6 @@ func defaultReleases() []releaseInfo {
 			CDSURL:                 downloadURL("Genes/TAIR6_genome_release/TAIR6_cds_20060907"),
 			DescriptionURL:         "",
 			RepresentativeModelURL: "",
-			ReportURLBase:          baseURL + "/servlets/TairObject?type=locus&name=",
 		},
 	}
 }
@@ -434,7 +425,14 @@ func (c *Client) SearchKeywordRowsByReportURL(ctx context.Context, version model
 	if !ok {
 		return nil, nil
 	}
-	return c.SearchKeywordRowsByIdentifier(ctx, version, id, "gene", limit)
+	rows, err := c.SearchKeywordRowsByIdentifier(ctx, version, id, "gene", limit)
+	if err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		model.SetInputSourcePageURL(&rows[i], term)
+	}
+	return rows, nil
 }
 
 func (c *Client) SearchKeywordRowsByIdentifier(ctx context.Context, version model.SpeciesCandidate, term string, kind string, limit int) ([]model.KeywordResultRow, error) {
@@ -846,7 +844,6 @@ func keywordRowFromENACoding(version model.SpeciesCandidate, rel releaseInfo, ro
 		Description:         product,
 		Comments:            row.Description,
 		AutoDefine:          product,
-		GeneReportURL:       rel.ReportURLBase + url.PathEscape(firstNonEmpty(row.Accession, row.ProteinID, gene)),
 		SequenceHeaderLabel: version.DisplayLabel(),
 		SequenceID:          sequenceID,
 		ExtraColumns:        extra,
@@ -1395,7 +1392,6 @@ func keywordRowsFromSearchDoc(version model.SpeciesCandidate, doc tairSearchDoc)
 			Description:    description,
 			Comments:       strings.Join(uniqueStrings(doc.Phenotypes), "; "),
 			AutoDefine:     firstNonEmpty(description, label),
-			GeneReportURL:  baseURL + "/servlets/TairObject?type=locus&name=" + firstNonEmpty(geneID, stripTranscriptSuffix(transcript)),
 			SequenceID:     transcript,
 			ExtraColumns: map[string]string{
 				"tair_object_id":        doc.ID,
@@ -1431,7 +1427,6 @@ func keywordRowsFromKeywordDocs(version model.SpeciesCandidate, docs []tairKeywo
 			Description:    strings.Join(uniqueStrings(doc.KwCategory), "; "),
 			Comments:       strings.Join(uniqueStrings(doc.KwChildNames), "; "),
 			AutoDefine:     firstNonEmpty(label, strings.Join(uniqueStrings(doc.Synonyms), "; ")),
-			GeneReportURL:  "",
 			SequenceID:     doc.KwID,
 			ExtraColumns: map[string]string{
 				"tair_keyword_id":             doc.KwID,
@@ -2045,7 +2040,6 @@ func buildKeywordRowFromGFF(version model.SpeciesCandidate, rel releaseInfo, gff
 		Description:         description,
 		Comments:            firstNonEmpty(attrs["Note"], attrs["comment"]),
 		AutoDefine:          firstNonEmpty(description, attrs["Name"]),
-		GeneReportURL:       rel.ReportURLBase + url.QueryEscape(gene),
 		SequenceHeaderLabel: version.DisplayLabel(),
 		SequenceID:          sequenceID,
 		ExtraColumns:        extra,
@@ -2089,6 +2083,7 @@ func mergeKeywordRows(dst *model.KeywordResultRow, src model.KeywordResultRow) {
 	dst.SequenceHeaderLabel = firstNonEmpty(dst.SequenceHeaderLabel, src.SequenceHeaderLabel)
 	dst.SequenceID = firstNonEmpty(dst.SequenceID, src.SequenceID)
 	dst.ExtraColumns = mergeExtraColumns(dst.ExtraColumns, src.ExtraColumns)
+	model.SanitizeKeywordResultRowSourceWebURL(dst)
 }
 
 func mergeExtraColumns(dst map[string]string, src map[string]string) map[string]string {
@@ -2246,7 +2241,7 @@ func (c *Client) ResolveQuerySequence(ctx context.Context, version model.Species
 	if cached, hit := c.cachedQuerySource(cacheKey); hit {
 		cached.OriginalInputURL = input
 		if _, _, isURL := parseTAIRReportKeyword(input); isURL {
-			cached.NormalizedURL = normalizeTAIRReportURL(input)
+			cached.NormalizedURL = model.NormalizeProvidedSourcePageURL(input)
 		}
 		return cached, true, nil
 	}
@@ -2256,7 +2251,7 @@ func (c *Client) ResolveQuerySequence(ctx context.Context, version model.Species
 	}
 	source.OriginalInputURL = strings.TrimSpace(input)
 	if _, _, isURL := parseTAIRReportKeyword(input); isURL {
-		source.NormalizedURL = normalizeTAIRReportURL(input)
+		source.NormalizedURL = model.NormalizeProvidedSourcePageURL(input)
 	}
 	return source, true, nil
 }
@@ -3408,14 +3403,6 @@ func isSearchableFeatureType(featureType string) bool {
 
 func parseTAIRReportKeyword(value string) (reportType string, identifier string, ok bool) {
 	return tairkeyword.TAIRReportKeyword(value)
-}
-
-func normalizeTAIRReportURL(value string) string {
-	_, identifier, ok := parseTAIRReportKeyword(value)
-	if !ok {
-		return strings.TrimSpace(value)
-	}
-	return baseURL + "/servlets/TairObject?type=locus&name=" + url.QueryEscape(identifier)
 }
 
 func classifySearchType(term string) string {

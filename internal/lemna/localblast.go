@@ -1733,8 +1733,7 @@ func saveBlastResultToCache(cacheDir string, jobID string, result model.BlastRes
 
 // enrichBlastRowsWithAHRD attempts to map parsed BLAST rows to AHRD records and
 // populate TranscriptID and Defline fields when matches are found.
-// AHRD records do not provide a stable gene-report URL, so URL fields must be
-// filled by release/mapping logic elsewhere rather than by annotation text.
+// AHRD records do not provide a stable gene-report URL, so URL fields stay blank.
 func enrichBlastRowsWithAHRD(rows []model.BlastResultRow, ahrd map[string]ahrdRecord) {
 	if rows == nil || len(rows) == 0 || len(ahrd) == 0 {
 		return
@@ -1773,7 +1772,7 @@ func enrichBlastRowsWithAHRD(rows []model.BlastResultRow, ahrd map[string]ahrdRe
 //   - FASTA defline index (to extract defline and sequence length)
 //
 // The function is best-effort: it will populate TranscriptID, SequenceID, Defline,
-// TargetLength, GeneReportURL, JBrowseName, and TargetID when mappings are found.
+// TargetLength, JBrowseName, and TargetID when mappings are found.
 func enrichBlastRowsWithMappings(rel releaseInfo, rows *[]model.BlastResultRow, ahrd map[string]ahrdRecord, protToTrans map[string]string, transToGene map[string]string, fastaIdx map[string]fastaEntry) {
 	if rows == nil || len(*rows) == 0 {
 		return
@@ -1822,9 +1821,6 @@ func enrichBlastRowsWithMappings(rel releaseInfo, rows *[]model.BlastResultRow, 
 				if r.SequenceID == "" {
 					r.SequenceID = tok
 				}
-				if r.GeneReportURL == "" {
-					r.GeneReportURL = rel.ReleaseURL
-				}
 				if r.JBrowseName == "" {
 					r.JBrowseName = rel.RootDir
 				}
@@ -1845,9 +1841,6 @@ func enrichBlastRowsWithMappings(rel releaseInfo, rows *[]model.BlastResultRow, 
 				if r.TranscriptID == "" {
 					r.TranscriptID = tok
 				}
-				if r.GeneReportURL == "" || r.GeneReportURL == rel.ReleaseURL {
-					r.GeneReportURL = lemnaGeneReportURL(rel.RootDir, gid, "", "", "")
-				}
 				if r.JBrowseName == "" {
 					r.JBrowseName = rel.RootDir
 				}
@@ -1863,9 +1856,6 @@ func enrichBlastRowsWithMappings(rel releaseInfo, rows *[]model.BlastResultRow, 
 					r.TranscriptID = tid
 				}
 				if gid, ok2 := lookupNormalizedMapValue(transToGene, tid); ok2 && gid != "" {
-					if r.GeneReportURL == "" || r.GeneReportURL == rel.ReleaseURL {
-						r.GeneReportURL = lemnaGeneReportURL(rel.RootDir, gid, "", "", "")
-					}
 					// Set TargetID to release proteome id as identifier for export convenience.
 					if r.TargetID == 0 {
 						r.TargetID = rel.BlastNDBID
@@ -1880,9 +1870,6 @@ func enrichBlastRowsWithMappings(rel releaseInfo, rows *[]model.BlastResultRow, 
 		}
 		if !gffMatched && strings.TrimSpace(r.TranscriptID) != "" {
 			if gid, ok := lookupNormalizedMapValue(transToGene, r.TranscriptID); ok && gid != "" {
-				if r.GeneReportURL == "" || r.GeneReportURL == rel.ReleaseURL {
-					r.GeneReportURL = lemnaGeneReportURL(rel.RootDir, gid, "", "", "")
-				}
 				if r.JBrowseName == "" {
 					r.JBrowseName = rel.RootDir
 				}
@@ -1922,10 +1909,7 @@ func enrichBlastRowsWithMappings(rel releaseInfo, rows *[]model.BlastResultRow, 
 			_ = fastaMatched
 		}
 
-		// Fallback: ensure rows have traceability to release
-		if r.GeneReportURL == "" {
-			r.GeneReportURL = rel.ReleaseURL
-		}
+		// Fallback: retain non-web traceability to release metadata.
 		if r.JBrowseName == "" {
 			r.JBrowseName = rel.RootDir
 		}

@@ -767,10 +767,6 @@ func genericKeywordRowFromSummary(spec SearchType, keyword string, id string, in
 		stringFromSummary(doc, "locus_tag"),
 		stringFromSummary(doc, "maplocation"),
 	)
-	urlPath := spec.EntrezDB
-	if spec.EntrezDB == "gene" {
-		urlPath = "gene"
-	}
 	extra := buildGenericSummaryExtra(spec, id, index, total, accession, title, organism, doc)
 	return model.KeywordResultRow{
 		SourceDatabase:      "ncbi",
@@ -783,7 +779,6 @@ func genericKeywordRowFromSummary(spec SearchType, keyword string, id string, in
 		Description:         description,
 		Comments:            firstNonEmpty(stringFromSummary(doc, "summary"), stringFromSummary(doc, "extra")),
 		AutoDefine:          description,
-		GeneReportURL:       "https://www.ncbi.nlm.nih.gov/" + url.PathEscape(urlPath) + "/" + url.PathEscape(accession),
 		SequenceHeaderLabel: organism,
 		ExtraColumns:        extra,
 	}
@@ -828,7 +823,6 @@ func geneKeywordRowFromSummary(spec SearchType, keyword string, id string, index
 		Description:         description,
 		Comments:            firstNonEmpty(stringFromSummary(doc, "summary"), stringFromSummary(doc, "genomicinfo")),
 		AutoDefine:          firstNonEmpty(stringFromSummary(doc, "otherdesignations"), description),
-		GeneReportURL:       "https://www.ncbi.nlm.nih.gov/gene/" + url.PathEscape(geneID),
 		SequenceHeaderLabel: organism,
 		ExtraColumns:        extra,
 	}
@@ -866,7 +860,6 @@ func nuccoreKeywordRowFromSummary(spec SearchType, keyword string, id string, in
 		Description:         description,
 		Comments:            firstNonEmpty(stringFromSummary(doc, "extra"), stringFromSummary(doc, "completeness")),
 		AutoDefine:          firstNonEmpty(title, accession),
-		GeneReportURL:       "https://www.ncbi.nlm.nih.gov/nuccore/" + url.PathEscape(accession),
 		SequenceHeaderLabel: organism,
 		ExtraColumns:        extra,
 	}
@@ -904,7 +897,6 @@ func assemblyKeywordRowFromSummary(spec SearchType, keyword string, id string, i
 		Description:         description,
 		Comments:            joinNonEmpty("; ", status, ftpPath),
 		AutoDefine:          joinNonEmpty("; ", name, accession, status, stringFromSummary(doc, "submissiondate")),
-		GeneReportURL:       "https://www.ncbi.nlm.nih.gov/assembly/" + url.PathEscape(accession),
 		SequenceHeaderLabel: organism,
 		ExtraColumns:        extra,
 	}
@@ -940,7 +932,6 @@ func bioprojectKeywordRowFromSummary(spec SearchType, keyword string, id string,
 		Description:         description,
 		Comments:            joinNonEmpty("; ", projectType, stringFromSummary(doc, "relevance"), dataType),
 		AutoDefine:          joinNonEmpty("; ", title, accession, projectType),
-		GeneReportURL:       "https://www.ncbi.nlm.nih.gov/bioproject/" + url.PathEscape(accession),
 		SequenceHeaderLabel: organism,
 		ExtraColumns:        extra,
 	}
@@ -990,7 +981,6 @@ func biosampleKeywordRowFromSummary(spec SearchType, keyword string, id string, 
 		Description:         description,
 		Comments:            joinNonEmpty("; ", isolationSource, host, geoLoc, stringFromSummary(doc, "biosamplemodel"), stringFromSummary(doc, "owner")),
 		AutoDefine:          joinNonEmpty("; ", title, accession, stringFromSummary(doc, "biosamplemodel")),
-		GeneReportURL:       "https://www.ncbi.nlm.nih.gov/biosample/" + url.PathEscape(accession),
 		SequenceHeaderLabel: organism,
 		ExtraColumns:        extra,
 	}
@@ -1023,7 +1013,6 @@ func taxonomyKeywordRowFromSummary(spec SearchType, keyword string, id string, i
 		Description:         description,
 		Comments:            joinNonEmpty("; ", rank, commonName, stringFromSummary(doc, "lineage")),
 		AutoDefine:          joinNonEmpty("; ", scientificName, commonName, rank),
-		GeneReportURL:       "https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?id=" + url.QueryEscape(taxID),
 		SequenceHeaderLabel: scientificName,
 		ExtraColumns:        extra,
 	}
@@ -1074,7 +1063,6 @@ func sraKeywordRowFromSummary(spec SearchType, keyword string, id string, index 
 		Description:         description,
 		Comments:            joinNonEmpty("; ", libraryStrategy, librarySource, platform, firstNonEmpty(runMeta.RunAccession, stringFromSummary(doc, "runs"))),
 		AutoDefine:          joinNonEmpty("; ", title, accession, libraryStrategy),
-		GeneReportURL:       "https://www.ncbi.nlm.nih.gov/sra/" + url.PathEscape(accession),
 		SequenceHeaderLabel: organism,
 		ExtraColumns:        extra,
 	}
@@ -1118,7 +1106,6 @@ func clinvarKeywordRowFromSummary(spec SearchType, keyword string, id string, in
 		Description:         description,
 		Comments:            joinNonEmpty("; ", stringFromSummary(doc, "clinicalsignificance"), stringFromSummary(doc, "reviewstatus"), stringFromSummary(doc, "traitset")),
 		AutoDefine:          joinNonEmpty("; ", title, accession, stringFromSummary(doc, "clinicalsignificance")),
-		GeneReportURL:       "https://www.ncbi.nlm.nih.gov/clinvar/" + url.PathEscape(accession),
 		SequenceHeaderLabel: organism,
 		ExtraColumns:        extra,
 	}
@@ -1152,7 +1139,6 @@ func snpKeywordRowFromSummary(spec SearchType, keyword string, id string, index 
 		Description:    title,
 		Comments:       joinNonEmpty("; ", stringFromSummary(doc, "snp_class"), stringFromSummary(doc, "clinical_significance")),
 		AutoDefine:     joinNonEmpty("; ", rsid, title, stringFromSummary(doc, "snp_class")),
-		GeneReportURL:  "https://www.ncbi.nlm.nih.gov/snp/" + url.PathEscape(rsid),
 		ExtraColumns:   extra,
 	}
 }
@@ -1183,7 +1169,6 @@ func dbvarKeywordRowFromSummary(spec SearchType, keyword string, id string, inde
 		Description:    title,
 		Comments:       joinNonEmpty("; ", stringFromSummary(doc, "variant_type"), stringFromSummary(doc, "phenotype"), stringFromSummary(doc, "clinical_assertion")),
 		AutoDefine:     joinNonEmpty("; ", accession, title, stringFromSummary(doc, "variant_type")),
-		GeneReportURL:  "https://www.ncbi.nlm.nih.gov/dbvar/variants/" + url.PathEscape(accession) + "/",
 		ExtraColumns:   extra,
 	}
 }
@@ -1212,7 +1197,6 @@ func medgenKeywordRowFromSummary(spec SearchType, keyword string, id string, ind
 		Description:    title,
 		Comments:       joinNonEmpty("; ", stringFromSummary(doc, "definition"), stringFromSummary(doc, "source")),
 		AutoDefine:     joinNonEmpty("; ", title, accession),
-		GeneReportURL:  "https://www.ncbi.nlm.nih.gov/medgen/" + url.PathEscape(accession),
 		ExtraColumns:   extra,
 	}
 }
@@ -1241,7 +1225,6 @@ func gtrKeywordRowFromSummary(spec SearchType, keyword string, id string, index 
 		Description:    title,
 		Comments:       joinNonEmpty("; ", stringFromSummary(doc, "condition"), stringFromSummary(doc, "testtype"), stringFromSummary(doc, "method"), stringFromSummary(doc, "labname")),
 		AutoDefine:     joinNonEmpty("; ", title, accession, stringFromSummary(doc, "labname")),
-		GeneReportURL:  "https://www.ncbi.nlm.nih.gov/gtr/tests/" + url.PathEscape(accession) + "/",
 		ExtraColumns:   extra,
 	}
 }
@@ -1269,7 +1252,6 @@ func omimKeywordRowFromSummary(spec SearchType, keyword string, id string, index
 		Description:    title,
 		Comments:       joinNonEmpty("; ", stringFromSummary(doc, "summary"), stringFromSummary(doc, "text")),
 		AutoDefine:     joinNonEmpty("; ", title, accession),
-		GeneReportURL:  "https://www.ncbi.nlm.nih.gov/omim/" + url.PathEscape(accession),
 		ExtraColumns:   extra,
 	}
 }
@@ -1290,7 +1272,6 @@ func pubmedKeywordRowFromSummary(spec SearchType, keyword string, id string, ind
 		Description:         title,
 		Comments:            joinNonEmpty("; ", pubdate, authors),
 		AutoDefine:          joinNonEmpty("; ", title, journal, pubdate),
-		GeneReportURL:       "https://pubmed.ncbi.nlm.nih.gov/" + url.PathEscape(pmid) + "/",
 		SequenceHeaderLabel: journal,
 		ExtraColumns:        extra,
 	}
@@ -1312,7 +1293,6 @@ func pmcKeywordRowFromSummary(spec SearchType, keyword string, id string, index 
 		Description:         title,
 		Comments:            joinNonEmpty("; ", pubdate, authors),
 		AutoDefine:          joinNonEmpty("; ", title, journal, pubdate),
-		GeneReportURL:       "https://pmc.ncbi.nlm.nih.gov/articles/" + url.PathEscape(pmcID) + "/",
 		SequenceHeaderLabel: journal,
 		ExtraColumns:        extra,
 	}
@@ -3355,7 +3335,6 @@ func keywordRowFromProteinRecord(searchTerm string, record proteinRecord) model.
 		Description:         firstNonEmpty(record.Product, record.Definition, record.Title),
 		Comments:            record.GeneSummary.Summary,
 		AutoDefine:          record.GeneSummary.OtherDesignations,
-		GeneReportURL:       "https://www.ncbi.nlm.nih.gov/protein/" + url.PathEscape(accession),
 		SequenceHeaderLabel: record.Organism,
 		SequenceID:          accession,
 		ExtraColumns:        extra,
@@ -3401,7 +3380,6 @@ func keywordRowFromNucleotideCDSRecord(searchTerm string, record nucleotideCDSRe
 		Symbols:             record.GeneName,
 		Description:         firstNonEmpty(record.Product, record.Definition),
 		AutoDefine:          firstNonEmpty(record.Product, record.Definition),
-		GeneReportURL:       "https://www.ncbi.nlm.nih.gov/nuccore/" + url.PathEscape(record.NucleotideAccession),
 		SequenceHeaderLabel: record.Organism,
 		SequenceID:          sequenceID,
 		ExtraColumns:        extra,

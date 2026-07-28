@@ -18,7 +18,7 @@ const (
 	SearchTypeProteinKeyword     = "NCBI protein keyword"
 	SearchTypeNucleotideFallback = "NCBI nucleotide fallback"
 
-	cacheSchemaVersion = "ncbiprotein-v4"
+	cacheSchemaVersion = "ncbiprotein-v5"
 )
 
 var transientSearchRetryDelay = 10 * time.Second

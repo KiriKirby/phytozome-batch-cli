@@ -23,7 +23,7 @@ func TestBuildKeywordResultRowPopulatesProteinID(t *testing.T) {
 		}},
 	}
 
-	row, err := buildKeywordResultRow("Os4CL1", SearchTypeRiceGeneAlias, model.SpeciesCandidate{ProteomeID: 323, JBrowseName: "Osativa_v7_0"}, gene)
+	row, err := buildKeywordResultRow("Os4CL1", SearchTypeKeyword, model.SpeciesCandidate{ProteomeID: 323, JBrowseName: "Osativa_v7_0"}, gene)
 	if err != nil {
 		t.Fatalf("buildKeywordResultRow returned error: %v", err)
 	}

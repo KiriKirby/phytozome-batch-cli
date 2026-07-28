@@ -259,7 +259,6 @@ func parseFamilyDetailRows(version model.SpeciesCandidate, familyKey string, htm
 			Description:    description,
 			Comments:       subfamily,
 			AutoDefine:     firstNonEmpty(description, label, subfamily),
-			GeneReportURL:  baseURL + "/servlets/TairObject?type=locus&name=" + gene,
 			SequenceID:     firstNonEmpty(transcript, gene),
 			ExtraColumns: map[string]string{
 				"tair_family_subfamily": subfamily,

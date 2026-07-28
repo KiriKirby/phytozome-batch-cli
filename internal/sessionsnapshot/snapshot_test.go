@@ -153,6 +153,64 @@ func TestWriteReadKeywordSnapshotRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSnapshotSanitizesUnauthenticatedSourceWebURLs(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "source-url")
+	authentic := model.KeywordResultRow{
+		SourceDatabase: "phytozome",
+		LabelName:      "AT1G01010",
+		GeneReportURL:  "https://phytozome-next.jgi.doe.gov/report/gene/Athaliana_TAIR10/AT1G01010",
+	}
+	model.SetInputSourcePageURL(&authentic, authentic.GeneReportURL)
+	synthetic := model.KeywordResultRow{
+		SourceDatabase: "lemna",
+		LabelName:      "Sp9509d020g000340",
+		GeneReportURL:  "https://www.lemna.org/jbrowse2/?phgo_gene=Sp9509d020g000340&phgo_root=Sp_polyrhiza_9509",
+	}
+	blastSynthetic := model.BlastResultRow{
+		SourceDatabase: "phytozome",
+		Protein:        "Glyma.17G064400.1.p",
+		GeneReportURL:  "https://phytozome-next.jgi.doe.gov/report/protein/G_max_Wm82_a6_v1/Glyma.17G064400.1.p",
+	}
+	in := Snapshot{
+		Context: ContextV1{
+			CreatedAt:          time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC),
+			Database:           "phytozome",
+			Mode:               "blast",
+			ResultKind:         "blast-result",
+			ApplicationName:    "phytozome GO",
+			ApplicationVersion: "dev",
+		},
+		Keyword: &KeywordResultV1{
+			Groups: []model.KeywordSearchGroup{{
+				Rows: []model.KeywordResultRow{authentic, synthetic},
+			}},
+		},
+		Blast: &BlastResultV1{
+			Runs: []BlastRunV1{{
+				Results: model.BlastResult{Rows: []model.BlastResultRow{blastSynthetic}},
+			}},
+		},
+	}
+	if err := WriteFile(path, in); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	out, err := ReadFile(path + FileExtension)
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+	rows := out.Keyword.Groups[0].Rows
+	if rows[0].GeneReportURL == "" {
+		t.Fatalf("authentic input URL was not preserved")
+	}
+	if rows[1].GeneReportURL != "" {
+		t.Fatalf("synthetic keyword URL survived sanitization: %q", rows[1].GeneReportURL)
+	}
+	if got := out.Blast.Runs[0].Results.Rows[0].GeneReportURL; got != "" {
+		t.Fatalf("synthetic BLAST URL survived sanitization: %q", got)
+	}
+}
+
 func TestWriteReadBlastSnapshotPreservesOriginalRunCount(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "blast")

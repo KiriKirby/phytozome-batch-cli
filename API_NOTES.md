@@ -65,9 +65,10 @@ Example shape:
 
 - `T_aestivum_cv__ChineseSpring_v2_1|725|TraesCS7A03G0821400.1|TraesCS7A03G0821400.1|...`
 
-This is enough to derive BLAST protein report URLs:
-
-- `https://phytozome-next.jgi.doe.gov/report/protein/{jbrowseName}/{sequenceId}`
+This is enough to capture BLAST target identifiers, but it is not proof that a
+matching source webpage exists. Do not derive or template-build row-level report
+URLs from `Hit_def`; leave `gene_report_url` empty unless the response provides
+an explicit page link.
 
 ## Confirmed export-related record lookups
 
@@ -132,11 +133,9 @@ Tradeoff:
 
 The frontend contains multiple report-link patterns in different parts of the site.
 
-For the BLAST protein workflow, the current working link shape is:
-
-- `/report/protein/{jbrowseName}/{sequenceId}`
-
-Transcript report URLs may still matter in other flows, but they are not the correct default for the current BLAST export target.
+Observed frontend links are not a contract for row-level export fields. The BLAST
+protein workflow should keep target identifiers from BLAST/API data and leave
+`gene_report_url` blank unless a concrete source response includes the page URL.
 
 ## Next implementation target
 

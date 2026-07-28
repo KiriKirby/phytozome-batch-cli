@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -628,7 +627,6 @@ func enrichLocalBlastRows(ctx context.Context, c *Client, rel releaseInfo, versi
 			row.Protein = firstNonEmpty(hit.GeneIdentifier, hit.TranscriptID, row.Protein)
 			row.SequenceID = firstNonEmpty(hit.SequenceID, row.SequenceID)
 			row.TranscriptID = hit.TranscriptID
-			row.GeneReportURL = hit.GeneReportURL
 			row.Defline = firstNonEmpty(row.Defline, hit.Description)
 			row.UniProtAccession = hit.UniProt
 		} else if hit, ok := localBlastHitRow(indexReady, index, row.SequenceID); ok {
@@ -636,12 +634,8 @@ func enrichLocalBlastRows(ctx context.Context, c *Client, rel releaseInfo, versi
 			row.Protein = firstNonEmpty(hit.GeneIdentifier, hit.TranscriptID, row.Protein)
 			row.SequenceID = firstNonEmpty(hit.SequenceID, row.SequenceID)
 			row.TranscriptID = hit.TranscriptID
-			row.GeneReportURL = hit.GeneReportURL
 			row.Defline = firstNonEmpty(row.Defline, hit.Description)
 			row.UniProtAccession = hit.UniProt
-		}
-		if row.GeneReportURL == "" {
-			row.GeneReportURL = rel.ReportURLBase + urlQueryEscape(stripTranscriptSuffix(row.SequenceID))
 		}
 	}
 }
@@ -713,10 +707,6 @@ func capturedOutput(output string) string {
 		lines = append(lines[:8], "...")
 	}
 	return "\n" + strings.Join(lines, "\n")
-}
-
-func urlQueryEscape(value string) string {
-	return url.QueryEscape(strings.TrimSpace(value))
 }
 
 func minInt(a int, b int) int {

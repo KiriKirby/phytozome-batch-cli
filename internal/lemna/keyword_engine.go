@@ -39,101 +39,23 @@ type lemnaKeywordSearchSession struct {
 
 type lemnaReportURLProgram struct{}
 type lemnaIdentifierProgram struct{}
-type lemnaRiceLocusProgram struct{}
-type lemnaRefSeqProteinProgram struct{}
-type lemnaRiceAliasProgram struct{}
-type lemnaCytochromeFamilyProgram struct{}
 type lemnaKeywordProgramDefault struct{}
 type lemnaWideKeywordProgram struct{}
 type lemnaBroadKeywordProgram struct{}
 
 const (
-	lemnaSearchTypeReportURL        = "report URL"
-	lemnaSearchTypeIdentifier       = "Lemna identifier"
-	lemnaSearchTypeRiceLocus        = "rice LOC_Os locus"
-	lemnaSearchTypeRefSeqProtein    = "RefSeq XP protein"
-	lemnaSearchTypeGeneAlias        = "gene alias / symbol"
-	lemnaSearchTypeCytochromeFamily = "CYP73 family symbol"
-	lemnaSearchTypeKeyword          = "keyword"
-	lemnaSearchTypeWide             = "wide search"
-	lemnaSearchTypeBroad            = "broad search"
-	lemnaKeywordIndexSchemaVersion  = "v2"
+	lemnaSearchTypeReportURL       = "report URL"
+	lemnaSearchTypeIdentifier      = "Lemna identifier"
+	lemnaSearchTypeKeyword         = "keyword"
+	lemnaSearchTypeWide            = "wide search"
+	lemnaSearchTypeBroad           = "broad search"
+	lemnaKeywordIndexSchemaVersion = "v5"
 )
 
 var (
-	lemnaTranscriptPattern       = regexp.MustCompile(`(?i)^[A-Z]{2}\d{4}D\d{3}G\d{6}_T\d+$`)
-	lemnaGenePattern             = regexp.MustCompile(`(?i)^[A-Z]{2}\d{4}D\d{3}G\d{6}$`)
-	labelSymbolPattern           = regexp.MustCompile(`\b[A-Z][A-Z0-9-]{1,14}\b`)
-	riceLocusPattern             = regexp.MustCompile(`(?i)^(?:LOC_)?(?:OS)?\d{2}G\d{5}(?:\.\d+)?$`)
-	riceLocusPartsPattern        = regexp.MustCompile(`(?i)^(\d{2})G(\d{5})(\.\d+)?$`)
-	refSeqProteinPattern         = regexp.MustCompile(`(?i)^(?:XP_?)\d+(?:\.\d+)?$`)
-	cytochromeP450Pattern        = regexp.MustCompile(`(?i)^CYP\d+[A-Z]\d+$`)
-	curatedRiceRefSeqAliasLookup = map[string][]string{
-		normalizeAliasKey("XP_015639656"):   {"LOC_Os05g25640"},
-		normalizeAliasKey("XP_015639656.1"): {"LOC_Os05g25640"},
-		normalizeAliasKey("XP_015635394"):   {"LOC_Os01g60450"},
-		normalizeAliasKey("XP_015635394.1"): {"LOC_Os01g60450"},
-		normalizeAliasKey("XP_015623447"):   {"LOC_Os02g26770"},
-		normalizeAliasKey("XP_015623447.1"): {"LOC_Os02g26770"},
-		normalizeAliasKey("XP_015626579"):   {"LOC_Os02g26810"},
-		normalizeAliasKey("XP_015626579.1"): {"LOC_Os02g26810"},
-		normalizeAliasKey("XP_015650724"):   {"LOC_Os08g14760"},
-		normalizeAliasKey("XP_015650724.1"): {"LOC_Os08g14760"},
-		normalizeAliasKey("XP_015624111"):   {"LOC_Os02g46970"},
-		normalizeAliasKey("XP_015624111.1"): {"LOC_Os02g46970"},
-		normalizeAliasKey("XP_015625716"):   {"LOC_Os02g08100"},
-		normalizeAliasKey("XP_015625716.1"): {"LOC_Os02g08100"},
-		normalizeAliasKey("XP_015643415"):   {"LOC_Os06g44620"},
-		normalizeAliasKey("XP_015643415.1"): {"LOC_Os06g44620"},
-		normalizeAliasKey("XP_015650830"):   {"LOC_Os08g34790"},
-		normalizeAliasKey("XP_015650830.1"): {"LOC_Os08g34790"},
-	}
-	curatedRiceLocusAliasLookup = map[string][]string{
-		normalizeAliasKey("LOC_Os05g25640"): {"C4H"},
-		normalizeAliasKey("LOC_Os01g60450"): {"CYP73A35p"},
-		normalizeAliasKey("LOC_Os02g26770"): {"OsC4H2a"},
-		normalizeAliasKey("LOC_Os02g26810"): {"OsC4H2"},
-		normalizeAliasKey("LOC_Os08g14760"): {"Os4CL1"},
-		normalizeAliasKey("LOC_Os02g46970"): {"Os4CL2"},
-		normalizeAliasKey("LOC_Os02g08100"): {"Os4CL3"},
-		normalizeAliasKey("LOC_Os06g44620"): {"Os4CL4"},
-		normalizeAliasKey("LOC_Os08g34790"): {"Os4CL5"},
-	}
-	curatedRiceAliasLookup = map[string][]string{
-		normalizeAliasKey("Os4CL1"):    {"LOC_Os08g14760"},
-		normalizeAliasKey("Os4CL2"):    {"LOC_Os02g46970"},
-		normalizeAliasKey("Os4CL3"):    {"LOC_Os02g08100"},
-		normalizeAliasKey("Os4CL4"):    {"LOC_Os06g44620"},
-		normalizeAliasKey("Os4CL5"):    {"LOC_Os08g34790"},
-		normalizeAliasKey("OsC4H1"):    {"LOC_Os05g25640"},
-		normalizeAliasKey("CYP73A35p"): {"LOC_Os01g60450"},
-		normalizeAliasKey("OsC4H2a"):   {"LOC_Os02g26770"},
-		normalizeAliasKey("OsC4H2"):    {"LOC_Os02g26810"},
-		normalizeAliasKey("CYP73A38"):  {"LOC_Os05g25640"},
-		normalizeAliasKey("CYP73A39"):  {"LOC_Os01g60450"},
-		normalizeAliasKey("CYP73A40"):  {"LOC_Os02g26770"},
-	}
-	curatedRiceKeywordTargetLookup = map[string]lemnaCuratedKeywordTarget{
-		normalizeAliasKey("LOC_Os08g14760"): {Label: "Os4CL1", Queries: []string{"4CL", "4-coumarate"}},
-		normalizeAliasKey("LOC_Os02g46970"): {Label: "Os4CL2", Queries: []string{"4CL", "4-coumarate"}},
-		normalizeAliasKey("LOC_Os02g08100"): {Label: "Os4CL3", Queries: []string{"4CL", "4-coumarate"}},
-		normalizeAliasKey("LOC_Os06g44620"): {Label: "Os4CL4", Queries: []string{"4CL", "4-coumarate"}},
-		normalizeAliasKey("LOC_Os08g34790"): {Label: "Os4CL5", Queries: []string{"4CL", "4-coumarate"}},
-		normalizeAliasKey("XP_015650724"):   {Label: "Os4CL1", Queries: []string{"4CL", "4-coumarate"}},
-		normalizeAliasKey("XP_015624111"):   {Label: "Os4CL2", Queries: []string{"4CL", "4-coumarate"}},
-		normalizeAliasKey("XP_015625716"):   {Label: "Os4CL3", Queries: []string{"4CL", "4-coumarate"}},
-		normalizeAliasKey("XP_015643415"):   {Label: "Os4CL4", Queries: []string{"4CL", "4-coumarate"}},
-		normalizeAliasKey("XP_015650830"):   {Label: "Os4CL5", Queries: []string{"4CL", "4-coumarate"}},
-		normalizeAliasKey("Os4CL1"):         {Label: "Os4CL1", Queries: []string{"4CL", "4-coumarate"}},
-		normalizeAliasKey("Os4CL2"):         {Label: "Os4CL2", Queries: []string{"4CL", "4-coumarate"}},
-		normalizeAliasKey("Os4CL3"):         {Label: "Os4CL3", Queries: []string{"4CL", "4-coumarate"}},
-		normalizeAliasKey("Os4CL4"):         {Label: "Os4CL4", Queries: []string{"4CL", "4-coumarate"}},
-		normalizeAliasKey("Os4CL5"):         {Label: "Os4CL5", Queries: []string{"4CL", "4-coumarate"}},
-		normalizeAliasKey("LOC_Os05g25640"): {Label: "C4H", Queries: []string{"trans-cinnamate 4-monooxygenase", "cinnamate 4-hydroxylase", "P48522", "Q43240"}},
-		normalizeAliasKey("XP_015639656"):   {Label: "C4H", Queries: []string{"trans-cinnamate 4-monooxygenase", "cinnamate 4-hydroxylase", "P48522", "Q43240"}},
-		normalizeAliasKey("OsC4H1"):         {Label: "C4H", Queries: []string{"trans-cinnamate 4-monooxygenase", "cinnamate 4-hydroxylase", "P48522", "Q43240"}},
-		normalizeAliasKey("CYP73A38"):       {Label: "C4H", Queries: []string{"trans-cinnamate 4-monooxygenase", "cinnamate 4-hydroxylase", "P48522", "Q43240"}},
-	}
+	lemnaTranscriptPattern = regexp.MustCompile(`(?i)^[A-Z]{2}\d{4}D\d{3}G\d{6}_T\d+$`)
+	lemnaGenePattern       = regexp.MustCompile(`(?i)^[A-Z]{2}\d{4}D\d{3}G\d{6}$`)
+	labelSymbolPattern     = regexp.MustCompile(`\b[A-Z][A-Z0-9-]{1,14}\b`)
 )
 
 func (c *Client) SearchKeywordRowsByReportURL(ctx context.Context, species model.SpeciesCandidate, term string, limit int) ([]model.KeywordResultRow, error) {
@@ -157,9 +79,17 @@ func (c *Client) SearchKeywordRowsByReportURL(ctx context.Context, species model
 		kind = "transcript"
 	}
 	if kind == "transcript" {
-		return session.searchIdentifiers([]string{identifier}, limit), nil
+		rows := session.searchIdentifiers([]string{identifier}, limit)
+		for i := range rows {
+			model.SetInputSourcePageURL(&rows[i], term)
+		}
+		return rows, nil
 	}
-	return session.searchIdentifiers([]string{identifier, stripTranscriptSuffix(identifier)}, limit), nil
+	rows := session.searchIdentifiers([]string{identifier, stripTranscriptSuffix(identifier)}, limit)
+	for i := range rows {
+		model.SetInputSourcePageURL(&rows[i], term)
+	}
+	return rows, nil
 }
 
 func (c *Client) SearchKeywordRowsByIdentifier(ctx context.Context, species model.SpeciesCandidate, term string, kind string, limit int) ([]model.KeywordResultRow, error) {
@@ -183,17 +113,11 @@ func (c *Client) SearchKeywordRowsByLabel(ctx context.Context, species model.Spe
 	if err != nil {
 		return nil, err
 	}
-	queries := labelSearchQueries(term)
-	if len(queries) == 0 {
+	term = strings.TrimSpace(term)
+	if term == "" {
 		return nil, nil
 	}
-	if rows := session.searchAliases(expandCuratedLemnaAliases(queries), term, limit); len(rows) > 0 {
-		return applyLemnaCuratedLabels(term, rows), nil
-	}
-	if rows := searchCuratedRiceKeywordTargets(session, term, limit); len(rows) > 0 {
-		return rows, nil
-	}
-	return nil, nil
+	return session.searchAliases([]string{term}, term, limit), nil
 }
 
 func (c *Client) SearchKeywordRowsByKeywordText(ctx context.Context, species model.SpeciesCandidate, term string, limit int) ([]model.KeywordResultRow, error) {
@@ -565,6 +489,7 @@ func mergeKeywordRow(dst *model.KeywordResultRow, src model.KeywordResultRow) {
 			}
 		}
 	}
+	model.SanitizeKeywordResultRowSourceWebURL(dst)
 }
 
 func keywordRowFromAHRD(species model.SpeciesCandidate, release releaseInfo, searchTerm string, transcriptID string, record ahrdRecord) model.KeywordResultRow {
@@ -579,7 +504,6 @@ func keywordRowFromAHRD(species model.SpeciesCandidate, release releaseInfo, sea
 		Description:         record.HumanReadableDescription,
 		SequenceHeaderLabel: species.DisplayLabel(),
 		SequenceID:          firstNonEmpty(record.ProteinAccession, transcriptID),
-		GeneReportURL:       lemnaGeneReportURL(release.RootDir, stripTranscriptSuffix(transcriptID), "", "", ""),
 	}
 	enrichKeywordRowWithAHRD(&row, searchTerm, record)
 	return row
@@ -622,74 +546,6 @@ func (lemnaIdentifierProgram) Search(ctx context.Context, session *lemnaKeywordS
 	return session.searchIdentifiers(specificKeywordIdentifierVariants(term), limit), nil
 }
 
-func (lemnaRiceLocusProgram) Name() string { return lemnaSearchTypeRiceLocus }
-func (lemnaRiceLocusProgram) Match(term string) bool {
-	return riceLocusPattern.MatchString(normalizeRiceLocusCandidate(term))
-}
-func (lemnaRiceLocusProgram) Search(ctx context.Context, session *lemnaKeywordSearchSession, term string, limit int) ([]model.KeywordResultRow, error) {
-	if aliases := expandCuratedLemnaAliases(aliasesForNormalizedTerm(curatedRiceLocusAliasMap(), term)); len(aliases) > 0 {
-		if rows := session.searchAliases(aliases, term, limit); len(rows) > 0 {
-			return applyLemnaCuratedLabels(term, rows), nil
-		}
-	}
-	rows := session.searchAliases(expandCuratedLemnaAliases(riceLocusVariants(term)), term, limit)
-	if len(rows) > 0 {
-		return applyLemnaCuratedLabels(term, rows), nil
-	}
-	return searchCuratedRiceKeywordTargets(session, term, limit), nil
-}
-
-func (lemnaRefSeqProteinProgram) Name() string { return lemnaSearchTypeRefSeqProtein }
-func (lemnaRefSeqProteinProgram) Match(term string) bool {
-	return refSeqProteinPattern.MatchString(strings.TrimSpace(term))
-}
-func (lemnaRefSeqProteinProgram) Search(ctx context.Context, session *lemnaKeywordSearchSession, term string, limit int) ([]model.KeywordResultRow, error) {
-	if aliases := expandCuratedLemnaAliases(aliasesForNormalizedTerm(curatedRiceRefSeqAliasMap(), term)); len(aliases) > 0 {
-		if rows := session.searchAliases(aliases, term, limit); len(rows) > 0 {
-			return applyLemnaCuratedLabels(term, rows), nil
-		}
-	}
-	if rows := session.searchIdentifiers(specificKeywordIdentifierVariants(term), limit); len(rows) > 0 {
-		return applyLemnaCuratedLabels(term, rows), nil
-	}
-	return searchCuratedRiceKeywordTargets(session, term, limit), nil
-}
-
-func (lemnaRiceAliasProgram) Name() string { return lemnaSearchTypeGeneAlias }
-func (lemnaRiceAliasProgram) Match(term string) bool {
-	term = strings.TrimSpace(term)
-	if term == "" || strings.ContainsAny(term, " \t") {
-		return false
-	}
-	if lemnaTranscriptPattern.MatchString(term) || lemnaGenePattern.MatchString(term) ||
-		riceLocusPattern.MatchString(normalizeRiceLocusCandidate(term)) ||
-		refSeqProteinPattern.MatchString(term) ||
-		cytochromeP450Pattern.MatchString(term) {
-		return false
-	}
-	return isGeneAliasLike(term)
-}
-func (lemnaRiceAliasProgram) Search(ctx context.Context, session *lemnaKeywordSearchSession, term string, limit int) ([]model.KeywordResultRow, error) {
-	aliases := expandCuratedLemnaAliases([]string{term})
-	if rows := session.searchAliases(aliases, term, limit); len(rows) > 0 {
-		return applyLemnaCuratedLabels(term, rows), nil
-	}
-	return searchCuratedRiceKeywordTargets(session, term, limit), nil
-}
-
-func (lemnaCytochromeFamilyProgram) Name() string { return lemnaSearchTypeCytochromeFamily }
-func (lemnaCytochromeFamilyProgram) Match(term string) bool {
-	return cytochromeP450Pattern.MatchString(strings.TrimSpace(term))
-}
-func (lemnaCytochromeFamilyProgram) Search(ctx context.Context, session *lemnaKeywordSearchSession, term string, limit int) ([]model.KeywordResultRow, error) {
-	queries := []string{term, strings.TrimSuffix(strings.ToUpper(strings.TrimSpace(term)), "P")}
-	queries = expandCuratedLemnaAliases(queries)
-	if rows := session.searchAliases(queries, term, limit); len(rows) > 0 {
-		return applyLemnaCuratedLabels(term, rows), nil
-	}
-	return searchCuratedRiceKeywordTargets(session, term, limit), nil
-}
-
 func (lemnaKeywordProgramDefault) Name() string           { return lemnaSearchTypeKeyword }
 func (lemnaKeywordProgramDefault) Match(term string) bool { return strings.TrimSpace(term) != "" }
 func (lemnaKeywordProgramDefault) Search(ctx context.Context, session *lemnaKeywordSearchSession, term string, limit int) ([]model.KeywordResultRow, error) {
@@ -709,9 +565,7 @@ func (lemnaWideKeywordProgram) Search(ctx context.Context, session *lemnaKeyword
 		}
 	}
 	for _, aliases := range [][]string{
-		expandCuratedLemnaAliases([]string{term}),
-		expandCuratedLemnaAliases(aliasesForNormalizedTerm(curatedRiceRefSeqAliasMap(), term)),
-		expandCuratedLemnaAliases(riceLocusVariants(term)),
+		[]string{term},
 		specificKeywordIdentifierVariants(term),
 	} {
 		if len(aliases) == 0 {
@@ -719,24 +573,20 @@ func (lemnaWideKeywordProgram) Search(ctx context.Context, session *lemnaKeyword
 		}
 		add(session.searchAliases(aliases, term, limit))
 		if len(rows) > 0 {
-			return applyLemnaCuratedLabels(term, rows), nil
+			return rows, nil
 		}
-	}
-	add(searchCuratedRiceKeywordTargets(session, term, limit))
-	if len(rows) > 0 {
-		return applyLemnaCuratedLabels(term, rows), nil
 	}
 	add(session.searchTerms(keywordTerms(wideKeywordQuery(term)), true, limit))
 	if len(rows) > 0 {
-		return applyLemnaCuratedLabels(term, rows), nil
+		return rows, nil
 	}
 	for _, query := range relaxedKeywordQueries(term) {
 		add(session.searchTerms(keywordTerms(query), true, limit))
 		if len(rows) > 0 {
-			return applyLemnaCuratedLabels(term, rows), nil
+			return rows, nil
 		}
 	}
-	return applyLemnaCuratedLabels(term, rows), nil
+	return rows, nil
 }
 
 func (lemnaBroadKeywordProgram) Name() string           { return lemnaSearchTypeBroad }
@@ -921,116 +771,10 @@ func specificKeywordIdentifierVariants(value string) []string {
 	add(value)
 	add(strings.ToUpper(value))
 	add(strings.ToLower(value))
-	if normalized := normalizeRiceLocusCandidate(value); normalized != "" {
-		add(normalized)
-		add("LOC_" + normalized)
-	}
 	for _, candidate := range normalizedIdentifierCandidates(value) {
 		add(candidate)
 	}
 	return variants
-}
-
-func riceLocusVariants(term string) []string {
-	normalized := normalizeRiceLocusCandidate(term)
-	if normalized == "" || !riceLocusPattern.MatchString(normalized) {
-		return specificKeywordIdentifierVariants(term)
-	}
-	return specificKeywordIdentifierVariants("LOC_" + normalized)
-}
-
-func normalizeRiceLocusCandidate(term string) string {
-	value := strings.TrimSpace(term)
-	if value == "" {
-		return ""
-	}
-	value = strings.ReplaceAll(value, "-", "_")
-	value = strings.ReplaceAll(value, " ", "")
-	upper := strings.ToUpper(value)
-	upper = strings.TrimPrefix(upper, "LOC_")
-	if strings.HasPrefix(upper, "OS") && len(upper) >= 8 {
-		upper = upper[2:]
-	}
-	parts := riceLocusPartsPattern.FindStringSubmatch(upper)
-	if len(parts) == 0 {
-		return ""
-	}
-	return "Os" + parts[1] + "g" + parts[2] + parts[3]
-}
-
-func osC4HLike(term string) bool {
-	normalized := strings.ToUpper(strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.TrimSpace(term)))
-	return strings.HasPrefix(normalized, "OSC4H") && len(normalized) > len("OSC4H")
-}
-
-func aliasesForNormalizedTerm(catalog map[string][]string, term string) []string {
-	key := normalizeAliasKey(term)
-	values := catalog[key]
-	if len(values) == 0 {
-		return nil
-	}
-	return append([]string(nil), values...)
-}
-
-func expandCuratedLemnaAliases(values []string) []string {
-	if len(values) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(values)*2)
-	seen := make(map[string]struct{}, len(values)*2)
-	add := func(value string) {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			return
-		}
-		key := normalizeAliasKey(value)
-		if _, ok := seen[key]; ok {
-			return
-		}
-		seen[key] = struct{}{}
-		out = append(out, value)
-	}
-	for _, value := range values {
-		add(value)
-		if aliases := aliasesForNormalizedTerm(curatedRiceLocusAliasMap(), value); len(aliases) > 0 {
-			for _, alias := range aliases {
-				add(alias)
-			}
-		}
-	}
-	return out
-}
-
-func labelSearchQueries(term string) []string {
-	queries := []string{term}
-	if aliases := aliasesForNormalizedTerm(curatedRiceRefSeqAliasMap(), term); len(aliases) > 0 {
-		queries = append(queries, aliases...)
-	}
-	if aliases := aliasesForNormalizedTerm(curatedRiceLocusAliasMap(), term); len(aliases) > 0 {
-		queries = append(queries, aliases...)
-	}
-	if riceLocusPattern.MatchString(normalizeRiceLocusCandidate(term)) {
-		queries = append(queries, riceLocusVariants(term)...)
-	}
-	if refSeqProteinPattern.MatchString(strings.TrimSpace(term)) {
-		queries = append(queries, specificKeywordIdentifierVariants(term)...)
-	}
-	if cytochromeP450Pattern.MatchString(strings.TrimSpace(term)) {
-		queries = append(queries, strings.TrimSuffix(strings.ToUpper(strings.TrimSpace(term)), "P"))
-	}
-	return uniqueNormalizedStrings(queries)
-}
-
-func curatedRiceRefSeqAliasMap() map[string][]string {
-	return curatedRiceRefSeqAliasLookup
-}
-
-func curatedRiceLocusAliasMap() map[string][]string {
-	return curatedRiceLocusAliasLookup
-}
-
-func curatedRiceKeywordTargets() map[string]lemnaCuratedKeywordTarget {
-	return curatedRiceKeywordTargetLookup
 }
 
 func wideKeywordQuery(term string) string {
@@ -1057,110 +801,12 @@ func relaxedKeywordQueries(term string) []string {
 	}
 	add(strings.ReplaceAll(term, "_", " "))
 	add(strings.ReplaceAll(term, "-", " "))
-	if refSeqProteinPattern.MatchString(term) {
-		add(strings.TrimSuffix(strings.ReplaceAll(term, "_", ""), ".1"))
-	}
-	if cytochromeP450Pattern.MatchString(term) {
-		add(strings.TrimSuffix(strings.ToUpper(term), "P"))
-	}
 	return queries
 }
 
 func normalizeAliasKey(value string) string {
 	value = strings.ToUpper(strings.TrimSpace(value))
 	return strings.NewReplacer("_", "", "-", "", " ", "", ".", "").Replace(value)
-}
-
-func isGeneAliasLike(term string) bool {
-	term = strings.TrimSpace(term)
-	if term == "" {
-		return false
-	}
-	normalized := normalizeAliasKey(term)
-	if len(normalized) < 5 || len(normalized) > 15 {
-		return false
-	}
-	seenDigit := false
-	seenLetterAfterDigit := false
-	for _, r := range normalized {
-		switch {
-		case r >= '0' && r <= '9':
-			seenDigit = true
-		case r >= 'A' && r <= 'Z':
-			if seenDigit {
-				seenLetterAfterDigit = true
-			}
-		default:
-			return false
-		}
-	}
-	return seenDigit && seenLetterAfterDigit
-}
-
-type lemnaCuratedKeywordTarget struct {
-	Label   string
-	Queries []string
-}
-
-func curatedRiceKeywordTarget(term string) (lemnaCuratedKeywordTarget, bool) {
-	keys := []string{normalizeAliasKey(term)}
-	keys = append(keys, normalizedIdentifierCandidates(term)...)
-	if aliases := aliasesForNormalizedTerm(curatedRiceRefSeqAliasMap(), term); len(aliases) > 0 {
-		keys = append(keys, aliases...)
-	}
-	if aliases := aliasesForNormalizedTerm(curatedRiceLocusAliasMap(), term); len(aliases) > 0 {
-		keys = append(keys, aliases...)
-	}
-	if normalized := normalizeRiceLocusCandidate(term); normalized != "" {
-		keys = append(keys, normalized, "LOC_"+normalized)
-	}
-	targets := curatedRiceKeywordTargets()
-	for _, key := range keys {
-		if target, ok := targets[normalizeAliasKey(key)]; ok {
-			return target, true
-		}
-	}
-	return lemnaCuratedKeywordTarget{}, false
-}
-
-func searchCuratedRiceKeywordTargets(session *lemnaKeywordSearchSession, term string, limit int) []model.KeywordResultRow {
-	target, ok := curatedRiceKeywordTarget(term)
-	if !ok {
-		return nil
-	}
-	seen := make(map[string]struct{})
-	rows := make([]model.KeywordResultRow, 0, 8)
-	for _, query := range target.Queries {
-		for _, row := range session.searchTerms(keywordTerms(query), true, limit) {
-			if addKeywordRow(&rows, seen, row, limit) {
-				return applyLemnaCuratedLabel(target.Label, rows)
-			}
-		}
-		if len(rows) > 0 {
-			break
-		}
-	}
-	return applyLemnaCuratedLabel(target.Label, rows)
-}
-
-func applyLemnaCuratedLabels(term string, rows []model.KeywordResultRow) []model.KeywordResultRow {
-	target, ok := curatedRiceKeywordTarget(term)
-	if !ok {
-		return rows
-	}
-	return applyLemnaCuratedLabel(target.Label, rows)
-}
-
-func applyLemnaCuratedLabel(label string, rows []model.KeywordResultRow) []model.KeywordResultRow {
-	label = strings.TrimSpace(label)
-	if label == "" || len(rows) == 0 {
-		return rows
-	}
-	out := cloneKeywordRows(rows)
-	for i := range out {
-		out[i].LabelName = label
-	}
-	return out
 }
 
 func normalizeIdentifierKey(value string) string { return strings.ToLower(strings.TrimSpace(value)) }

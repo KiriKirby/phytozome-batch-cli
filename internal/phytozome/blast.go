@@ -325,7 +325,6 @@ func parseBlastRows(rawXML string) ([]model.BlastResultRow, error) {
 					Gaps:            hsp.Gaps,
 					QueryLength:     queryLen,
 					TargetLength:    hit.Length,
-					GeneReportURL:   meta.GeneReportURL,
 					JBrowseName:     meta.JBrowseName,
 					TargetID:        meta.TargetID,
 					SequenceID:      meta.SequenceID,
@@ -341,13 +340,12 @@ func parseBlastRows(rawXML string) ([]model.BlastResultRow, error) {
 }
 
 type hitMeta struct {
-	SpeciesLabel  string
-	JBrowseName   string
-	TargetID      int
-	SequenceID    string
-	TranscriptID  string
-	Defline       string
-	GeneReportURL string
+	SpeciesLabel string
+	JBrowseName  string
+	TargetID     int
+	SequenceID   string
+	TranscriptID string
+	Defline      string
 }
 
 func parseHitDefinition(hitDef string) hitMeta {
@@ -360,7 +358,6 @@ func parseHitDefinition(hitDef string) hitMeta {
 		meta.TranscriptID = parts[3]
 		meta.Defline = parts[4]
 		meta.SpeciesLabel = strings.ReplaceAll(parts[0], "__", ".")
-		meta.GeneReportURL = fmt.Sprintf("https://phytozome-next.jgi.doe.gov/report/protein/%s/%s", parts[0], parts[2])
 	}
 	return meta
 }

@@ -33,7 +33,7 @@ const (
 )
 
 const (
-	cacheSchemaVersion = "tairkeyword-v4"
+	cacheSchemaVersion = "tairkeyword-v5"
 
 	identifierKindAny   = "any"
 	identifierKindGene  = "gene"

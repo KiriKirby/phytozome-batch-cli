@@ -48,7 +48,7 @@ func (f *fakeFinder) SearchKeywordRowsByBroadText(ctx context.Context, species m
 	return cloneRows(f.broadRows[strings.ToUpper(term)]), nil
 }
 
-func TestEngineMapsLemnaPrograms(t *testing.T) {
+func TestEngineMapsLemnaProgramsWithoutCuratedRedirects(t *testing.T) {
 	finder := &fakeFinder{
 		reportRows: map[string][]model.KeywordResultRow{
 			"HTTPS://WWW.LEMNA.ORG/JBROWSE2/?ASSEMBLY=SP9509D&CONFIG=HTTPS%3A%2F%2FWWW.LEMNA.ORG%2FJBROWSE2%2FCONFIG.JSON&FILTER=SP9509D020G000340&HIGHLIGHT=SP9509D020G000340&PHGO_GENE=SP9509D020G000340&PHGO_ROOT=SP_POLYRHIZA_9509": {{TranscriptID: "Sp9509d020g000340_T001", LabelName: "C4H"}},
@@ -56,14 +56,9 @@ func TestEngineMapsLemnaPrograms(t *testing.T) {
 		idRows: map[string][]model.KeywordResultRow{
 			"TRANSCRIPT|SP9509D020G000340_T001": {{TranscriptID: "Sp9509d020g000340_T001", LabelName: "C4H"}},
 			"GENE|SP9509D020G000340":            {{GeneIdentifier: "Sp9509d020g000340", LabelName: "C4H"}},
-			"ANY|PROT123":                       {{ProteinID: "prot123", LabelName: "C4H"}},
 		},
 		labelRows: map[string][]model.KeywordResultRow{
-			"C4H":            {{TranscriptID: "Sp9509d020g000340_T001", LabelName: "C4H"}},
-			"LOC_OS05G25640": {{TranscriptID: "Sp9509d020g000340_T001", LabelName: "C4H"}},
-			"XP_015639656":   {{TranscriptID: "Sp9509d020g000340_T001", LabelName: "C4H"}},
-			"OSC4H1":         {{TranscriptID: "Sp9509d020g000340_T001", LabelName: "C4H"}},
-			"CYP73A38":       {{TranscriptID: "Sp9509d020g000340_T001", LabelName: "C4H"}},
+			"C4H": {{TranscriptID: "Sp9509d020g000340_T001", LabelName: "C4H"}},
 		},
 		keywordRows: map[string][]model.KeywordResultRow{
 			"PHENYLALANINE AMMONIA LYASE": {{TranscriptID: "Sp9509d011g008180_T004", LabelName: "PAL1"}},
@@ -80,11 +75,6 @@ func TestEngineMapsLemnaPrograms(t *testing.T) {
 		{"https://www.lemna.org/jbrowse2/?assembly=Sp9509d&config=https%3A%2F%2Fwww.lemna.org%2Fjbrowse2%2Fconfig.json&filter=Sp9509d020g000340&highlight=Sp9509d020g000340&phgo_gene=Sp9509d020g000340&phgo_root=Sp_polyrhiza_9509", SearchTypeReportURL, "C4H"},
 		{"Sp9509d020g000340_T001", SearchTypeTranscriptID, "C4H"},
 		{"Sp9509d020g000340", SearchTypeGeneID, "C4H"},
-		{"LOC_Os05g25640", SearchTypeRiceLocus, "C4H"},
-		{"XP_015639656", SearchTypeRefSeqProtein, "C4H"},
-		{"OsC4H1", SearchTypeGeneAlias, "C4H"},
-		{"CYP73A38", SearchTypeCytochromeFamily, "C4H"},
-		{"prot123", SearchTypeIdentifier, "C4H"},
 		{"C4H", SearchTypeLabelSymbol, "C4H"},
 		{"phenylalanine ammonia lyase", SearchTypeKeyword, "PAL1"},
 	}
@@ -101,6 +91,27 @@ func TestEngineMapsLemnaPrograms(t *testing.T) {
 		}
 		if rows[0].LabelName != tt.label {
 			t.Fatalf("%s label = %q, want %q", tt.term, rows[0].LabelName, tt.label)
+		}
+	}
+}
+
+func TestEngineDoesNotRedirectHardcodedRiceTerms(t *testing.T) {
+	finder := &fakeFinder{
+		idRows: map[string][]model.KeywordResultRow{
+			"ANY|SP9509D020G000340_T001": {{TranscriptID: "Sp9509d020g000340_T001", LabelName: "C4H"}},
+		},
+		keywordRows: map[string][]model.KeywordResultRow{
+			"TRANS-CINNAMATE 4-MONOOXYGENASE": {{TranscriptID: "keyword-only", LabelName: "raw"}},
+		},
+	}
+	engine := New(finder)
+	for _, term := range []string{"LOC_Os05g25640", "XP_015639656", "OsC4H1", "CYP73A38"} {
+		rows, err := engine.SearchKeywordRows(context.Background(), model.SpeciesCandidate{ProteomeID: 2026051201}, term)
+		if err != nil {
+			t.Fatalf("%s returned error: %v", term, err)
+		}
+		if len(rows) != 0 {
+			t.Fatalf("%s should not be hardcoded to another Lemna row, got %#v", term, rows)
 		}
 	}
 }
@@ -168,169 +179,5 @@ func TestEngineWideSearchCanUseBroadRows(t *testing.T) {
 	}
 	if rows[0].LabelName != "4CL" {
 		t.Fatalf("forced wide search should use broad rows, got %q", rows[0].LabelName)
-	}
-}
-
-func TestEngineMatchesLemnaProgramsCaseInsensitive(t *testing.T) {
-	finder := &fakeFinder{
-		idRows: map[string][]model.KeywordResultRow{
-			"TRANSCRIPT|SP9509D020G000340_T001": {{TranscriptID: "Sp9509d020g000340_T001", LabelName: "C4H"}},
-		},
-		labelRows: map[string][]model.KeywordResultRow{
-			"LOC_OS05G25640": {{TranscriptID: "Sp9509d020g000340_T001", LabelName: "C4H"}},
-			"XP_015639656":   {{TranscriptID: "Sp9509d020g000340_T001", LabelName: "C4H"}},
-			"OSC4H1":         {{TranscriptID: "Sp9509d020g000340_T001", LabelName: "C4H"}},
-			"CYP73A38":       {{TranscriptID: "Sp9509d020g000340_T001", LabelName: "C4H"}},
-		},
-	}
-	engine := New(finder)
-
-	tests := []struct {
-		term       string
-		searchType string
-	}{
-		{"sp9509d020g000340_t001", SearchTypeTranscriptID},
-		{"loc_os05g25640", SearchTypeRiceLocus},
-		{"xp_015639656", SearchTypeRefSeqProtein},
-		{"osc4h1", SearchTypeGeneAlias},
-		{"cyp73a38", SearchTypeCytochromeFamily},
-	}
-	for _, tt := range tests {
-		rows, err := engine.SearchKeywordRows(context.Background(), model.SpeciesCandidate{ProteomeID: 2026051201, JBrowseName: "test-wide"}, tt.term)
-		if err != nil {
-			t.Fatalf("%s returned error: %v", tt.term, err)
-		}
-		if len(rows) != 1 {
-			t.Fatalf("%s rows = %d, want 1", tt.term, len(rows))
-		}
-		if rows[0].SearchType != tt.searchType {
-			t.Fatalf("%s search type = %q, want %q", tt.term, rows[0].SearchType, tt.searchType)
-		}
-	}
-}
-
-func TestEngineSupportsVersionedRiceRefSeqProteinAccessions(t *testing.T) {
-	finder := &fakeFinder{
-		labelRows: map[string][]model.KeywordResultRow{
-			"XP_015650724.1": {{TranscriptID: "Sp9509d008g014760_T001", GeneIdentifier: "Sp9509d008g014760", LabelName: "Os4CL1"}},
-			"XP_015624111.1": {{TranscriptID: "Sp9509d002g046970_T001", GeneIdentifier: "Sp9509d002g046970", LabelName: "Os4CL2"}},
-			"XP_015625716.1": {{TranscriptID: "Sp9509d002g008100_T001", GeneIdentifier: "Sp9509d002g008100", LabelName: "Os4CL3"}},
-			"XP_015643415.1": {{TranscriptID: "Sp9509d006g044620_T001", GeneIdentifier: "Sp9509d006g044620", LabelName: "Os4CL4"}},
-			"XP_015650830.1": {{TranscriptID: "Sp9509d008g034790_T001", GeneIdentifier: "Sp9509d008g034790", LabelName: "Os4CL5"}},
-		},
-	}
-	engine := New(finder)
-
-	tests := []struct {
-		term  string
-		label string
-	}{
-		{"XP_015650724.1", "Os4CL1"},
-		{"XP_015624111.1", "Os4CL2"},
-		{"XP_015625716.1", "Os4CL3"},
-		{"XP_015643415.1", "Os4CL4"},
-		{"XP_015650830.1", "Os4CL5"},
-	}
-	for _, tt := range tests {
-		rows, err := engine.SearchKeywordRows(context.Background(), model.SpeciesCandidate{ProteomeID: 2026051201, JBrowseName: "test-wide"}, tt.term)
-		if err != nil {
-			t.Fatalf("%s returned error: %v", tt.term, err)
-		}
-		if len(rows) != 1 {
-			t.Fatalf("%s rows = %d, want 1", tt.term, len(rows))
-		}
-		if rows[0].SearchType != SearchTypeRefSeqProtein {
-			t.Fatalf("%s search type = %q, want %q", tt.term, rows[0].SearchType, SearchTypeRefSeqProtein)
-		}
-		if rows[0].LabelName != tt.label {
-			t.Fatalf("%s label = %q, want %q", tt.term, rows[0].LabelName, tt.label)
-		}
-	}
-}
-
-func TestEngineSupportsRice4CLAliasSeries(t *testing.T) {
-	finder := &fakeFinder{
-		labelRows: map[string][]model.KeywordResultRow{
-			"OS4CL1": {{TranscriptID: "Sp9509d008g014760_T001", GeneIdentifier: "Sp9509d008g014760", LabelName: "Os4CL1"}},
-			"OS4CL2": {{TranscriptID: "Sp9509d002g046970_T001", GeneIdentifier: "Sp9509d002g046970", LabelName: "Os4CL2"}},
-			"OS4CL3": {{TranscriptID: "Sp9509d002g008100_T001", GeneIdentifier: "Sp9509d002g008100", LabelName: "Os4CL3"}},
-			"OS4CL4": {{TranscriptID: "Sp9509d006g044620_T001", GeneIdentifier: "Sp9509d006g044620", LabelName: "Os4CL4"}},
-			"OS4CL5": {{TranscriptID: "Sp9509d008g034790_T001", GeneIdentifier: "Sp9509d008g034790", LabelName: "Os4CL5"}},
-		},
-	}
-	engine := New(finder)
-
-	tests := []struct {
-		term  string
-		label string
-	}{
-		{"Os4CL1", "Os4CL1"},
-		{"Os4CL2", "Os4CL2"},
-		{"Os4CL3", "Os4CL3"},
-		{"Os4CL4", "Os4CL4"},
-		{"Os4CL5", "Os4CL5"},
-	}
-	for _, tt := range tests {
-		rows, err := engine.SearchKeywordRows(context.Background(), model.SpeciesCandidate{ProteomeID: 2026051201, JBrowseName: "test-wide"}, tt.term)
-		if err != nil {
-			t.Fatalf("%s returned error: %v", tt.term, err)
-		}
-		if len(rows) != 1 {
-			t.Fatalf("%s rows = %d, want 1", tt.term, len(rows))
-		}
-		if rows[0].SearchType != SearchTypeGeneAlias {
-			t.Fatalf("%s search type = %q, want %q", tt.term, rows[0].SearchType, SearchTypeGeneAlias)
-		}
-		if rows[0].LabelName != tt.label {
-			t.Fatalf("%s label = %q, want %q", tt.term, rows[0].LabelName, tt.label)
-		}
-	}
-}
-
-func TestEngineWideSearchPrefersSpecificLemnaProgramsBeforeKeyword(t *testing.T) {
-	finder := &fakeFinder{
-		labelRows: map[string][]model.KeywordResultRow{
-			"OSC4H1": {{TranscriptID: "Sp9509d020g000340_T001", LabelName: "C4H"}},
-		},
-		keywordRows: map[string][]model.KeywordResultRow{
-			"OSC4H1": {{TranscriptID: "keyword-only", LabelName: "KW"}},
-		},
-	}
-	engine := New(finder)
-
-	rows, err := engine.SearchKeywordRowsWide(context.Background(), model.SpeciesCandidate{ProteomeID: 2026051201, JBrowseName: "test-wide"}, "OsC4H1")
-	if err != nil {
-		t.Fatalf("SearchKeywordRowsWide returned error: %v", err)
-	}
-	if len(rows) != 1 {
-		t.Fatalf("rows = %d, want 1", len(rows))
-	}
-	if rows[0].TranscriptID != "Sp9509d020g000340_T001" {
-		t.Fatalf("wide search should prefer specific alias program, got %q", rows[0].TranscriptID)
-	}
-}
-
-func TestEngineCanReturnCuratedRiceFallbackRowsWithReadableLabel(t *testing.T) {
-	finder := &fakeFinder{
-		keywordRows: map[string][]model.KeywordResultRow{
-			"TRANS-CINNAMATE 4-MONOOXYGENASE": {
-				{TranscriptID: "Sp9509d006g002010_T001", LabelName: "P48522", Description: "Trans-cinnamate 4-monooxygenase"},
-			},
-		},
-	}
-	engine := New(finder)
-
-	rows, err := engine.SearchKeywordRows(context.Background(), model.SpeciesCandidate{ProteomeID: 2026051201, JBrowseName: "test-wide"}, "CYP73A38")
-	if err != nil {
-		t.Fatalf("SearchKeywordRows returned error: %v", err)
-	}
-	if len(rows) != 1 {
-		t.Fatalf("rows = %d, want 1", len(rows))
-	}
-	if rows[0].SearchType != SearchTypeCytochromeFamily {
-		t.Fatalf("search type = %q, want %q", rows[0].SearchType, SearchTypeCytochromeFamily)
-	}
-	if rows[0].LabelName != "C4H" {
-		t.Fatalf("curated fallback should override raw accession label, got %q", rows[0].LabelName)
 	}
 }

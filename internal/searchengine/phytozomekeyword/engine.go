@@ -11,7 +11,6 @@ import (
 	"context"
 	"fmt"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,30 +22,17 @@ import (
 )
 
 const (
-	SearchTypeReportURL        = "report URL"
-	SearchTypePhytozomeID      = "Phytozome identifier"
-	SearchTypeRiceLocusID      = "rice LOC_Os locus"
-	SearchTypeRefSeqProtein    = "RefSeq XP protein"
-	SearchTypeRiceGeneAlias    = "rice gene alias"
-	SearchTypeCytochromeFamily = "CYP73 family symbol"
-	SearchTypeKeyword          = "keyword"
-	SearchTypeWide             = "wide search"
+	SearchTypeReportURL   = "report URL"
+	SearchTypePhytozomeID = "Phytozome identifier"
+	SearchTypeKeyword     = "keyword"
+	SearchTypeWide        = "wide search"
 )
 
 const fallbackSuffix = " (fallback to wide search)"
 
-const cacheSchemaVersion = "phytozomekeyword-v3"
+const cacheSchemaVersion = "phytozomekeyword-v7"
 
-var (
-	riceLocusPattern        = regexp.MustCompile(`(?i)^(?:LOC_)?(?:OS)?\d{2}G\d{5}(?:\.\d+)?$`)
-	refSeqProteinPattern    = regexp.MustCompile(`(?i)^(?:XP_?)\d+(?:\.\d+)?$`)
-	cytochromeP450Pattern   = regexp.MustCompile(`(?i)^CYP\d+[A-Z]\d+$`)
-	osC4HPattern            = regexp.MustCompile(`(?i)^OS[-_ ]?C4H\d+[A-Z]?$`)
-	riceLocusPartsPattern   = regexp.MustCompile(`(?i)^(\d{2})G(\d{5})(\.\d+)?$`)
-	reportURLHost           = "phytozome-next.jgi.doe.gov"
-	riceAliasByNormalized   = curatedRiceAliasMap()
-	refSeqAliasByNormalized = curatedRiceRefSeqAliasMap()
-)
+const reportURLHost = "phytozome-next.jgi.doe.gov"
 
 type GeneRecord struct {
 	ID                string           `json:"_id"`
@@ -201,10 +187,6 @@ func (e *Engine) searchKeywordRowsWithProgram(ctx context.Context, species model
 func (e *Engine) selectProgram(term string) searchProgram {
 	programs := []searchProgram{
 		reportURLProgram{},
-		riceLocusProgram{},
-		refSeqProteinProgram{},
-		cytochromeFamilyProgram{},
-		riceAliasProgram{},
 		identifierProgram{},
 		keywordProgram{},
 	}
@@ -271,64 +253,6 @@ func (reportURLProgram) Search(ctx context.Context, engine *Engine, species mode
 	return engine.searchSpecificIdentifier(ctx, species, reportType, identifier)
 }
 
-type riceLocusProgram struct{}
-
-func (riceLocusProgram) Name() string { return SearchTypeRiceLocusID }
-
-func (riceLocusProgram) Match(term string) bool {
-	return riceLocusPattern.MatchString(normalizeRiceLocusCandidate(term))
-}
-
-func (riceLocusProgram) Search(ctx context.Context, engine *Engine, species model.SpeciesCandidate, term string) ([]GeneRecord, error) {
-	return engine.searchAliasesAsGenes(ctx, species, riceLocusVariants(term))
-}
-
-type refSeqProteinProgram struct{}
-
-func (refSeqProteinProgram) Name() string { return SearchTypeRefSeqProtein }
-
-func (refSeqProteinProgram) Match(term string) bool {
-	return refSeqProteinPattern.MatchString(strings.TrimSpace(term))
-}
-
-func (refSeqProteinProgram) Search(ctx context.Context, engine *Engine, species model.SpeciesCandidate, term string) ([]GeneRecord, error) {
-	aliases := aliasesForNormalizedTerm(refSeqAliasByNormalized, term)
-	if len(aliases) > 0 {
-		if genes, err := engine.searchAliasesAsGenes(ctx, species, aliases); err != nil || len(genes) > 0 {
-			return genes, err
-		}
-	}
-	return engine.searchSpecificIdentifier(ctx, species, "", term)
-}
-
-type riceAliasProgram struct{}
-
-func (riceAliasProgram) Name() string { return SearchTypeRiceGeneAlias }
-
-func (riceAliasProgram) Match(term string) bool {
-	return len(aliasesForNormalizedTerm(riceAliasByNormalized, term)) > 0 || osC4HPattern.MatchString(strings.TrimSpace(term))
-}
-
-func (riceAliasProgram) Search(ctx context.Context, engine *Engine, species model.SpeciesCandidate, term string) ([]GeneRecord, error) {
-	return engine.searchAliasesAsGenes(ctx, species, aliasesForNormalizedTerm(riceAliasByNormalized, term))
-}
-
-type cytochromeFamilyProgram struct{}
-
-func (cytochromeFamilyProgram) Name() string { return SearchTypeCytochromeFamily }
-
-func (cytochromeFamilyProgram) Match(term string) bool {
-	return cytochromeP450Pattern.MatchString(strings.TrimSpace(term))
-}
-
-func (cytochromeFamilyProgram) Search(ctx context.Context, engine *Engine, species model.SpeciesCandidate, term string) ([]GeneRecord, error) {
-	aliases := aliasesForNormalizedTerm(riceAliasByNormalized, term)
-	if len(aliases) > 0 {
-		return engine.searchAliasesAsGenes(ctx, species, aliases)
-	}
-	return nil, nil
-}
-
 type identifierProgram struct{}
 
 func (identifierProgram) Name() string { return SearchTypePhytozomeID }
@@ -370,9 +294,6 @@ func (wideSearchProgram) Search(ctx context.Context, engine *Engine, species mod
 		}
 	}
 	for _, aliases := range [][]string{
-		aliasesForNormalizedTerm(riceAliasByNormalized, term),
-		aliasesForNormalizedTerm(refSeqAliasByNormalized, term),
-		riceLocusVariants(term),
 		SpecificIdentifierVariants(term),
 	} {
 		if len(aliases) == 0 {
@@ -750,87 +671,7 @@ func SpecificIdentifierVariants(value string) []string {
 			add(strings.Split(candidate, ".")[0])
 		}
 	}
-	if normalized := normalizeRiceLocusCandidate(value); normalized != "" {
-		add(normalized)
-		add("LOC_" + normalized)
-	}
 	return variants
-}
-
-func riceLocusVariants(term string) []string {
-	normalized := normalizeRiceLocusCandidate(term)
-	if normalized == "" || !riceLocusPattern.MatchString(normalized) {
-		return SpecificIdentifierVariants(term)
-	}
-	return SpecificIdentifierVariants("LOC_" + normalized)
-}
-
-func normalizeRiceLocusCandidate(term string) string {
-	value := strings.TrimSpace(term)
-	if value == "" {
-		return ""
-	}
-	value = strings.ReplaceAll(value, "-", "_")
-	value = strings.ReplaceAll(value, " ", "")
-	upper := strings.ToUpper(value)
-	upper = strings.TrimPrefix(upper, "LOC_")
-	if strings.HasPrefix(upper, "OS") && len(upper) >= 8 {
-		upper = upper[2:]
-	}
-	parts := riceLocusPartsPattern.FindStringSubmatch(upper)
-	if len(parts) == 0 {
-		return ""
-	}
-	return "Os" + parts[1] + "g" + parts[2] + parts[3]
-}
-
-func aliasesForNormalizedTerm(catalog map[string][]string, term string) []string {
-	key := normalizeAliasKey(term)
-	values := catalog[key]
-	if len(values) == 0 {
-		return nil
-	}
-	return append([]string(nil), values...)
-}
-
-func curatedRiceRefSeqAliasMap() map[string][]string {
-	return map[string][]string{
-		normalizeAliasKey("XP_015639656"):   {"LOC_Os05g25640"},
-		normalizeAliasKey("XP_015639656.1"): {"LOC_Os05g25640"},
-		normalizeAliasKey("XP_015635394"):   {"LOC_Os01g60450"},
-		normalizeAliasKey("XP_015635394.1"): {"LOC_Os01g60450"},
-		normalizeAliasKey("XP_015623447"):   {"LOC_Os02g26770"},
-		normalizeAliasKey("XP_015623447.1"): {"LOC_Os02g26770"},
-		normalizeAliasKey("XP_015626579"):   {"LOC_Os02g26810"},
-		normalizeAliasKey("XP_015626579.1"): {"LOC_Os02g26810"},
-		normalizeAliasKey("XP_015650724"):   {"LOC_Os08g14760"},
-		normalizeAliasKey("XP_015650724.1"): {"LOC_Os08g14760"},
-		normalizeAliasKey("XP_015624111"):   {"LOC_Os02g46970"},
-		normalizeAliasKey("XP_015624111.1"): {"LOC_Os02g46970"},
-		normalizeAliasKey("XP_015625716"):   {"LOC_Os02g08100"},
-		normalizeAliasKey("XP_015625716.1"): {"LOC_Os02g08100"},
-		normalizeAliasKey("XP_015643415"):   {"LOC_Os06g44620"},
-		normalizeAliasKey("XP_015643415.1"): {"LOC_Os06g44620"},
-		normalizeAliasKey("XP_015650830"):   {"LOC_Os08g34790"},
-		normalizeAliasKey("XP_015650830.1"): {"LOC_Os08g34790"},
-	}
-}
-
-func curatedRiceAliasMap() map[string][]string {
-	return map[string][]string{
-		normalizeAliasKey("Os4CL1"):    {"LOC_Os08g14760"},
-		normalizeAliasKey("Os4CL2"):    {"LOC_Os02g46970"},
-		normalizeAliasKey("Os4CL3"):    {"LOC_Os02g08100"},
-		normalizeAliasKey("Os4CL4"):    {"LOC_Os06g44620"},
-		normalizeAliasKey("Os4CL5"):    {"LOC_Os08g34790"},
-		normalizeAliasKey("OsC4H1"):    {"LOC_Os05g25640"},
-		normalizeAliasKey("CYP73A35p"): {"LOC_Os01g60450"},
-		normalizeAliasKey("OsC4H2a"):   {"LOC_Os02g26770"},
-		normalizeAliasKey("OsC4H2"):    {"LOC_Os02g26810"},
-		normalizeAliasKey("CYP73A38"):  {"LOC_Os05g25640"},
-		normalizeAliasKey("CYP73A39"):  {"LOC_Os01g60450"},
-		normalizeAliasKey("CYP73A40"):  {"LOC_Os02g26770"},
-	}
 }
 
 func wideKeywordQuery(term string) string {
@@ -861,12 +702,6 @@ func relaxedKeywordQueries(term string) []string {
 	}
 	add(strings.ReplaceAll(term, "_", " "))
 	add(strings.ReplaceAll(term, "-", " "))
-	if refSeqProteinPattern.MatchString(term) {
-		add(strings.TrimSuffix(strings.ReplaceAll(term, "_", ""), ".1"))
-	}
-	if cytochromeP450Pattern.MatchString(term) {
-		add(strings.TrimSuffix(strings.ToUpper(term), "P"))
-	}
 	return queries
 }
 

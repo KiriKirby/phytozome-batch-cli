@@ -118,7 +118,7 @@ Current `model.KeywordResultRow` fields:
 | `Description` | source annotation/description |
 | `Comments` | source comments/notes |
 | `AutoDefine` | source or parsed automatic definition/name |
-| `GeneReportURL` | source report/release URL known to workflow |
+| `GeneReportURL` | authentic source webpage URL only when directly obtained by the workflow |
 | `SequenceHeaderLabel` | label used in sequence export headers |
 | `SequenceID` | identifier used for peptide sequence fetching/export |
 | `ExtraColumns` | dynamic source-specific columns, especially lemna GFF3/AHRD fields |
@@ -1719,7 +1719,7 @@ Examples:
 - `description`: source annotation/description
 - `comments`: source comments or parsed annotation notes
 - `auto_define`: source or internal annotation field already present
-- `gene_report_url`: source report URL generated or provided during the workflow
+- `gene_report_url`: authentic source webpage URL provided by user input or an explicit source response field/link; blank when the workflow only has identifiers, source files, download URLs, or API/download provenance
 - dynamic lemna/GFF3/AHRD columns: describe based on collected column name and source family
 
 Blank meaning must be specific:

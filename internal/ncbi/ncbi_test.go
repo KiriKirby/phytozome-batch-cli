@@ -762,8 +762,8 @@ func TestVisibleNCBISummaryRowBuildersPopulateLabelAndKeyExtras(t *testing.T) {
 			if strings.TrimSpace(row.AutoDefine) == "" {
 				t.Fatalf("AutoDefine should not be blank: %#v", row)
 			}
-			if strings.TrimSpace(row.GeneReportURL) == "" {
-				t.Fatalf("GeneReportURL should not be blank: %#v", row)
+			if strings.TrimSpace(row.GeneReportURL) != "" {
+				t.Fatalf("GeneReportURL should stay blank unless NCBI provides a real source page URL, got %#v", row)
 			}
 		})
 	}

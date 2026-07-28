@@ -1228,7 +1228,6 @@ func (c *Client) loadBlastResultFromCache(jobID string) (model.BlastResult, erro
 			row.TranscriptID = fields[bitscoreField+3]
 			row.TargetID, _ = strconv.Atoi(fields[bitscoreField+4])
 			row.JBrowseName = fields[bitscoreField+5]
-			row.GeneReportURL = fields[bitscoreField+6]
 			row.Defline = fields[bitscoreField+7]
 		}
 		result.Rows = append(result.Rows, row)
@@ -2563,7 +2562,6 @@ func buildKeywordRowFromGFF(species model.SpeciesCandidate, release releaseInfo,
 		Description:         description,
 		Comments:            firstNonEmpty(attrs["Note"], attrs["comment"]),
 		AutoDefine:          firstNonEmpty(attrs["product"], attrs["Name"]),
-		GeneReportURL:       lemnaGeneReportURL(release.RootDir, firstNonEmpty(parent, id), gff.SeqID, gff.Start, gff.End),
 		SequenceHeaderLabel: species.DisplayLabel(),
 		SequenceID:          sequenceID,
 		ExtraColumns:        extra,
@@ -2577,74 +2575,6 @@ func officialCloneByRootDir(rootDir string) (officialClone, bool) {
 		}
 	}
 	return officialClone{}, false
-}
-
-func lemnaAssemblyName(rootDir string) string {
-	rootDir = strings.TrimSpace(rootDir)
-	clone, ok := officialCloneByRootDir(rootDir)
-	if !ok {
-		return ""
-	}
-	switch rootDir {
-	case "Sp_polyrhiza_9509":
-		return "Sp9509d"
-	case "Le_gibba_7742a":
-		return "Lg7742Ab"
-	case "Le_japonica_7182":
-		return "Lj7182a"
-	case "Le_japonica_8627":
-		return "Lj8627b"
-	case "Le_japonica_9421":
-		return "Lj9421a"
-	case "Le_minor_7210":
-		return "Lm7210a"
-	case "Le_minor_9252":
-		return "Lm9252a"
-	case "Le_turionifera_9434":
-		return "Lt9434a"
-	case "Wo_australiana_8730":
-		return "Wa8730c"
-	}
-	prefix := ""
-	switch clone.ShortName {
-	case "Sp. polyrhiza":
-		prefix = "Sp"
-	case "Le. gibba":
-		prefix = "Lg"
-	case "Le. japonica":
-		prefix = "Lj"
-	case "Le. minor":
-		prefix = "Lm"
-	case "Le. turionifera":
-		prefix = "Lt"
-	case "Wo. australiana":
-		prefix = "Wa"
-	}
-	if prefix == "" || clone.CloneID == "" {
-		return ""
-	}
-	return prefix + clone.CloneID
-}
-
-func lemnaGeneReportURL(rootDir string, geneID string, seqID string, start string, end string) string {
-	rootDir = strings.TrimSpace(rootDir)
-	geneID = strings.TrimSpace(geneID)
-	if rootDir == "" || geneID == "" {
-		return ""
-	}
-	values := url.Values{}
-	values.Set("config", baseURL+"/jbrowse2/config.json")
-	if assembly := lemnaAssemblyName(rootDir); assembly != "" {
-		values.Set("assembly", assembly)
-	}
-	if strings.TrimSpace(seqID) != "" && strings.TrimSpace(start) != "" && strings.TrimSpace(end) != "" {
-		values.Set("loc", fmt.Sprintf("%s:%s..%s", strings.TrimSpace(seqID), strings.TrimSpace(start), strings.TrimSpace(end)))
-	}
-	values.Set("highlight", geneID)
-	values.Set("filter", geneID)
-	values.Set("phgo_root", rootDir)
-	values.Set("phgo_gene", geneID)
-	return strings.TrimRight(baseURL, "/") + "/jbrowse2/?" + values.Encode()
 }
 
 func isSearchableFeatureType(featureType string) bool {
