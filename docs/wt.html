@@ -52,8 +52,7 @@
 									<fieldset style="padding: 2">
 									<legend>Start</legend>
 									<label for="input-file">Import File (Any Text File):</label>
-									<input id="input-file" type="file" name="file" size="20">
-									<span id="file-name">No file selected.</span>
+									<input id="input-file" type="file" name="file" size="20" multiple>
 									<fieldset id="tool-options" style="padding: 2" disabled>
 									<legend>Options</legend>
 									Select Task:
@@ -106,7 +105,6 @@
 (() => {
   const form = document.getElementById('header-tool');
   const fileInput = document.getElementById('input-file');
-  const fileName = document.getElementById('file-name');
   const options = document.getElementById('tool-options');
   const preview = document.getElementById('preview');
   const suffixTask = document.getElementById('task-suffix');
@@ -119,8 +117,9 @@
   const customTargetRow = document.getElementById('custom-target-row');
   const suffixInput = document.getElementById('custom-suffix');
 
-  let selectedFile = null;
-  let sourceText = '';
+  let selectedFiles = [];
+  let previewSourceText = '';
+  let selectionVersion = 0;
 
   form.addEventListener('submit', (event) => event.preventDefault());
 
@@ -141,7 +140,7 @@
     customTargetRow.hidden = targetFormat.value !== 'custom';
   }
 
-  function transformFasta() {
+  function transformFasta(sourceText) {
     if (!suffixTask.checked) {
       return null;
     }
@@ -160,10 +159,10 @@
   }
 
   function refreshPreview() {
-    if (!selectedFile || !requireImplementedTask()) {
+    if (selectedFiles.length === 0 || !requireImplementedTask()) {
       return;
     }
-    preview.value = transformFasta();
+    preview.value = transformFasta(previewSourceText);
     resizePreview();
   }
 
@@ -173,21 +172,71 @@
     return `${base || 'fasta'}.fasta`;
   }
 
+  function uniqueExportName(name, usedNames) {
+    const suggestedName = exportName(name);
+    if (!usedNames.has(suggestedName)) {
+      usedNames.add(suggestedName);
+      return suggestedName;
+    }
+
+    const dot = suggestedName.lastIndexOf('.');
+    const base = suggestedName.slice(0, dot);
+    const extension = suggestedName.slice(dot);
+    let index = 2;
+    let candidate = `${base} (${index})${extension}`;
+    while (usedNames.has(candidate)) {
+      index += 1;
+      candidate = `${base} (${index})${extension}`;
+    }
+    usedNames.add(candidate);
+    return candidate;
+  }
+
+  function exportItems() {
+    const usedNames = new Set();
+    return selectedFiles.map((file) => ({ file, name: uniqueExportName(file.name, usedNames) }));
+  }
+
+  async function outputForFile(file) {
+    const sourceText = file === selectedFiles[0] ? previewSourceText : await file.text();
+    return transformFasta(sourceText);
+  }
+
+  async function mapWithConcurrency(items, action) {
+    const workerCount = Math.min(8, Math.max(2, navigator.hardwareConcurrency || 4), items.length);
+    let nextIndex = 0;
+    const workers = Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const item = items[nextIndex];
+        nextIndex += 1;
+        await action(item);
+      }
+    });
+    await Promise.all(workers);
+  }
+
+  function downloadFile(name, output) {
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob([output], { type: 'text/plain;charset=utf-8' }));
+    link.download = name;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 0);
+  }
+
   async function exportFasta() {
-    if (!selectedFile || !requireImplementedTask()) {
+    if (selectedFiles.length === 0 || !requireImplementedTask()) {
       return;
     }
 
-    const output = transformFasta();
-    const suggestedName = exportName(selectedFile.name);
-    if ('showSaveFilePicker' in window) {
+    const items = exportItems();
+    if (items.length === 1 && 'showSaveFilePicker' in window) {
       try {
         const handle = await window.showSaveFilePicker({
-          suggestedName,
+          suggestedName: items[0].name,
           types: [{ description: 'FASTA file', accept: { 'text/plain': ['.fasta'] } }]
         });
         const writable = await handle.createWritable();
-        await writable.write(output);
+        await writable.write(await outputForFile(items[0].file));
         await writable.close();
       } catch (error) {
         if (error.name !== 'AbortError') {
@@ -197,18 +246,32 @@
       return;
     }
 
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(new Blob([output], { type: 'text/plain;charset=utf-8' }));
-    link.download = suggestedName;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(link.href), 0);
+    if (items.length > 1 && 'showDirectoryPicker' in window) {
+      try {
+        const directory = await window.showDirectoryPicker({ mode: 'readwrite' });
+        await mapWithConcurrency(items, async (item) => {
+          const handle = await directory.getFileHandle(item.name, { create: true });
+          const writable = await handle.createWritable();
+          await writable.write(await outputForFile(item.file));
+          await writable.close();
+        });
+      } catch (error) {
+        if (error.name !== 'AbortError') {
+          window.alert(`Unable to export the FASTA files: ${error.message}`);
+        }
+      }
+      return;
+    }
+
+    const outputs = await Promise.all(items.map(async (item) => ({ name: item.name, output: await outputForFile(item.file) })));
+    outputs.forEach((item) => downloadFile(item.name, item.output));
   }
 
   function resetTool() {
     form.reset();
-    selectedFile = null;
-    sourceText = '';
-    fileName.textContent = 'No file selected.';
+    selectedFiles = [];
+    previewSourceText = '';
+    selectionVersion += 1;
     options.disabled = true;
     preview.disabled = true;
     preview.value = '';
@@ -218,25 +281,26 @@
   }
 
   fileInput.addEventListener('change', async () => {
-    const [file] = fileInput.files;
-    if (!file) {
+    const files = Array.from(fileInput.files);
+    if (files.length === 0) {
       resetTool();
       return;
     }
 
-    selectedFile = file;
+    selectedFiles = files;
+    const currentSelectionVersion = selectionVersion + 1;
+    selectionVersion = currentSelectionVersion;
     try {
-      sourceText = await file.text();
-      if (selectedFile !== file) {
+      previewSourceText = await files[0].text();
+      if (selectionVersion !== currentSelectionVersion) {
         return;
       }
-      fileName.textContent = file.name;
       options.disabled = false;
       preview.disabled = false;
       preview.value = '';
       resizePreview();
     } catch (error) {
-      if (selectedFile === file) {
+      if (selectionVersion === currentSelectionVersion) {
         resetTool();
         window.alert(`Unable to read the selected file: ${error.message}`);
       }

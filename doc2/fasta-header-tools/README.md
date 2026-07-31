@@ -11,7 +11,7 @@ Read this document before maintaining or extending that page.
 
 ## Current behavior
 
-- A local text/FASTA file is required before tool controls and preview become interactive.
+- One or more local text/FASTA files are required before tool controls and preview become interactive. The native file control is the only file-name display.
 - Task selection toggles between Batch Add Suffix and the reserved Convert Format UI.
 - The format selectors currently expose only `PHGO Header` and `Custom Format`. Conversion is deliberately not implemented and reports that status instead of altering data.
 - Reset beside Custom Suffix clears only the suffix. The final Reset clears the selected file, options, preview, and all form fields.
@@ -26,8 +26,8 @@ Read this document before maintaining or extending that page.
 
 ## Export contract and browser constraint
 
-- Exports are always offered as `.fasta`, using the source file stem as the suggested filename.
-- Browsers with the File System Access API show their native save dialog. Other browsers use the standard download mechanism.
+- Exports are always offered as `.fasta`, using each source file stem as the suggested filename. Preview always uses only the first selected file; export processes every selected file.
+- With one file, browsers with the File System Access API show their native save dialog. With multiple files, those browsers show a native target-folder picker and write each output there concurrently, using ` (2)`, ` (3)`, and so on for duplicate filenames. Other browsers use the standard multiple-download fallback.
 - Static browser pages can read a file chosen by the user but cannot learn its absolute source path or command the save dialog to open in that source directory. This is enforced by browser security; do not add fake path logic or an upload service to bypass it.
 
 ## Maintenance checklist
@@ -35,5 +35,5 @@ Read this document before maintaining or extending that page.
 1. Read this document and the FASTA tool entry in `AGENT.md` before changing `docs/wt.html`.
 2. Keep the site static and dependency-free.
 3. Test both a CRLF and an LF FASTA with blank lines and semicolon comments. Confirm only `>` header lines gain the suffix.
-4. Test task visibility, custom-format visibility, both reset controls, explicit preview refresh, and export filename suggestion.
+4. Test task visibility, custom-format visibility, both reset controls, explicit preview refresh, multi-file first-file preview, duplicate export names, and both export paths.
 5. Update this document and the `AGENT.md` entry when behavior, browser support, or the tool boundary changes.
