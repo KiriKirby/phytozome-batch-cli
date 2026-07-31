@@ -669,6 +669,7 @@ This file tracks the intended shape of `phytozome GO` and its release packaging,
 
 ## Documentation and release standards
 
+- The static FASTA Header Tools page at `docs/wt.html` is maintained under the contract in `doc2/fasta-header-tools/README.md`. Before changing that page, read this entry and the full FASTA Header Tools document library. Keep the page static and preserve its inherited FrontPage visual layout; modernization belongs only in the internal HTML semantics and browser-side behavior. Update that library whenever its UI contract, FASTA transformation rules, browser/export limits, or test coverage changes.
 - `README.md` must function as a real operator guide, not a short feature list.
 - The README should explain the product through step-by-step usage, realistic examples, and user-facing outcomes.
 - Document both `phytozome` and `lemna` workflows in plain language, including:
