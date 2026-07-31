@@ -7,6 +7,7 @@ Read this document before maintaining or extending that page.
 
 - The tool runs entirely in the browser. It has no server endpoint, build step, framework, analytics, or external runtime dependency. Its local `docs/wt.js` implementation is ES5 so IE11 can run the core workflow. Browsers without JavaScript or the standard local File APIs are unsupported and receive a native browser alert.
 - Preserve the inherited FrontPage table layout, backgrounds, fieldsets, native controls, and page-level visual style. The document and page-header structure intentionally match `docs/index.html`, including its legacy non-doctype compatibility mode. Modernization is limited to internal HTML semantics, JavaScript behavior, accessibility labels, and safety fixes.
+- The header is a locked compatibility boundary, not a tool-design surface. `docs/wt.html` must not contain a `<!doctype>` and must render with `document.compatMode === "BackCompat"`, exactly as `docs/index.html` does. Its outer page table remains `760` pixels wide; the banner row remains `160` pixels high with its nested `150`-pixel table; the navigation row remains `50` pixels high. The header's table/body markup and styling must stay aligned with `docs/index.html`; only the selected navigation item is different (`TOOLS`).
 - The tool page must not retain `webbot`, ActiveX, FrontPage FileUpload/SaveResults, or `_derived` form-component markup. Those legacy component markers can trigger IE security prompts even when no tool behavior uses them.
 - `docs/` is the website root, not a design-document location. Keep maintenance documentation for this tool in this directory.
 
@@ -39,3 +40,4 @@ Read this document before maintaining or extending that page.
 3. Test both a CRLF and an LF FASTA with blank lines and semicolon comments. Confirm only `>` header lines gain the suffix.
 4. Test task visibility, custom-format visibility, both reset controls, explicit preview refresh, multi-file first-file preview, duplicate export names, and both export paths.
 5. Update this document and the `AGENT.md` entry when behavior, browser support, or the tool boundary changes.
+6. Before publishing a `wt.html` edit, run `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-wt-header.ps1`. Also open `index.html` and `wt.html` from the same local server and confirm equal `compatMode`, outer page width, banner height, and navigation height. Keep new behavior in `docs/wt.js` whenever possible so the locked header is not touched.

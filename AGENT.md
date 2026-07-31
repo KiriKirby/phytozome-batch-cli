@@ -670,6 +670,8 @@ This file tracks the intended shape of `phytozome GO` and its release packaging,
 ## Documentation and release standards
 
 - The static FASTA Header Tools page at `docs/wt.html` is maintained under the contract in `doc2/fasta-header-tools/README.md`. Before changing that page, read this entry and the full FASTA Header Tools document library. Keep the page static and preserve its inherited FrontPage visual layout; modernization belongs only in the internal HTML semantics and browser-side behavior. Update that library whenever its UI contract, FASTA transformation rules, browser/export limits, or test coverage changes.
+  - The `docs/wt.html` page header is a locked compatibility boundary: it must retain the same legacy table structure and visual geometry as `docs/index.html`. In particular, do not add a `<!doctype>` (the page must render as `document.compatMode === "BackCompat"`), and preserve the outer `760`-pixel table, `160`-pixel banner, nested `150`-pixel banner table, and `50`-pixel navigation row. Only the navigation selection may differ, with `TOOLS` rendered as the selected item.
+  - Keep all tool behavior in `docs/wt.js`; do not change the shared header/body layout merely to implement or refactor tool behavior. Before publishing any `wt.html` change, run `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-wt-header.ps1` and compare the two pages in a browser: compatibility mode, outer page width, banner height, and navigation height must match.
 - `README.md` must function as a real operator guide, not a short feature list.
 - The README should explain the product through step-by-step usage, realistic examples, and user-facing outcomes.
 - Document both `phytozome` and `lemna` workflows in plain language, including:
