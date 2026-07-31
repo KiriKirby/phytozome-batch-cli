@@ -1,10 +1,9 @@
-<!doctype html>
-<html lang="en">
+<html>
 <head>
-<meta charset="utf-8">
-<title>Phytozome~goo!</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 <link rel="icon" type="image/x-icon" href="favicon.ico">
 <link rel="shortcut icon" href="favicon.ico">
+<title>Phytozome~goo!</title>
 <style>
   #preview {
     box-sizing: border-box;
@@ -18,7 +17,7 @@
 </style>
 </head>
 
-<body background="images/3.jpg" link="#275317" vlink="#275317" alink="#275317" text="#000000">
+<body background="images/3.jpg" link="#275317" vlink="#275317" alink="#275317">
 
 <div align="center">
 	<table border="0" width="760" cellspacing="0" cellpadding="0" bgcolor="#FFFFFF">
@@ -27,16 +26,22 @@
 			<div align="center">
 				<table border="0" width="100%" height="100%" cellspacing="0" cellpadding="0">
 					<tr>
-						<td align="left" valign="top" height="160" background="images/0.jpg" style="border-bottom: 10px solid #FFC000;">
+						<td align="left" valign="top" height="160" background="images/0.jpg" style="border-bottom: 10px solid #FFC000; ">
 						<table border="0" width="100%" height="150" cellspacing="0" cellpadding="0">
 							<tr>
-								<td align="left" valign="top"><a href="index.html"><img border="0" src="images/2.png" width="598" height="150" alt="Phytozome goo!"></a></td>
+								<td align="left" valign="top">
+								<a href="index.html">
+								<img border="0" src="images/2.png" width="598" height="150"></a></td>
 							</tr>
 						</table>
 						</td>
 					</tr>
 					<tr>
-						<td align="left" width="100%" height="50" bgcolor="#D9F2D0"><b><font size="5" color="#275317">&nbsp;<nobr><a href="index.html" style="text-decoration: none;">HOME</a></nobr>&nbsp;|&nbsp;<nobr><a href="dc.html" style="text-decoration: none;">DOCS</a></nobr>&nbsp;|&nbsp;<nobr><a href="cm.html" style="text-decoration: none;">CONTACT</a></nobr>&nbsp;|&nbsp;<nobr>TOOLS</nobr></font></b></td>
+						<td align="left" width="100%" height="50" bgcolor="#D9F2D0">
+						<b>
+						<font size="5" color="#275317">
+						&nbsp;
+						<nobr><A HREF="index.html" TARGET="" STYLE="{text-decoration: none;}">HOME</A></nobr>&nbsp;|&nbsp;<nobr><A HREF="dc.html" TARGET="" STYLE="{text-decoration: none;}">DOCS</A></nobr>&nbsp;|&nbsp;<nobr><A HREF="cm.html" TARGET="" STYLE="{text-decoration: none;}">CONTACT</A></nobr>&nbsp;|&nbsp;<nobr>TOOLS</nobr></font></b></td>
 					</tr>
 					<tr>
 						<td align="left" valign="top">
@@ -83,6 +88,7 @@
 								<hr>
 								<p align="center"><strong style="font-weight: 400">Open source under CPAL-1.0 - Source code available in the page source</strong><br>
 								<strong style="font-weight: 400">Copyright (c) 2026 Wang Shuyang (KiriKirby)</strong></p>
+								<p align="center">&nbsp;</p>
 								</td>
 								<td width="20">&nbsp;</td>
 							</tr>
@@ -101,225 +107,6 @@
 	</table>
 </div>
 
-<script>
-(() => {
-  const form = document.getElementById('header-tool');
-  const fileInput = document.getElementById('input-file');
-  const options = document.getElementById('tool-options');
-  const preview = document.getElementById('preview');
-  const suffixTask = document.getElementById('task-suffix');
-  const convertTask = document.getElementById('task-convert');
-  const suffixOptions = document.getElementById('suffix-options');
-  const conversionOptions = document.getElementById('conversion-options');
-  const sourceFormat = document.getElementById('source-format');
-  const targetFormat = document.getElementById('target-format');
-  const customSourceRow = document.getElementById('custom-source-row');
-  const customTargetRow = document.getElementById('custom-target-row');
-  const suffixInput = document.getElementById('custom-suffix');
-
-  let selectedFiles = [];
-  let previewSourceText = '';
-  let selectionVersion = 0;
-
-  form.addEventListener('submit', (event) => event.preventDefault());
-
-  function resizePreview() {
-    const lineHeight = parseFloat(getComputedStyle(preview).lineHeight) || 16;
-    const lineCount = Math.max(20, Math.min(100, preview.value.split(/\r\n|\r|\n/).length));
-    preview.style.height = `${Math.ceil(lineHeight * lineCount + 2)}px`;
-  }
-
-  function updateTaskVisibility() {
-    const suffixMode = suffixTask.checked;
-    suffixOptions.hidden = !suffixMode;
-    conversionOptions.hidden = suffixMode;
-  }
-
-  function updateCustomFormatVisibility() {
-    customSourceRow.hidden = sourceFormat.value !== 'custom';
-    customTargetRow.hidden = targetFormat.value !== 'custom';
-  }
-
-  function transformFasta(sourceText) {
-    if (!suffixTask.checked) {
-      return null;
-    }
-
-    const suffix = suffixInput.value;
-    // FASTA headers are the only lines beginning with '>'; comments and sequence lines remain byte-for-byte intact.
-    return sourceText.replace(/^(\uFEFF?\s*>[^\r\n]*)(?=\r\n|\r|\n|$)/gm, (header) => `${header}${suffix}`);
-  }
-
-  function requireImplementedTask() {
-    if (!suffixTask.checked) {
-      window.alert('Format conversion is not available yet.');
-      return false;
-    }
-    return true;
-  }
-
-  function refreshPreview() {
-    if (selectedFiles.length === 0 || !requireImplementedTask()) {
-      return;
-    }
-    preview.value = transformFasta(previewSourceText);
-    resizePreview();
-  }
-
-  function exportName(name) {
-    const lastDot = name.lastIndexOf('.');
-    const base = lastDot > 0 ? name.slice(0, lastDot) : name;
-    return `${base || 'fasta'}.fasta`;
-  }
-
-  function uniqueExportName(name, usedNames) {
-    const suggestedName = exportName(name);
-    if (!usedNames.has(suggestedName)) {
-      usedNames.add(suggestedName);
-      return suggestedName;
-    }
-
-    const dot = suggestedName.lastIndexOf('.');
-    const base = suggestedName.slice(0, dot);
-    const extension = suggestedName.slice(dot);
-    let index = 2;
-    let candidate = `${base} (${index})${extension}`;
-    while (usedNames.has(candidate)) {
-      index += 1;
-      candidate = `${base} (${index})${extension}`;
-    }
-    usedNames.add(candidate);
-    return candidate;
-  }
-
-  function exportItems() {
-    const usedNames = new Set();
-    return selectedFiles.map((file) => ({ file, name: uniqueExportName(file.name, usedNames) }));
-  }
-
-  async function outputForFile(file) {
-    const sourceText = file === selectedFiles[0] ? previewSourceText : await file.text();
-    return transformFasta(sourceText);
-  }
-
-  async function mapWithConcurrency(items, action) {
-    const workerCount = Math.min(8, Math.max(2, navigator.hardwareConcurrency || 4), items.length);
-    let nextIndex = 0;
-    const workers = Array.from({ length: workerCount }, async () => {
-      while (nextIndex < items.length) {
-        const item = items[nextIndex];
-        nextIndex += 1;
-        await action(item);
-      }
-    });
-    await Promise.all(workers);
-  }
-
-  function downloadFile(name, output) {
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(new Blob([output], { type: 'text/plain;charset=utf-8' }));
-    link.download = name;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(link.href), 0);
-  }
-
-  async function exportFasta() {
-    if (selectedFiles.length === 0 || !requireImplementedTask()) {
-      return;
-    }
-
-    const items = exportItems();
-    if (items.length === 1 && 'showSaveFilePicker' in window) {
-      try {
-        const handle = await window.showSaveFilePicker({
-          suggestedName: items[0].name,
-          types: [{ description: 'FASTA file', accept: { 'text/plain': ['.fasta'] } }]
-        });
-        const writable = await handle.createWritable();
-        await writable.write(await outputForFile(items[0].file));
-        await writable.close();
-      } catch (error) {
-        if (error.name !== 'AbortError') {
-          window.alert(`Unable to export the FASTA file: ${error.message}`);
-        }
-      }
-      return;
-    }
-
-    if (items.length > 1 && 'showDirectoryPicker' in window) {
-      try {
-        const directory = await window.showDirectoryPicker({ mode: 'readwrite' });
-        await mapWithConcurrency(items, async (item) => {
-          const handle = await directory.getFileHandle(item.name, { create: true });
-          const writable = await handle.createWritable();
-          await writable.write(await outputForFile(item.file));
-          await writable.close();
-        });
-      } catch (error) {
-        if (error.name !== 'AbortError') {
-          window.alert(`Unable to export the FASTA files: ${error.message}`);
-        }
-      }
-      return;
-    }
-
-    const outputs = await Promise.all(items.map(async (item) => ({ name: item.name, output: await outputForFile(item.file) })));
-    outputs.forEach((item) => downloadFile(item.name, item.output));
-  }
-
-  function resetTool() {
-    form.reset();
-    selectedFiles = [];
-    previewSourceText = '';
-    selectionVersion += 1;
-    options.disabled = true;
-    preview.disabled = true;
-    preview.value = '';
-    updateTaskVisibility();
-    updateCustomFormatVisibility();
-    resizePreview();
-  }
-
-  fileInput.addEventListener('change', async () => {
-    const files = Array.from(fileInput.files);
-    if (files.length === 0) {
-      resetTool();
-      return;
-    }
-
-    selectedFiles = files;
-    const currentSelectionVersion = selectionVersion + 1;
-    selectionVersion = currentSelectionVersion;
-    try {
-      previewSourceText = await files[0].text();
-      if (selectionVersion !== currentSelectionVersion) {
-        return;
-      }
-      options.disabled = false;
-      preview.disabled = false;
-      preview.value = '';
-      resizePreview();
-    } catch (error) {
-      if (selectionVersion === currentSelectionVersion) {
-        resetTool();
-        window.alert(`Unable to read the selected file: ${error.message}`);
-      }
-    }
-  });
-
-  suffixTask.addEventListener('change', updateTaskVisibility);
-  convertTask.addEventListener('change', updateTaskVisibility);
-  sourceFormat.addEventListener('change', updateCustomFormatVisibility);
-  targetFormat.addEventListener('change', updateCustomFormatVisibility);
-  document.getElementById('reset-suffix').addEventListener('click', () => { suffixInput.value = ''; });
-  document.getElementById('refresh-preview').addEventListener('click', refreshPreview);
-  document.getElementById('export-file').addEventListener('click', exportFasta);
-  document.getElementById('reset-tool').addEventListener('click', resetTool);
-
-  updateTaskVisibility();
-  updateCustomFormatVisibility();
-  resizePreview();
-})();
-</script>
+<script src="wt.js"></script>
 </body>
 </html>

@@ -5,13 +5,14 @@ Read this document before maintaining or extending that page.
 
 ## Product boundary
 
-- The tool runs entirely in the browser. It has no server endpoint, build step, framework, analytics, or external runtime dependency.
-- Preserve the inherited FrontPage table layout, backgrounds, fieldsets, native controls, and page-level visual style. Modernization is limited to internal HTML semantics, JavaScript behavior, accessibility labels, and safety fixes.
+- The tool runs entirely in the browser. It has no server endpoint, build step, framework, analytics, or external runtime dependency. Its local `docs/wt.js` implementation is ES5 so IE11 can run the core workflow. Browsers without JavaScript or the standard local File APIs are unsupported and receive a native browser alert.
+- Preserve the inherited FrontPage table layout, backgrounds, fieldsets, native controls, and page-level visual style. The document and page-header structure intentionally match `docs/index.html`, including its legacy non-doctype compatibility mode. Modernization is limited to internal HTML semantics, JavaScript behavior, accessibility labels, and safety fixes.
+- The tool page must not retain `webbot`, ActiveX, FrontPage FileUpload/SaveResults, or `_derived` form-component markup. Those legacy component markers can trigger IE security prompts even when no tool behavior uses them.
 - `docs/` is the website root, not a design-document location. Keep maintenance documentation for this tool in this directory.
 
 ## Current behavior
 
-- One or more local text/FASTA files are required before tool controls and preview become interactive. The native file control is the only file-name display.
+- One or more local text/FASTA files are required before tool controls and preview become interactive. The visible file control remains native. Browsers with the File System Access API obtain file handles through its native picker so exports retain the source-folder context. IE11 and other legacy browsers use the normal file control and `FileReader`. The file control is the only file-name display.
 - Task selection toggles between Batch Add Suffix and the reserved Convert Format UI.
 - The format selectors currently expose only `PHGO Header` and `Custom Format`. Conversion is deliberately not implemented and reports that status instead of altering data.
 - Reset beside Custom Suffix clears only the suffix. The final Reset clears the selected file, options, preview, and all form fields.
@@ -27,8 +28,9 @@ Read this document before maintaining or extending that page.
 ## Export contract and browser constraint
 
 - Exports are always offered as `.fasta`, using each source file stem as the suggested filename. Preview always uses only the first selected file; export processes every selected file.
-- With one file, browsers with the File System Access API show their native save dialog. With multiple files, those browsers show a native target-folder picker and write each output there concurrently, using ` (2)`, ` (3)`, and so on for duplicate filenames. Other browsers use the standard multiple-download fallback.
-- Static browser pages can read a file chosen by the user but cannot learn its absolute source path or command the save dialog to open in that source directory. This is enforced by browser security; do not add fake path logic or an upload service to bypass it.
+- In Chrome and Edge, one-file save dialogs start in the source file's folder. With multiple files, the native target-folder picker starts in the first selected file's folder, then writes every output there concurrently, using ` (2)`, ` (3)`, and so on for duplicate filenames.
+- Firefox and Safari do not expose file-handle and folder-writing APIs, so they retain the standard single or multiple-download fallback.
+- IE11 uses its `msSaveOrOpenBlob` native save dialog for each selected output file. IE11 cannot receive source-folder handles from a file input, so it cannot default the dialog to the source directory.
 
 ## Maintenance checklist
 
