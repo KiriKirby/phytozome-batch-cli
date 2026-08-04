@@ -2,6 +2,8 @@ package phylo
 
 import (
 	"strings"
+
+	"github.com/KiriKirby/phytozome-go/internal/fastautil"
 )
 
 func InputFASTA(records []InputRecord) string {
@@ -24,8 +26,7 @@ func inputFASTA(records []InputRecord, normalize func(string) string) string {
 		if normalize != nil {
 			sequence = normalize(sequence)
 		}
-		b.WriteString(">")
-		b.WriteString(record.TaxonID)
+		b.WriteString(fastautil.NormalizeGeneratedHeader(record.TaxonID))
 		b.WriteByte('\n')
 		writeWrappedSequence(&b, sequence, 80)
 	}

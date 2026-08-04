@@ -12,12 +12,14 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/KiriKirby/phytozome-go/internal/lemna"
 	"github.com/KiriKirby/phytozome-go/internal/model"
 	"github.com/KiriKirby/phytozome-go/internal/ncbi"
 	"github.com/KiriKirby/phytozome-go/internal/phytozome"
+	"github.com/KiriKirby/phytozome-go/internal/plaza"
 	"github.com/KiriKirby/phytozome-go/internal/prompt"
 	"github.com/KiriKirby/phytozome-go/internal/source"
 	"github.com/KiriKirby/phytozome-go/internal/tair"
@@ -220,6 +222,21 @@ func (w *BlastWizard) runMainKeywordAction(ctx context.Context, state tui.MainIn
 	var preloadedGroups []model.KeywordSearchGroup
 	var preloaded bool
 	var stateChanged bool
+	priorityDatabase := strings.ToLower(strings.TrimSpace(state.Keyword.GeneLocusPriorityDatabase))
+	if priorityDatabase == "" && state.Keyword.PLAZAGeneLocusPriority {
+		priorityDatabase = tui.GeneLocusPriorityPLAZA
+	}
+	if _, isNCBI := src.(*ncbi.Client); isNCBI && (priorityDatabase == tui.GeneLocusPriorityNCBI || priorityDatabase == tui.GeneLocusPriorityPLAZA) && ncbi.SearchTypeByID(state.Keyword.SearchTypeID).ShowsGeneLocus {
+		preloadedGroups, err = w.searchMainKeywordGroupsWithGeneLocusPriority(ctx, selected, keywords, manualGeneLoci, wide, priorityDatabase)
+		if err != nil {
+			return err
+		}
+		preloadedGroups, err = w.applyNCBIReplacementChoicesWithProgress(ctx, selected, preloadedGroups)
+		if err != nil {
+			return err
+		}
+		preloaded = true
+	}
 	if len(needsLabelAuto) > 0 {
 		choice, err := w.confirmMainAutoIdentify("Symbol name", true, "Some rows have a search term but no Symbol name. Auto identify the blank Symbol name cells before search?", true)
 		if err != nil {
@@ -229,11 +246,13 @@ func (w *BlastWizard) runMainKeywordAction(ctx context.Context, state tui.MainIn
 		case mainAutoIdentifyClose:
 			return prompt.ErrBackToQueryInput
 		case mainAutoIdentifyAuto:
-			preloadedGroups, err = w.loadMainKeywordGroupsForAutoIdentify(ctx, selected, keywords, wide)
-			if err != nil {
-				return err
+			if !preloaded {
+				preloadedGroups, err = w.loadMainKeywordGroupsForAutoIdentify(ctx, selected, keywords, wide)
+				if err != nil {
+					return err
+				}
+				preloaded = true
 			}
-			preloaded = true
 			identifications, err := w.autoIdentifyKeywordLabelsWithProgress(ctx, selected, preloadedGroups)
 			if err != nil {
 				return err
@@ -269,7 +288,7 @@ func (w *BlastWizard) runMainKeywordAction(ctx context.Context, state tui.MainIn
 		state.ActiveTab = "keyword"
 		return mainInterfaceStateUpdate{state: state}
 	}
-	return w.executeMainKeywordRows(ctx, selected, keywords, manualLabels, manualGeneLoci, wide, false, false)
+	return w.executeMainKeywordRows(ctx, selected, keywords, manualLabels, manualGeneLoci, wide, false, false, preloadedGroups)
 }
 
 func (w *BlastWizard) loadMainKeywordGroupsForAutoIdentify(ctx context.Context, selected model.SpeciesCandidate, keywords []string, wide bool) ([]model.KeywordSearchGroup, error) {
@@ -280,16 +299,127 @@ func (w *BlastWizard) loadMainKeywordGroupsForAutoIdentify(ctx context.Context, 
 	return w.applyNCBIReplacementChoicesWithProgress(ctx, selected, groups)
 }
 
-func (w *BlastWizard) executeMainKeywordRows(ctx context.Context, selected model.SpeciesCandidate, keywords []string, manualLabels []string, manualGeneLoci []string, wide bool, autoIdentifyLabels bool, autoIdentifyGeneLoci bool) error {
+func (w *BlastWizard) searchMainKeywordGroupsWithPLAZAPriority(ctx context.Context, selected model.SpeciesCandidate, keywords []string, geneLoci []string, wide bool) ([]model.KeywordSearchGroup, error) {
+	return w.searchMainKeywordGroupsWithGeneLocusPriority(ctx, selected, keywords, geneLoci, wide, tui.GeneLocusPriorityPLAZA)
+}
+
+func (w *BlastWizard) searchMainKeywordGroupsWithGeneLocusPriority(ctx context.Context, selected model.SpeciesCandidate, keywords []string, geneLoci []string, wide bool, priorityDatabase string) ([]model.KeywordSearchGroup, error) {
+	priorityDatabase = strings.ToLower(strings.TrimSpace(priorityDatabase))
+	if priorityDatabase != tui.GeneLocusPriorityNCBI && priorityDatabase != tui.GeneLocusPriorityPLAZA {
+		return nil, fmt.Errorf("unsupported Gene locus priority database %q", priorityDatabase)
+	}
+	databaseLabel := "NCBI"
+	if priorityDatabase == tui.GeneLocusPriorityPLAZA {
+		databaseLabel = "PLAZA"
+	}
+	return tui.RunProgressTaskValueContext(tui.TaskPage{
+		Path:        w.tuiPath("Keyword", "Searching"),
+		Title:       "Searching " + databaseLabel + " and NCBI keyword terms",
+		Description: "Using " + databaseLabel + " Gene locus priority where a locus is available.",
+		Initial:     "Searching " + databaseLabel + " and NCBI keyword terms...",
+		Total:       len(keywords),
+		CancelError: prompt.ErrBackToQueryInput,
+	}, func(taskCtx context.Context, update func(int, string)) ([]model.KeywordSearchGroup, error) {
+		return w.searchMainKeywordGroupsWithGeneLocusPriorityProgress(mergeContexts(ctx, taskCtx), selected, keywords, geneLoci, wide, priorityDatabase, update)
+	})
+}
+
+func (w *BlastWizard) searchMainKeywordGroupsWithPLAZAPriorityProgress(ctx context.Context, selected model.SpeciesCandidate, keywords []string, geneLoci []string, wide bool, update func(int, string)) ([]model.KeywordSearchGroup, error) {
+	return w.searchMainKeywordGroupsWithGeneLocusPriorityProgress(ctx, selected, keywords, geneLoci, wide, tui.GeneLocusPriorityPLAZA, update)
+}
+
+func (w *BlastWizard) searchMainKeywordGroupsWithGeneLocusPriorityProgress(ctx context.Context, selected model.SpeciesCandidate, keywords []string, geneLoci []string, wide bool, priorityDatabase string, update func(int, string)) ([]model.KeywordSearchGroup, error) {
+	if len(keywords) != len(geneLoci) {
+		return nil, fmt.Errorf("Gene locus values (%d) do not match keyword rows (%d)", len(geneLoci), len(keywords))
+	}
+	progress := safeProgress(update)
+	results := make([]keywordSearchResult, len(keywords))
+	var lookup *plaza.Client
+	if priorityDatabase == tui.GeneLocusPriorityPLAZA {
+		lookup = plaza.NewClient(w.httpClient)
+	}
+	workers := keywordSearchWorkerCountForSource(w.source, selected, len(keywords))
+	if workers < 1 {
+		workers = 1
+	}
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	var progressMu sync.Mutex
+	completed := 0
+	advance := func() {
+		progressMu.Lock()
+		completed++
+		current := completed
+		progressMu.Unlock()
+		progress(current, fmt.Sprintf("Searched keyword terms... %d/%d", current, len(keywords)))
+	}
+	for worker := 0; worker < workers; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range jobs {
+				started := time.Now()
+				var rows []model.KeywordResultRow
+				var err error
+				if locus := strings.TrimSpace(geneLoci[index]); locus != "" {
+					// Priority lookup failures are deliberately non-fatal: the original
+					// search term remains the documented per-row fallback.
+					if priorityDatabase == tui.GeneLocusPriorityPLAZA && lookup != nil {
+						rows, _ = lookup.SearchGeneLocus(ctx, locus)
+					} else if priorityDatabase == tui.GeneLocusPriorityNCBI {
+						rows, _ = w.searchKeywordRowsWithTimeout(ctx, selected, locus, wide)
+						if len(rows) > 0 {
+							for rowIndex := range rows {
+								rows[rowIndex].SearchType = "NCBI Gene locus priority"
+							}
+						}
+					}
+				}
+				if len(rows) == 0 {
+					rows, err = w.searchKeywordRowsWithTimeout(ctx, selected, keywords[index], wide)
+				}
+				if err == nil && len(rows) == 0 {
+					err = keywordNoRowsError{Keyword: keywords[index]}
+				}
+				results[index] = keywordSearchResult{index: index, started: started, ended: time.Now(), rows: rows, err: err}
+				advance()
+			}
+		}()
+	}
+	for index := range keywords {
+		if err := ctx.Err(); err != nil {
+			break
+		}
+		jobs <- index
+	}
+	close(jobs)
+	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	for index, result := range results {
+		if result.err != nil {
+			return nil, &keywordSearchRecoveryError{Result: result, Keyword: keywords[index], Index: index, Total: len(keywords), Err: result.err}
+		}
+		w.storeKeywordRowsForCurrentSource(selected, keywords[index], result.rows)
+	}
+	return buildKeywordSearchGroups(keywords, nil, results, wide), nil
+}
+
+func (w *BlastWizard) executeMainKeywordRows(ctx context.Context, selected model.SpeciesCandidate, keywords []string, manualLabels []string, manualGeneLoci []string, wide bool, autoIdentifyLabels bool, autoIdentifyGeneLoci bool, preloadedGroups []model.KeywordSearchGroup) error {
 	queryStarted := time.Now()
 	identifications := manualKeywordLabelIdentifications(manualLabels, len(keywords))
-	groups, err := w.searchKeywordGroups(ctx, selected, keywords, nil, wide)
-	if err != nil {
-		return err
-	}
-	groups, err = w.applyNCBIReplacementChoicesWithProgress(ctx, selected, groups)
-	if err != nil {
-		return err
+	groups := cloneKeywordSearchGroups(preloadedGroups)
+	var err error
+	if len(groups) == 0 {
+		groups, err = w.searchKeywordGroups(ctx, selected, keywords, nil, wide)
+		if err != nil {
+			return err
+		}
+		groups, err = w.applyNCBIReplacementChoicesWithProgress(ctx, selected, groups)
+		if err != nil {
+			return err
+		}
 	}
 	if autoIdentifyLabels {
 		identifications, err = w.autoIdentifyKeywordLabelsWithProgress(ctx, selected, groups)

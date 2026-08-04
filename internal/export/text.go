@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/KiriKirby/phytozome-go/internal/fastautil"
 	"github.com/KiriKirby/phytozome-go/internal/model"
 )
 
@@ -31,7 +32,7 @@ func WriteProteinSequencesText(path string, records []model.ProteinSequenceRecor
 				return fmt.Errorf("write FASTA separator: %w", err)
 			}
 		}
-		if _, err := writer.WriteString(record.Header); err != nil {
+		if _, err := writer.WriteString(fastautil.NormalizeGeneratedHeader(record.Header)); err != nil {
 			return fmt.Errorf("write FASTA header: %w", err)
 		}
 		if _, err := writer.WriteString("\n"); err != nil {

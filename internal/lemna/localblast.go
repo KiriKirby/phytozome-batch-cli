@@ -1220,12 +1220,7 @@ func localBlastQueryFASTA(input string) (string, map[string]int, int, error) {
 		entryCount++
 		totalLen += len(cleanSeq)
 		queryLengths[currentID] = len(cleanSeq)
-		out.WriteString(">")
-		out.WriteString(currentID)
-		if currentHeader != "" && currentHeader != currentID {
-			out.WriteString(" ")
-			out.WriteString(currentHeader)
-		}
+		out.WriteString(fastautil.NormalizeGeneratedHeader(currentID))
 		out.WriteString("\n")
 		out.WriteString(cleanSeq)
 		out.WriteString("\n")

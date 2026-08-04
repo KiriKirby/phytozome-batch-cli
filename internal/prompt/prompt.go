@@ -4286,7 +4286,8 @@ func keywordExtraDetailPage(row model.KeywordResultRow) tui.DetailPage {
 
 func keywordExtraDetailHidden(key string) bool {
 	switch strings.ToLower(strings.TrimSpace(key)) {
-	case "ncbi_fasta", "ncbi_fasta_header", "ncbi_protein_sequence",
+	case "plaza_fasta", "plaza_fasta_header", "plaza_protein_sequence",
+		"ncbi_fasta", "ncbi_fasta_header", "ncbi_protein_sequence",
 		"protein_sequence", "sequence", "peptide_sequence", "fasta_sequence", "attr_translation":
 		return true
 	default:
@@ -4298,8 +4299,8 @@ func keywordInlineDetailFASTA(row model.KeywordResultRow) string {
 	if row.ExtraColumns == nil {
 		return ""
 	}
-	header := strings.TrimSpace(row.ExtraColumns["ncbi_fasta_header"])
-	if raw := strings.TrimSpace(row.ExtraColumns["ncbi_fasta"]); raw != "" {
+	header := firstNonEmptyText(strings.TrimSpace(row.ExtraColumns["plaza_fasta_header"]), strings.TrimSpace(row.ExtraColumns["ncbi_fasta_header"]))
+	if raw := firstNonEmptyText(strings.TrimSpace(row.ExtraColumns["plaza_fasta"]), strings.TrimSpace(row.ExtraColumns["ncbi_fasta"])); raw != "" {
 		rawHeader, sequence := splitDetailFASTA(raw)
 		if rawHeader != "" {
 			header = rawHeader
@@ -4308,7 +4309,7 @@ func keywordInlineDetailFASTA(row model.KeywordResultRow) string {
 			return formatInlineDetailFASTA(header, sequence)
 		}
 	}
-	for _, key := range []string{"ncbi_protein_sequence", "protein_sequence", "sequence", "peptide_sequence", "fasta_sequence", "attr_translation"} {
+	for _, key := range []string{"plaza_protein_sequence", "ncbi_protein_sequence", "protein_sequence", "sequence", "peptide_sequence", "fasta_sequence", "attr_translation"} {
 		value := strings.TrimSpace(row.ExtraColumns[key])
 		if value == "" {
 			continue
@@ -6771,6 +6772,14 @@ func blastRowsHaveLabelName(rows []model.BlastResultRow) bool {
 func keywordDisplayColumns(rows []model.KeywordResultRow) []tableColumnValue[model.KeywordResultRow] {
 	options := ColumnDisplayOptions{DatabaseDisplay: "keyword", Multiline: true}
 	defByID := map[string]tableColumnValue[model.KeywordResultRow]{
+		"source_database": {
+			ID:       "source_database",
+			Header:   ColumnCompactHeader("source_database", options),
+			Sortable: true,
+			Value: func(row model.KeywordResultRow) string {
+				return strings.TrimSpace(row.SourceDatabase)
+			},
+		},
 		"search_term": {
 			ID:       "search_term",
 			Header:   ColumnCompactHeader("search_term", options),
@@ -6859,6 +6868,14 @@ func keywordDisplayColumns(rows []model.KeywordResultRow) []tableColumnValue[mod
 				return row.Genome
 			},
 		},
+		"uniprot": {
+			ID:       "uniprot",
+			Header:   ColumnCompactHeader("uniprot", options),
+			Sortable: true,
+			Value: func(row model.KeywordResultRow) string {
+				return strings.TrimSpace(row.UniProt)
+			},
+		},
 	}
 	for _, id := range []string{
 		"ncbi_assembly_accession", "ncbi_assembly_name", "ncbi_assembly_level", "ncbi_assembly_status", "ncbi_ftp_path",
@@ -6915,6 +6932,9 @@ func phytozomeKeywordDisplayColumns(rows []model.KeywordResultRow) []tableColumn
 }
 
 func keywordDisplayColumnIDsForRows(rows []model.KeywordResultRow) []string {
+	if keywordRowsContainPLAZA(rows) {
+		return KeywordDisplayColumnIDs("plaza")
+	}
 	return KeywordDisplayColumnIDs(sourceDatabaseForKeywordRows(rows))
 }
 
@@ -6981,6 +7001,9 @@ func sourceDatabaseForBlastRows(rows []model.BlastResultRow) string {
 }
 
 func sourceDatabaseForKeywordRows(rows []model.KeywordResultRow) string {
+	if keywordRowsContainPLAZA(rows) {
+		return "plaza"
+	}
 	if strings.EqualFold(keywordRowsSourceDatabaseName(rows), "ncbi") {
 		searchTypeID := ""
 		resultDomain := ncbi.ResultDomainFromKeywordRows(rows)
@@ -6996,6 +7019,15 @@ func sourceDatabaseForKeywordRows(rows []model.KeywordResultRow) string {
 		return NCBIKeywordDatabaseKeyForSearchType(searchTypeID, resultDomain)
 	}
 	return keywordRowsSourceDatabaseName(rows)
+}
+
+func keywordRowsContainPLAZA(rows []model.KeywordResultRow) bool {
+	for _, row := range rows {
+		if strings.EqualFold(strings.TrimSpace(row.SourceDatabase), "plaza") {
+			return true
+		}
+	}
+	return false
 }
 
 func keywordRowsSourceDatabaseName(rows []model.KeywordResultRow) string {
@@ -7521,6 +7553,7 @@ func blastLabelName(row model.BlastResultRow) string {
 
 func keywordRowDetail(row model.KeywordResultRow) string {
 	values := map[string]string{
+		"source_database":       row.SourceDatabase,
 		"search_term":           row.SearchTerm,
 		"search_type":           row.SearchType,
 		"label_name":            keywordLabelName(row),
@@ -7572,6 +7605,7 @@ func keywordRowDetail(row model.KeywordResultRow) string {
 
 func keywordRowDetailPages(row model.KeywordResultRow) []tui.DetailPage {
 	values := map[string]string{
+		"source_database":       row.SourceDatabase,
 		"search_term":           row.SearchTerm,
 		"search_type":           row.SearchType,
 		"label_name":            keywordLabelName(row),

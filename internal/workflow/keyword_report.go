@@ -646,6 +646,8 @@ func keywordReportCellValue(header string, row model.KeywordResultRow, index int
 	switch header {
 	case "row":
 		return fmt.Sprintf("%d", index+1)
+	case "source_database":
+		return row.SourceDatabase
 	case "search_term":
 		return row.SearchTerm
 	case "search_type":
@@ -759,6 +761,11 @@ func keywordReportHeaders(rows []model.KeywordResultRow) []string {
 }
 
 func sourceDatabaseForKeywordRows(rows []model.KeywordResultRow) string {
+	for _, row := range rows {
+		if strings.EqualFold(strings.TrimSpace(row.SourceDatabase), "plaza") {
+			return "plaza"
+		}
+	}
 	if strings.EqualFold(keywordRowsSourceDatabaseName(rows), "ncbi") {
 		return prompt.NCBIResultDomainDatabaseKey(ncbi.ResultDomainFromKeywordRows(rows))
 	}

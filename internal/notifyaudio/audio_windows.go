@@ -12,8 +12,8 @@ import (
 )
 
 var (
-	winmmDLL    = windows.NewLazySystemDLL("winmm.dll")
-	midiOutOpen = winmmDLL.NewProc("midiOutOpen")
+	winmmDLL     = windows.NewLazySystemDLL("winmm.dll")
+	midiOutOpen  = winmmDLL.NewProc("midiOutOpen")
 	midiOutClose = winmmDLL.NewProc("midiOutClose")
 	midiOutReset = winmmDLL.NewProc("midiOutReset")
 	midiOutShort = winmmDLL.NewProc("midiOutShortMsg")

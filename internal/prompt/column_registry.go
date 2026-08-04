@@ -30,6 +30,7 @@ var keywordDisplayColumnIDsByDatabase = map[string][]string{
 	"lemna":     {"search_term", "gene_locus", "label_name", "labelname_type", "phgo_alias", "gene_identifier", "protein_id", "transcript", "description", "genome"},
 	"tair":      {"search_term", "search_type", "gene_locus", "label_name", "labelname_type", "phgo_alias", "gene_identifier", "protein_id", "transcript", "description", "genome"},
 	"ncbi":      {"search_term", "search_type", "gene_locus", "label_name", "labelname_type", "phgo_alias", "protein_id", "gene_identifier", "description", "genome"},
+	"plaza":     {"source_database", "search_term", "search_type", "gene_locus", "label_name", "labelname_type", "phgo_alias", "protein_id", "transcript", "gene_identifier", "genome", "uniprot", "description"},
 }
 
 var keywordDetailColumnIDsByDatabase = map[string][]string{
@@ -37,6 +38,7 @@ var keywordDetailColumnIDsByDatabase = map[string][]string{
 	"lemna":     {"search_term", "gene_locus", "label_name", "labelname_type", "phgo_alias", "alias", "transcript", "description", "genome", "protein_id", "gene_identifier", "location", "uniprot", "comments", "auto_define", "gene_report_url", "sequence_header_label", "sequence_id"},
 	"tair":      {"search_term", "search_type", "gene_locus", "label_name", "labelname_type", "phgo_alias", "alias", "symbols", "protein_id", "transcript", "gene_identifier", "genome", "location", "uniprot", "description", "comments", "auto_define", "gene_report_url", "sequence_header_label", "sequence_id"},
 	"ncbi":      {"search_term", "search_type", "gene_locus", "label_name", "labelname_type", "phgo_alias", "alias", "symbols", "synonyms", "protein_id", "gene_identifier", "genome", "location", "description", "comments", "auto_define", "gene_report_url", "sequence_header_label", "sequence_id"},
+	"plaza":     {"source_database", "search_term", "search_type", "gene_locus", "label_name", "labelname_type", "phgo_alias", "alias", "symbols", "synonyms", "protein_id", "transcript", "gene_identifier", "genome", "location", "uniprot", "description", "comments", "auto_define", "gene_report_url", "sequence_header_label", "sequence_id"},
 }
 
 var keywordExportColumnIDsByDatabase = map[string][]string{
@@ -44,10 +46,25 @@ var keywordExportColumnIDsByDatabase = map[string][]string{
 	"lemna":     {"row", "search_term", "gene_locus", "label_name", "labelname_type", "phgo_alias", "alias", "protein_id", "transcript", "gene_identifier", "genome", "location", "uniprot", "description", "comments", "auto_define", "gene_report_url"},
 	"tair":      {"row", "search_term", "search_type", "gene_locus", "label_name", "labelname_type", "phgo_alias", "alias", "symbols", "protein_id", "transcript", "gene_identifier", "genome", "location", "uniprot", "description", "comments", "auto_define", "gene_report_url"},
 	"ncbi":      {"row", "search_term", "search_type", "gene_locus", "label_name", "labelname_type", "phgo_alias", "alias", "symbols", "synonyms", "protein_id", "gene_identifier", "genome", "location", "description", "comments", "auto_define", "gene_report_url"},
+	"plaza":     {"row", "source_database", "search_term", "search_type", "gene_locus", "label_name", "labelname_type", "phgo_alias", "alias", "symbols", "synonyms", "protein_id", "transcript", "gene_identifier", "genome", "location", "uniprot", "description", "comments", "auto_define", "gene_report_url"},
 }
 
 var keywordReportExtraColumnIDsByDatabase = map[string][]string{
 	"phytozome": nil,
+	"plaza": {
+		"plaza_instance",
+		"plaza_species_id",
+		"plaza_taxid",
+		"plaza_source",
+		"plaza_gene_id",
+		"plaza_requested_locus",
+		"plaza_id_conversion_url",
+		"plaza_description_url",
+		"plaza_proteome_url",
+		"plaza_fasta_header",
+		"plaza_protein_sequence",
+		"plaza_fasta",
+	},
 	"lemna": {
 		"gff_seqid",
 		"gff_source",
@@ -119,6 +136,18 @@ var keywordReportExtraColumnIDsByDatabase = map[string][]string{
 		"attr_UniProtKB",
 	},
 	"ncbi": {
+		"plaza_instance",
+		"plaza_species_id",
+		"plaza_taxid",
+		"plaza_source",
+		"plaza_gene_id",
+		"plaza_requested_locus",
+		"plaza_id_conversion_url",
+		"plaza_description_url",
+		"plaza_proteome_url",
+		"plaza_fasta_header",
+		"plaza_protein_sequence",
+		"plaza_fasta",
 		"ncbi_uid",
 		"ncbi_accession",
 		"ncbi_taxid",
@@ -1175,6 +1204,13 @@ func dynamicColumnHelpText(id string) string {
 			"lemna release-context field \""+name+"\" captured from the selected release state. It records already-known release metadata used while constructing the keyword rows.",
 			"从所选 release 状态中捕获的 lemna 发布上下文字段 \""+name+"\"。它记录的是构建关键词结果行时已经已知的发布版元数据。",
 			"選択された release 状態から取得した lemna release context フィールド \""+name+"\" です。キーワード行を構築する際に、すでに分かっていた release metadata を記録します。",
+		)
+	case strings.HasPrefix(id, "plaza_"):
+		name := humanizeColumnSuffix(strings.TrimPrefix(id, "plaza_"))
+		return columnHelp(
+			"PLAZA public-release provenance field \""+name+"\" captured while resolving this Gene locus. It identifies the exact versioned data asset used for this row and is never inferred from an unverified webpage URL.",
+			"解析此 Gene locus 时从 PLAZA 公共发布数据中记录的溯源字段 \""+name+"\"。它标识这一行实际使用的版本化数据资产，绝不会从未经验证的网页 URL 推断出来。",
+			"この Gene locus の解決時に PLAZA public release から記録した来歴フィールド \""+name+"\" です。この行で実際に使った versioned data asset を示し、未検証の webpage URL から推測することはありません。",
 		)
 	case strings.HasPrefix(id, "ncbi_"):
 		name := humanizeColumnSuffix(strings.TrimPrefix(id, "ncbi_"))

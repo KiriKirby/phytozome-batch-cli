@@ -376,8 +376,7 @@ func localBlastQueryFASTA(input string) (string, map[string]int, int, error) {
 			return fmt.Errorf("empty FASTA entry %s", current)
 		}
 		lengths[current] = len(s)
-		out.WriteByte('>')
-		out.WriteString(current)
+		out.WriteString(fastautil.NormalizeGeneratedHeader(current))
 		out.WriteByte('\n')
 		out.WriteString(wrapFASTA(s))
 		return nil

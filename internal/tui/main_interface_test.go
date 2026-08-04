@@ -638,6 +638,67 @@ func TestMainNCBIKeywordExposesOnlySearchableSearchTypeOptions(t *testing.T) {
 	}
 }
 
+func TestMainNCBIKeywordShowsGeneLocusPriorityMenuOnlyForSupportedSearchTypes(t *testing.T) {
+	app := tview.NewApplication()
+	state := NormalizeMainInterfaceState(MainInterfaceState{Keyword: MainKeywordState{DatabaseID: "ncbi", SearchTypeID: "protein"}})
+	module, _, _ := buildMainKeywordTab(app, &state, nil, nil)
+	priority, ok := mainKeywordGeneLocusPriorityDropDown(module)
+	if !ok {
+		t.Fatal("NCBI protein search type should expose the Gene locus priority menu")
+	}
+	if _, label := priority.GetCurrentOption(); label != "不优先" {
+		t.Fatalf("Gene locus priority default = %q, want 不优先", label)
+	}
+	if state.Keyword.GeneLocusPriorityDatabase != GeneLocusPriorityNone || state.Keyword.PLAZAGeneLocusPriority {
+		t.Fatalf("Gene locus priority must default to none: %#v", state.Keyword)
+	}
+	state.Keyword.SearchTypeID = "nuccore"
+	state.Keyword.GeneLocusPriorityDatabase = GeneLocusPriorityPLAZA
+	module, _, _ = buildMainKeywordTab(app, &state, nil, nil)
+	if _, ok := mainKeywordGeneLocusPriorityDropDown(module); ok {
+		t.Fatal("NCBI nuccore search type must not expose Gene locus priority")
+	}
+	if state.Keyword.GeneLocusPriorityDatabase != GeneLocusPriorityNone || state.Keyword.PLAZAGeneLocusPriority {
+		t.Fatalf("hidden Gene locus priority must be reset: %#v", state.Keyword)
+	}
+}
+
+func TestMainGeneLocusPriorityOptions(t *testing.T) {
+	options := mainGeneLocusPriorityOptions()
+	if got, want := len(options), 3; got != want {
+		t.Fatalf("priority option count = %d, want %d", got, want)
+	}
+	for index, want := range []Option{
+		{Value: GeneLocusPriorityNone, Label: "不优先"},
+		{Value: GeneLocusPriorityNCBI, Label: "使用NCBI数据库"},
+		{Value: GeneLocusPriorityPLAZA, Label: "使用PLAZA数据库"},
+	} {
+		if options[index] != want {
+			t.Fatalf("option %d = %#v, want %#v", index, options[index], want)
+		}
+	}
+}
+
+func mainKeywordGeneLocusPriorityDropDown(module tview.Primitive) (*tview.DropDown, bool) {
+	body, ok := module.(*buttonFlex)
+	if !ok || body.GetItemCount() == 0 {
+		return nil, false
+	}
+	options, ok := body.GetItem(0).(*buttonFlex)
+	if !ok {
+		return nil, false
+	}
+	for index := 0; index < options.GetItemCount(); index++ {
+		field, ok := options.GetItem(index).(*mainControlField)
+		if !ok || field.label != "Gene locus" {
+			continue
+		}
+		dropDown, ok := field.child.(*tview.DropDown)
+		return dropDown, ok
+	}
+	return nil, false
+}
+
 func TestMainProgramOptionsIncludeDirectionLabels(t *testing.T) {
 	options := mainProgramOptions([]string{"blastn", "blastx", "tblastn", "blastp"})
 	labels := make([]string, 0, len(options))

@@ -55,13 +55,21 @@ type MainInterfaceState struct {
 }
 
 type MainKeywordState struct {
-	DatabaseID   string
-	SearchTypeID string
-	SpeciesKey   string
-	SpeciesLabel string
-	Rows         []MainKeywordRow
-	Grid         GridEditorState
+	DatabaseID                string
+	SearchTypeID              string
+	GeneLocusPriorityDatabase string
+	PLAZAGeneLocusPriority    bool // Deprecated compatibility alias for the old PLAZA checkbox state.
+	SpeciesKey                string
+	SpeciesLabel              string
+	Rows                      []MainKeywordRow
+	Grid                      GridEditorState
 }
+
+const (
+	GeneLocusPriorityNone  = ""
+	GeneLocusPriorityNCBI  = "ncbi"
+	GeneLocusPriorityPLAZA = "plaza"
+)
 
 type MainKeywordRow struct {
 	SearchTerm string
@@ -204,6 +212,11 @@ func NormalizeMainInterfaceState(state MainInterfaceState) MainInterfaceState {
 	if state.Keyword.SearchTypeID == "" {
 		state.Keyword.SearchTypeID = mainKeywordSearchType(state.Keyword.DatabaseID).ID
 	}
+	state.Keyword.GeneLocusPriorityDatabase = normalizeGeneLocusPriorityDatabase(state.Keyword.GeneLocusPriorityDatabase)
+	if state.Keyword.GeneLocusPriorityDatabase == GeneLocusPriorityNone && state.Keyword.PLAZAGeneLocusPriority {
+		state.Keyword.GeneLocusPriorityDatabase = GeneLocusPriorityPLAZA
+	}
+	state.Keyword.PLAZAGeneLocusPriority = state.Keyword.GeneLocusPriorityDatabase == GeneLocusPriorityPLAZA
 	if len(state.Keyword.Rows) == 0 {
 		state.Keyword.Rows = []MainKeywordRow{{}}
 	}
@@ -222,6 +235,17 @@ func NormalizeMainInterfaceState(state MainInterfaceState) MainInterfaceState {
 	state.Keyword.Grid.ActiveRow = clampInt(state.Keyword.Grid.ActiveRow, 0, maxInt(0, len(state.Keyword.Rows)-1))
 	state.Blast.Grid.ActiveRow = clampInt(state.Blast.Grid.ActiveRow, 0, maxInt(0, len(state.Blast.Rows)-1))
 	return state
+}
+
+func normalizeGeneLocusPriorityDatabase(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case GeneLocusPriorityNCBI:
+		return GeneLocusPriorityNCBI
+	case GeneLocusPriorityPLAZA:
+		return GeneLocusPriorityPLAZA
+	default:
+		return GeneLocusPriorityNone
+	}
 }
 
 func MainKeywordRowsForExecution(rows []MainKeywordRow) []MainKeywordRow {
@@ -1174,6 +1198,8 @@ func buildMainKeywordTab(app *tview.Application, state *MainInterfaceState, requ
 	db := mainDropDownWithRefresh("Database", mainKeywordOptions(), state.Keyword.DatabaseID, func(value string) {
 		state.Keyword.DatabaseID = value
 		state.Keyword.SearchTypeID = mainKeywordSearchType(value).ID
+		state.Keyword.GeneLocusPriorityDatabase = GeneLocusPriorityNone
+		state.Keyword.PLAZAGeneLocusPriority = false
 		state.Keyword.SpeciesLabel = ""
 		state.Keyword.SpeciesKey = ""
 	}, refresh)
@@ -1189,6 +1215,17 @@ func buildMainKeywordTab(app *tview.Application, state *MainInterfaceState, requ
 		}, refresh)
 		options.AddItem(newMainControlField("Search type", searchDrop), 0, 1, false)
 		optionControls = append(optionControls, searchDrop)
+	}
+	if state.Keyword.DatabaseID == "ncbi" && searchType.ShowsGeneLocus {
+		priority := mainDropDownWithRefresh("Gene locus", mainGeneLocusPriorityOptions(), state.Keyword.GeneLocusPriorityDatabase, func(value string) {
+			state.Keyword.GeneLocusPriorityDatabase = normalizeGeneLocusPriorityDatabase(value)
+			state.Keyword.PLAZAGeneLocusPriority = state.Keyword.GeneLocusPriorityDatabase == GeneLocusPriorityPLAZA
+		}, nil)
+		options.AddItem(newMainControlField("Gene locus", priority), 0, 1, false)
+		optionControls = append(optionControls, priority)
+	} else {
+		state.Keyword.GeneLocusPriorityDatabase = GeneLocusPriorityNone
+		state.Keyword.PLAZAGeneLocusPriority = false
 	}
 	if searchType.ShowsSpecies {
 		button := newMainActionButton("Species", mainSpeciesButtonLabel(state.Keyword.SpeciesLabel), func() {
@@ -2710,6 +2747,14 @@ func mainProgramLabel(program string) string {
 		return "BLASTP  protein -> protein"
 	default:
 		return strings.ToUpper(strings.TrimSpace(program))
+	}
+}
+
+func mainGeneLocusPriorityOptions() []Option {
+	return []Option{
+		{Value: GeneLocusPriorityNone, Label: "不优先"},
+		{Value: GeneLocusPriorityNCBI, Label: "使用NCBI数据库"},
+		{Value: GeneLocusPriorityPLAZA, Label: "使用PLAZA数据库"},
 	}
 }
 

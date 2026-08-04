@@ -1917,6 +1917,8 @@ func firstString(values []string) string {
 
 func extractInlineKeywordSequence(row model.KeywordResultRow) string {
 	extraKeys := []string{
+		"plaza_protein_sequence",
+		"plaza_fasta",
 		"ncbi_protein_sequence",
 		"ncbi_fasta",
 		"protein_sequence",

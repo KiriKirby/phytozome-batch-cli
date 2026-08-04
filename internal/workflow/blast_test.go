@@ -7209,7 +7209,7 @@ func TestExportCanvasSelectionsOriginalHeaderFallsBackPerRow(t *testing.T) {
 	}
 	got := strings.ReplaceAll(strings.TrimSpace(string(data)), "\r\n", "\n")
 	want := strings.Join([]string{
-		">plain fasta header",
+		">plain_fasta_header",
 		"MPEPTIDE",
 		"",
 		">orig_keyword_header",

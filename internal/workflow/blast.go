@@ -12010,8 +12010,15 @@ func (w *BlastWizard) loadKeywordDetailFASTA(row model.KeywordResultRow) (string
 }
 
 func inlineKeywordProteinSequenceData(row model.KeywordResultRow) model.ProteinSequenceData {
-	header := strings.TrimSpace(keywordExtraColumn(row, "ncbi_fasta_header"))
-	if raw := strings.TrimSpace(keywordExtraColumn(row, "ncbi_fasta")); raw != "" {
+	header := firstNonEmpty(
+		strings.TrimSpace(keywordExtraColumn(row, "plaza_fasta_header")),
+		strings.TrimSpace(keywordExtraColumn(row, "ncbi_fasta_header")),
+	)
+	raw := firstNonEmpty(
+		strings.TrimSpace(keywordExtraColumn(row, "plaza_fasta")),
+		strings.TrimSpace(keywordExtraColumn(row, "ncbi_fasta")),
+	)
+	if raw != "" {
 		rawHeader, sequence := splitFastaHeaderAndSequence(raw)
 		if strings.TrimSpace(rawHeader) != "" {
 			header = ensureFastaHeader(rawHeader)

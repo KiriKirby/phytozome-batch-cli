@@ -5,8 +5,8 @@ package notifyaudio
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"os/exec"
+	"path/filepath"
 )
 
 func playMIDIBytes(data []byte) error {

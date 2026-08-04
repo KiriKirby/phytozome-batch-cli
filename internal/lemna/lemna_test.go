@@ -691,11 +691,16 @@ func TestLocalBlastQueryFASTANormalizesPhgoMultiEntryHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("localBlastQueryFASTA: %v", err)
 	}
-	if !strings.Contains(fasta, ">LOC_Os08g14760.1 phgo://Oryza sativa v7.0/4CL1/LOC_Os08g14760.1\\1") {
+	if !strings.Contains(fasta, ">LOC_Os08g14760.1\n") {
 		t.Fatalf("first normalized header missing from FASTA:\n%s", fasta)
 	}
-	if !strings.Contains(fasta, ">LOC_Os02g46970.1 phgo://Oryza sativa v7.0/4CL2/LOC_Os02g46970.1\\2") {
+	if !strings.Contains(fasta, ">LOC_Os02g46970.1\n") {
 		t.Fatalf("second normalized header missing from FASTA:\n%s", fasta)
+	}
+	for _, line := range strings.Split(fasta, "\n") {
+		if strings.HasPrefix(line, ">") && strings.ContainsAny(line, " \t") {
+			t.Fatalf("generated local-BLAST FASTA header contains whitespace: %q", line)
+		}
 	}
 	if lengths["LOC_Os08g14760.1"] != 5 || lengths["LOC_Os02g46970.1"] != 5 {
 		t.Fatalf("unexpected query lengths: %#v", lengths)

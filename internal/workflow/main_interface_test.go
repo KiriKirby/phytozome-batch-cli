@@ -47,6 +47,38 @@ func TestMainInterfaceSpeciesKeyAndShortLabel(t *testing.T) {
 	}
 }
 
+func TestNCBIGeneLocusPrioritySearchesLocusThenSearchTerm(t *testing.T) {
+	w := NewBlastWizard(nil)
+	w.source = keywordMapSource{rowsByKeyword: map[string][]model.KeywordResultRow{
+		"AT1G01010": {{SourceDatabase: "ncbi", GeneLocus: "AT1G01010", ProteinID: "NP_locus"}},
+		"PAL1":      {{SourceDatabase: "ncbi", ProteinID: "NP_fallback"}},
+	}}
+	groups, err := w.searchMainKeywordGroupsWithGeneLocusPriorityProgress(
+		context.Background(),
+		model.SpeciesCandidate{GenomeLabel: "Arabidopsis thaliana"},
+		[]string{"C4H", "PAL1"},
+		[]string{"AT1G01010", "AT1G99999"},
+		false,
+		tui.GeneLocusPriorityNCBI,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NCBI Gene locus priority search: %v", err)
+	}
+	if got := groups[0].Rows[0].SearchType; got != "NCBI Gene locus priority" {
+		t.Fatalf("locus-hit search type = %q", got)
+	}
+	if got := groups[0].Rows[0].SearchTerm; got != "C4H" {
+		t.Fatalf("locus-hit search term = %q, want original term C4H", got)
+	}
+	if got := groups[1].Rows[0].ProteinID; got != "NP_fallback" {
+		t.Fatalf("fallback protein id = %q, want NP_fallback", got)
+	}
+	if got := groups[1].Rows[0].SearchType; got == "NCBI Gene locus priority" {
+		t.Fatalf("fallback row must retain its ordinary NCBI search type: %#v", groups[1].Rows[0])
+	}
+}
+
 func TestSetBlastQueryItemGeneLocusSeedsQuerySource(t *testing.T) {
 	item := blastQueryItem{
 		RawInput:  ">q1\nAAAA",

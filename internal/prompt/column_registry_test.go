@@ -120,6 +120,23 @@ func TestColumnSchemasExistPerDatabaseModeAndView(t *testing.T) {
 	}
 }
 
+func TestPLAZAKeywordSchemasRetainNCBICompatibleFields(t *testing.T) {
+	for name, ids := range map[string][]string{
+		"display": KeywordDisplayColumnIDs("plaza"),
+		"detail":  KeywordDetailColumnIDs("plaza"),
+		"export":  KeywordExportColumnIDs("plaza", true, nil),
+	} {
+		for _, required := range []string{
+			"source_database", "search_term", "search_type", "gene_locus", "protein_id",
+			"transcript", "gene_identifier", "genome", "uniprot", "description",
+		} {
+			if !slices.Contains(ids, required) {
+				t.Fatalf("PLAZA %s schema missing %q: %#v", name, required, ids)
+			}
+		}
+	}
+}
+
 func TestNCBIKeywordDatabaseKeyForSearchTypePrefersSpecializedBuckets(t *testing.T) {
 	for _, tc := range []struct {
 		searchType string

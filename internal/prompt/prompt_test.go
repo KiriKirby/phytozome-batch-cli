@@ -1130,6 +1130,59 @@ func TestKeywordDetailColumnIDsForRowUsesNCBISearchTypeSpecificSchema(t *testing
 	}
 }
 
+func TestKeywordDisplayColumnsMixedPLAZAAndNCBIPreserveSharedFields(t *testing.T) {
+	plazaRow := model.KeywordResultRow{
+		SourceDatabase: "plaza",
+		SearchTerm:     "4CL1",
+		SearchType:     "PLAZA Gene locus priority",
+		GeneLocus:      "AT1G51680",
+		ProteinID:      "AT1G51680.1",
+		TranscriptID:   "AT1G51680.1",
+		GeneIdentifier: "AT1G51680",
+		Genome:         "Arabidopsis thaliana",
+		UniProt:        "Q42524",
+		Description:    "4-coumarate--CoA ligase 1",
+	}
+	ncbiRow := model.KeywordResultRow{
+		SourceDatabase: "ncbi",
+		SearchTerm:     "PAL1",
+		SearchType:     "protein",
+		ProteinID:      "NP_001000001.1",
+		GeneIdentifier: "12345",
+		Genome:         "Arabidopsis thaliana",
+		Description:    "phenylalanine ammonia-lyase",
+		ExtraColumns: map[string]string{
+			"ncbi_search_type_id": "protein",
+			"ncbi_result_domain":  "sequence-record",
+		},
+	}
+	defs := keywordDisplayColumns([]model.KeywordResultRow{plazaRow, ncbiRow})
+	values := make(map[string]string, len(defs))
+	for _, def := range defs {
+		if def.Value == nil {
+			t.Fatalf("column %q has no value function", def.ID)
+		}
+		values[def.ID] = def.Value(plazaRow)
+	}
+	for _, required := range []string{
+		"source_database", "search_term", "search_type", "gene_locus", "protein_id",
+		"transcript", "gene_identifier", "genome", "uniprot", "description",
+	} {
+		if _, ok := values[required]; !ok {
+			t.Fatalf("mixed PLAZA/NCBI table missing %q: %#v", required, values)
+		}
+	}
+	if got := values["source_database"]; got != "plaza" {
+		t.Fatalf("PLAZA source_database = %q, want plaza", got)
+	}
+	if got := values["search_type"]; got != "PLAZA Gene locus priority" {
+		t.Fatalf("PLAZA search_type = %q", got)
+	}
+	if !strings.Contains(keywordRowDetail(plazaRow), "source_database: plaza") {
+		t.Fatalf("PLAZA detail did not retain source database: %q", keywordRowDetail(plazaRow))
+	}
+}
+
 func TestDetailPageIsFASTADetectsLastTabOnly(t *testing.T) {
 	if !detailPageIsFASTA(2, 0, 3) {
 		t.Fatal("expected last page first item to be FASTA")

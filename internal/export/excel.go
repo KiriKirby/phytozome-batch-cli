@@ -778,6 +778,8 @@ func keywordExportValue(id string, row model.KeywordResultRow, rowNumber int) an
 	switch id {
 	case "row":
 		return rowNumber
+	case "source_database":
+		return row.SourceDatabase
 	case "search_term":
 		return row.SearchTerm
 	case "search_type":
@@ -872,6 +874,11 @@ func sourceDatabaseForBlastRows(rows []model.BlastResultRow) string {
 }
 
 func sourceDatabaseForKeywordRows(rows []model.KeywordResultRow) string {
+	for _, row := range rows {
+		if strings.EqualFold(strings.TrimSpace(row.SourceDatabase), "plaza") {
+			return "plaza"
+		}
+	}
 	for _, row := range rows {
 		if value := strings.TrimSpace(row.SourceDatabase); value != "" {
 			return value
