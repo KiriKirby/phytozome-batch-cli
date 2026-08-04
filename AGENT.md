@@ -21,8 +21,8 @@ This file tracks the intended shape of `phytozome GO` and its release packaging,
 
 ## PLAZA Gene locus priority for NCBI keyword mode
 
-- In the main NCBI keyword interface, show a Gene locus priority dropdown immediately after `Search type` only for NCBI search types that expose the Gene locus column. Its default is `不优先`, followed by `使用NCBI数据库` and `使用PLAZA数据库`.
-- With `使用NCBI数据库`, each input row with a non-empty Gene locus queries the selected NCBI search type by Gene locus first; with `使用PLAZA数据库`, it queries PLAZA first. In either mode, a miss or unavailable priority lookup falls back to that row's ordinary NCBI search term. Rows without a Gene locus always use the ordinary NCBI search term.
+- In the main NCBI keyword interface, show a Gene locus priority dropdown immediately after `Search type` only for NCBI search types that expose the Gene locus column. Its default is `None`, followed by `Use NCBI database` and `Use PLAZA database`.
+- With `Use NCBI database`, each input row with a non-empty Gene locus queries the selected NCBI search type by Gene locus first; with `Use PLAZA database`, it queries PLAZA first. In either mode, a miss or unavailable priority lookup falls back to that row's ordinary NCBI search term. Rows without a Gene locus always use the ordinary NCBI search term.
 - Use PLAZA's public versioned FTP data (`plaza_public_dicots_05`, `plaza_public_monocots_05`, `plaza_diatoms_01`, and `plaza_pico_03`) rather than browser-page scraping. The primary website is Cloudflare-protected and must not be treated as a machine API.
 - Resolve Gene locus values through `IdConversion` records, enrich matches from `Descriptions`, and load the selected-transcript protein FASTA on demand. Cache downloaded source files and per-locus lookup results under `.cache/plaza/`; coalesce duplicate lookups and use a bounded remote worker pool.
 - PLAZA-derived rows must identify `SourceDatabase` as `plaza`, `SearchType` as `PLAZA Gene locus priority`, preserve provenance in `plaza_*` extra columns, include the source FASTA inline for downstream exports/Canvas, and leave `gene_report_url` empty unless PLAZA returned an exact row-level page URL.

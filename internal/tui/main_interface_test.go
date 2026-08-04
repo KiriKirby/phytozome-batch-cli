@@ -646,8 +646,8 @@ func TestMainNCBIKeywordShowsGeneLocusPriorityMenuOnlyForSupportedSearchTypes(t 
 	if !ok {
 		t.Fatal("NCBI protein search type should expose the Gene locus priority menu")
 	}
-	if _, label := priority.GetCurrentOption(); label != "不优先" {
-		t.Fatalf("Gene locus priority default = %q, want 不优先", label)
+	if _, label := priority.GetCurrentOption(); label != "None" {
+		t.Fatalf("Gene locus priority default = %q, want None", label)
 	}
 	if state.Keyword.GeneLocusPriorityDatabase != GeneLocusPriorityNone || state.Keyword.PLAZAGeneLocusPriority {
 		t.Fatalf("Gene locus priority must default to none: %#v", state.Keyword)
@@ -669,9 +669,9 @@ func TestMainGeneLocusPriorityOptions(t *testing.T) {
 		t.Fatalf("priority option count = %d, want %d", got, want)
 	}
 	for index, want := range []Option{
-		{Value: GeneLocusPriorityNone, Label: "不优先"},
-		{Value: GeneLocusPriorityNCBI, Label: "使用NCBI数据库"},
-		{Value: GeneLocusPriorityPLAZA, Label: "使用PLAZA数据库"},
+		{Value: GeneLocusPriorityNone, Label: "None"},
+		{Value: GeneLocusPriorityNCBI, Label: "Use NCBI database"},
+		{Value: GeneLocusPriorityPLAZA, Label: "Use PLAZA database"},
 	} {
 		if options[index] != want {
 			t.Fatalf("option %d = %#v, want %#v", index, options[index], want)

@@ -2752,9 +2752,9 @@ func mainProgramLabel(program string) string {
 
 func mainGeneLocusPriorityOptions() []Option {
 	return []Option{
-		{Value: GeneLocusPriorityNone, Label: "不优先"},
-		{Value: GeneLocusPriorityNCBI, Label: "使用NCBI数据库"},
-		{Value: GeneLocusPriorityPLAZA, Label: "使用PLAZA数据库"},
+		{Value: GeneLocusPriorityNone, Label: "None"},
+		{Value: GeneLocusPriorityNCBI, Label: "Use NCBI database"},
+		{Value: GeneLocusPriorityPLAZA, Label: "Use PLAZA database"},
 	}
 }
 
