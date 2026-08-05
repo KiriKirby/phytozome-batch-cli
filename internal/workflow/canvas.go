@@ -3009,6 +3009,8 @@ func canvasOriginalHeader(source model.QuerySequenceSource) string {
 
 func applyCanvasHeaderMode(records []model.ProteinSequenceRecord, rows []canvasSelectedRow, mode model.FastaHeaderMode) []model.ProteinSequenceRecord {
 	switch model.NormalizeFastaHeaderMode(mode, true) {
+	case model.FastaHeaderModePhgoLite:
+		return applyCanvasPhgoLiteHeaders(records, rows)
 	case model.FastaHeaderModeOriginal:
 		return applyOriginalHeaders(records)
 	case model.FastaHeaderModeMinimal:
@@ -3018,6 +3020,23 @@ func applyCanvasHeaderMode(records []model.ProteinSequenceRecord, rows []canvasS
 	default:
 		return applyCanvasPhgoHeaders(records, rows)
 	}
+}
+
+func applyCanvasPhgoLiteHeaders(records []model.ProteinSequenceRecord, rows []canvasSelectedRow) []model.ProteinSequenceRecord {
+	out := append([]model.ProteinSequenceRecord(nil), records...)
+	limit := minInt(len(out), len(rows))
+	for i := 0; i < limit; i++ {
+		species, label, geneID := canvasPhgoSelfParts(rows[i], out[i])
+		if header := buildPhgoLiteHeader(species, geneID, label); header != "" {
+			out[i].Header = header
+		}
+	}
+	for i := limit; i < len(out); i++ {
+		if header := minimalFastaHeader(recordMinimalHeaderID(out[i])); header != "" {
+			out[i].Header = header
+		}
+	}
+	return out
 }
 
 func applyCanvasPhgoHeaders(records []model.ProteinSequenceRecord, rows []canvasSelectedRow) []model.ProteinSequenceRecord {

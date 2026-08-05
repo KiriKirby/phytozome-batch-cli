@@ -904,7 +904,7 @@ func keywordExportSettings(baseName string, outputDir string, settings exportSet
 		{Name: "Write selected Excel", Value: fmt.Sprintf("%t", settings.WriteExcel), Explanation: "Selected rows are written to the main workbook when true."},
 		{Name: "Write raw Excel and raw FASTA", Value: fmt.Sprintf("%t", settings.WriteRawExcel), Explanation: "All current rows are written to _raw.xlsx, and _raw.fasta is also written when FASTA export is enabled."},
 		{Name: "Write peptide FASTA", Value: fmt.Sprintf("%t", settings.WriteText), Explanation: "Peptide sequences are fetched and written only when true."},
-		{Name: "FASTA header mode", Value: fastaHeaderModeDisplay(settings), Explanation: "Controls whether FASTA records use phgo headers, source-original headers, or only the primary ID."},
+		{Name: "FASTA header mode", Value: fastaHeaderModeDisplay(settings), Explanation: "Controls whether FASTA records use full PHgo, PHgo Lite species|ID2(symbol), source-original, or primary-ID-only headers."},
 		{Name: "Write report PDF", Value: fmt.Sprintf("%t", settings.WriteReport), Explanation: "One PDF report is written for the current export action when true."},
 	}
 }

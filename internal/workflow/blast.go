@@ -8127,6 +8127,8 @@ func (s exportSettings) fastaHeaderMode() model.FastaHeaderMode {
 
 func fastaHeaderModeDisplay(settings exportSettings) string {
 	switch settings.fastaHeaderMode() {
+	case model.FastaHeaderModePhgoLite:
+		return "PHgo Lite: species|ID2(symbol)"
 	case model.FastaHeaderModeOriginal:
 		return "original FASTA header"
 	case model.FastaHeaderModeMinimal:
@@ -12206,6 +12208,8 @@ func applyOriginalHeaders(records []model.ProteinSequenceRecord) []model.Protein
 
 func applyKeywordHeaderMode(records []model.ProteinSequenceRecord, rows []model.KeywordResultRow, mode model.FastaHeaderMode) []model.ProteinSequenceRecord {
 	switch model.NormalizeFastaHeaderMode(mode, true) {
+	case model.FastaHeaderModePhgoLite:
+		return applyKeywordPhgoLiteHeaders(records, rows)
 	case model.FastaHeaderModeOriginal:
 		return applyOriginalHeaders(records)
 	case model.FastaHeaderModeMinimal:
@@ -12217,6 +12221,8 @@ func applyKeywordHeaderMode(records []model.ProteinSequenceRecord, rows []model.
 
 func applyBlastHeaderMode(records []model.ProteinSequenceRecord, rows []model.BlastResultRow, querySources []*model.QuerySequenceSource, prependedQueryCount int, mode model.FastaHeaderMode) []model.ProteinSequenceRecord {
 	switch model.NormalizeFastaHeaderMode(mode, true) {
+	case model.FastaHeaderModePhgoLite:
+		return applyBlastPhgoLiteHeaders(records, rows, querySources, prependedQueryCount)
 	case model.FastaHeaderModeOriginal:
 		return applyOriginalHeaders(records)
 	case model.FastaHeaderModeMinimal:
@@ -12231,6 +12237,26 @@ func applyKeywordPhgoHeaders(records []model.ProteinSequenceRecord, rows []model
 	limit := minInt(len(out), len(rows))
 	for i := 0; i < limit; i++ {
 		if header := keywordPhgoHeader(rows[i], i+1); header != "" {
+			out[i].Header = header
+		}
+	}
+	return out
+}
+
+func applyKeywordPhgoLiteHeaders(records []model.ProteinSequenceRecord, rows []model.KeywordResultRow) []model.ProteinSequenceRecord {
+	out := append([]model.ProteinSequenceRecord(nil), records...)
+	limit := minInt(len(out), len(rows))
+	for i := 0; i < limit; i++ {
+		if header := buildPhgoLiteHeader(
+			firstNonEmpty(strings.TrimSpace(rows[i].SequenceHeaderLabel), strings.TrimSpace(rows[i].Genome)),
+			keywordMinimalHeaderID(rows[i], out[i]),
+			rowKeywordLabelName(rows[i]),
+		); header != "" {
+			out[i].Header = header
+		}
+	}
+	for i := limit; i < len(out); i++ {
+		if header := minimalFastaHeader(recordMinimalHeaderID(out[i])); header != "" {
 			out[i].Header = header
 		}
 	}
@@ -12266,6 +12292,39 @@ func applyBlastPhgoHeaders(records []model.ProteinSequenceRecord, rows []model.B
 	for i := 0; i < limit; i++ {
 		if header := blastPhgoHeader(rows[i], i+1); header != "" {
 			out[start+i].Header = header
+		}
+	}
+	return out
+}
+
+func applyBlastPhgoLiteHeaders(records []model.ProteinSequenceRecord, rows []model.BlastResultRow, querySources []*model.QuerySequenceSource, prependedQueryCount int) []model.ProteinSequenceRecord {
+	out := append([]model.ProteinSequenceRecord(nil), records...)
+	queryLimit := minInt(minInt(prependedQueryCount, len(out)), len(querySources))
+	for i := 0; i < queryLimit; i++ {
+		if source := querySources[i]; source != nil {
+			if header := buildPhgoLiteHeader(
+				firstNonEmpty(strings.TrimSpace(source.OrganismShort), strings.TrimSpace(source.SourceJBrowseName), strings.TrimSpace(source.SourceGenomeLabel)),
+				querySourceID2(source),
+				firstNonEmpty(strings.TrimSpace(source.LabelName), preferredStoredQuerySourceAlias(source)),
+			); header != "" {
+				out[i].Header = header
+			}
+		}
+	}
+	start := minInt(prependedQueryCount, len(out))
+	limit := minInt(len(out)-start, len(rows))
+	for i := 0; i < limit; i++ {
+		if header := buildPhgoLiteHeader(
+			strings.TrimSpace(rows[i].Species),
+			blastRowID2(rows[i]),
+			firstNonEmpty(strings.TrimSpace(rows[i].LabelName), strings.TrimSpace(rows[i].BlastLabelName)),
+		); header != "" {
+			out[start+i].Header = header
+		}
+	}
+	for i := start + limit; i < len(out); i++ {
+		if header := minimalFastaHeader(recordMinimalHeaderID(out[i])); header != "" {
+			out[i].Header = header
 		}
 	}
 	return out
@@ -12321,6 +12380,9 @@ func recordMinimalHeaderID(record model.ProteinSequenceRecord) string {
 }
 
 func primaryIDFromFastaHeader(header string) string {
+	if parsed, ok := parsePhgoFastaHeader(header); ok && strings.TrimSpace(parsed.GeneID) != "" {
+		return strings.TrimSpace(parsed.GeneID)
+	}
 	header = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(header), ">"))
 	if header == "" {
 		return ""
@@ -12375,6 +12437,27 @@ func buildPhgoHeader(species string, label string, geneID string, rowNumber int)
 		groups = append(groups, strconv.Itoa(rowNumber))
 	}
 	return buildPhgoHeaderWithGroups(species, label, geneID, groups...)
+}
+
+// buildPhgoLiteHeader keeps the portable PHgo identity fields in a compact form.
+func buildPhgoLiteHeader(species string, id2 string, symbolName string) string {
+	species = sanitizePhgoLiteHeaderPart(species)
+	id2 = sanitizePhgoLiteHeaderPart(id2)
+	if species == "" {
+		species = "~"
+	}
+	if id2 == "" {
+		id2 = "~"
+	}
+	header := ">" + species + "|" + id2
+	if isPhgoLiteEmptyField(symbolName) {
+		return header
+	}
+	symbolName = sanitizePhgoLiteHeaderPart(symbolName)
+	if isPhgoLiteEmptyField(symbolName) {
+		return header
+	}
+	return header + "(" + symbolName + ")"
 }
 
 func buildBlastPhgoHeader(species string, label string, geneID string, blastSourceLabel string, blastSourceGeneID string, rowNumber int) string {
@@ -12458,6 +12541,23 @@ func sanitizePhgoHeaderPart(value string) string {
 	value = strings.ReplaceAll(value, "/", "_")
 	value = strings.Join(strings.Fields(value), " ")
 	return strings.TrimSpace(value)
+}
+
+func sanitizePhgoLiteHeaderPart(value string) string {
+	value = sanitizePhgoHeaderPart(value)
+	value = strings.ReplaceAll(value, "|", "_")
+	value = strings.ReplaceAll(value, "(", "_")
+	value = strings.ReplaceAll(value, ")", "_")
+	return value
+}
+
+func isPhgoLiteEmptyField(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "", "~", "~~":
+		return true
+	default:
+		return false
+	}
 }
 
 func phgoHeaderPartOrPlaceholder(value string) string {
@@ -12758,7 +12858,6 @@ func splitFastaHeaderAndSequence(input string) (string, string) {
 	}
 
 	headerLine := strings.TrimSpace(strings.TrimPrefix(firstLine, ">"))
-	headerLine = stripTrailingParentheticalLabel(headerLine)
 	if headerLine == "" {
 		return "", ""
 	}
@@ -12796,8 +12895,10 @@ func splitFastaHeaderAndSequence(input string) (string, string) {
 	if idPart == "" || sequencePart == "" {
 		return "", ""
 	}
+	labelSuffix := ""
 	if strings.HasPrefix(sequencePart, "(") {
 		if closeIndex := strings.Index(sequencePart, ")"); closeIndex >= 0 {
+			labelSuffix = " " + strings.TrimSpace(sequencePart[:closeIndex+1])
 			sequencePart = strings.TrimSpace(sequencePart[closeIndex+1:])
 		}
 	}
@@ -12805,7 +12906,7 @@ func splitFastaHeaderAndSequence(input string) (string, string) {
 		return "", ""
 	}
 
-	header := strings.TrimSpace(headerLine[:pipeIndex+1] + idPart)
+	header := strings.TrimSpace(headerLine[:pipeIndex+1] + idPart + labelSuffix)
 	sequence := sanitizeSequence(sequencePart)
 	return header, sequence
 }
@@ -12825,6 +12926,7 @@ type phgoFastaHeader struct {
 	CanvasItemTitle      string
 	CanvasDisplayName    string
 	IsCanvasHeader       bool
+	IsLiteHeader         bool
 }
 
 func parsePhgoFastaHeader(header string) (phgoFastaHeader, bool) {
@@ -12833,7 +12935,7 @@ func parsePhgoFastaHeader(header string) (phgoFastaHeader, bool) {
 		return phgoFastaHeader{}, false
 	}
 	if !strings.HasPrefix(strings.ToLower(header), "phgo://") {
-		return phgoFastaHeader{}, false
+		return parsePhgoLiteFastaHeader(header)
 	}
 	body := strings.TrimSpace(header[len("phgo://"):])
 	if body == "" {
@@ -12931,6 +13033,47 @@ func parsePhgoFastaHeader(header string) (phgoFastaHeader, bool) {
 		}
 		return parsed, true
 	}
+}
+
+func parsePhgoLiteFastaHeader(header string) (phgoFastaHeader, bool) {
+	header = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(header), ">"))
+	pipe := strings.LastIndex(header, "|")
+	if pipe <= 0 || pipe >= len(header)-1 {
+		return phgoFastaHeader{}, false
+	}
+	species := strings.TrimSpace(header[:pipe])
+	idAndLabel := strings.TrimSpace(header[pipe+1:])
+	id := idAndLabel
+	label := ""
+	hasSymbolSuffix := false
+	if strings.HasSuffix(idAndLabel, ")") {
+		if open := strings.LastIndex(idAndLabel, "("); open > 0 {
+			if strings.TrimSpace(idAndLabel[:open]) != idAndLabel[:open] {
+				return phgoFastaHeader{}, false
+			}
+			id = strings.TrimSpace(idAndLabel[:open])
+			label = strings.TrimSpace(idAndLabel[open+1 : len(idAndLabel)-1])
+			hasSymbolSuffix = true
+		}
+	}
+	if species == "" || id == "" {
+		return phgoFastaHeader{}, false
+	}
+	if !hasSymbolSuffix && strings.ContainsAny(species, " \t") {
+		return phgoFastaHeader{}, false
+	}
+	return phgoFastaHeader{
+		RawHeader:    ">" + header,
+		Species:      phgoHeaderFieldValue(species),
+		GeneID:       phgoHeaderFieldValue(id),
+		IsLiteHeader: true,
+		LabelName: func() string {
+			if isPhgoLiteEmptyField(label) {
+				return ""
+			}
+			return phgoHeaderFieldValue(label)
+		}(),
+	}, true
 }
 
 func phgoHeaderFieldValue(value string) string {

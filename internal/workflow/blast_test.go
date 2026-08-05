@@ -987,6 +987,43 @@ func TestBuildPhgoHeaderOmitsRowNumberWhenZero(t *testing.T) {
 	}
 }
 
+func TestBuildPhgoLiteHeaderUsesCompactIdentityFormat(t *testing.T) {
+	got := buildPhgoLiteHeader("Brachypodium distachyon", "Bradi3g18960", "Bd4CL1")
+	want := ">Brachypodium distachyon|Bradi3g18960(Bd4CL1)"
+	if got != want {
+		t.Fatalf("buildPhgoLiteHeader()=%q want %q", got, want)
+	}
+}
+
+func TestParsePhgoLiteFastaHeader(t *testing.T) {
+	parsed, ok := parsePhgoFastaHeader(">Brachypodium distachyon|Bradi3g18960(Bd4CL1)")
+	if !ok || !parsed.IsLiteHeader {
+		t.Fatalf("expected PHgo Lite header to parse: %#v ok=%v", parsed, ok)
+	}
+	if parsed.Species != "Brachypodium distachyon" || parsed.GeneID != "Bradi3g18960" || parsed.LabelName != "Bd4CL1" {
+		t.Fatalf("unexpected PHgo Lite fields: %#v", parsed)
+	}
+}
+
+func TestPhgoLiteHeaderOmitsAndIgnoresEmptySymbols(t *testing.T) {
+	for _, symbol := range []string{"", "~", "~~"} {
+		header := buildPhgoLiteHeader("Bd21-3", "Bradi3g18960", symbol)
+		if header != ">Bd21-3|Bradi3g18960" {
+			t.Fatalf("PHgo Lite header for symbol %q = %q", symbol, header)
+		}
+		parsed, ok := parsePhgoFastaHeader(header)
+		if !ok || parsed.LabelName != "" {
+			t.Fatalf("PHgo Lite header without symbol parsed incorrectly: %#v ok=%v", parsed, ok)
+		}
+	}
+	for _, header := range []string{">Bd21-3|Bradi3g18960(~)", ">Bd21-3|Bradi3g18960(~~)"} {
+		parsed, ok := parsePhgoFastaHeader(header)
+		if !ok || parsed.LabelName != "" {
+			t.Fatalf("PHgo Lite placeholder symbol should be ignored: %#v ok=%v", parsed, ok)
+		}
+	}
+}
+
 func TestBlastPhgoHeaderIncludesHitAndBlastSourceMetadata(t *testing.T) {
 	got := blastPhgoHeader(model.BlastResultRow{
 		Species:        "Sp7498",
@@ -3302,6 +3339,16 @@ func TestParseFastaQuerySequenceInputPhgoHeaderWithoutRowNumber(t *testing.T) {
 	}
 	if source.LabelName != "PAL1" || source.GeneID != "AT2G37040" || source.OrganismShort != "Sp7498" {
 		t.Fatalf("unexpected phgo FASTA metadata: %#v", source)
+	}
+}
+
+func TestParseFastaQuerySequenceInputPhgoLiteHeader(t *testing.T) {
+	source, ok := parseFastaQuerySequenceInput(">Bd21-3|Bradi3g18960(Bd4CL1)\nMEPNTMASFDDEH\n")
+	if !ok {
+		t.Fatal("expected PHgo Lite FASTA header to parse")
+	}
+	if source.LabelName != "Bd4CL1" || source.GeneID != "Bradi3g18960" || source.OrganismShort != "Bd21-3" {
+		t.Fatalf("unexpected PHgo Lite FASTA metadata: %#v", source)
 	}
 }
 
@@ -6961,6 +7008,28 @@ func TestApplyCanvasHeaderModePhgoConvertsStoredPhgoHeaderToCanvasHeader(t *test
 	got := applyCanvasHeaderMode(records, selected, model.FastaHeaderModePhgo)
 	if len(got) != 1 || got[0].Header != ">phgo://Sp7498/C4H/Sp7498_C4H_001\\PAL1/AT2G37040\\7/1\\C4H" {
 		t.Fatalf("phgo canvas header = %#v", got)
+	}
+}
+
+func TestApplyCanvasHeaderModePhgoLiteUsesSpeciesIDAndSymbol(t *testing.T) {
+	selected := []canvasSelectedRow{{
+		ItemTitle: "1",
+		Row: model.CanvasRow{
+			RowNumber: 7,
+			Kind:      model.CanvasKindFasta,
+			FASTA: &model.QuerySequenceSource{
+				OrganismShort: "Bd21-3",
+				LabelName:     "Bd4CL1",
+				GeneID:        "Bradi3g18960",
+				Sequence:      "MPEPTIDE",
+			},
+		},
+	}}
+	records := []model.ProteinSequenceRecord{{Header: ">temporary", Sequence: "MPEPTIDE"}}
+	got := applyCanvasHeaderMode(records, selected, model.FastaHeaderModePhgoLite)
+	want := ">Bd21-3|Bradi3g18960(Bd4CL1)"
+	if len(got) != 1 || got[0].Header != want {
+		t.Fatalf("PHgo Lite canvas header = %#v, want %q", got, want)
 	}
 }
 

@@ -7405,6 +7405,8 @@ func normalizeTUIFastaHeaderMode(mode string, legacyUsePhgo bool) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "phgo":
 		return "phgo"
+	case "phgo_lite", "phgo-lite", "phgolite":
+		return "phgo_lite"
 	case "original":
 		return "original"
 	case "minimal":
@@ -7495,8 +7497,8 @@ func RunExportSettingsModal(page ExportSettingsPage) (ExportSettingsResult, erro
 	outputRawBox := newCheckboxModule("Write raw Excel and raw FASTA files", func() bool { return writeRawExcel }, func() { writeRawExcel = !writeRawExcel })
 	prependFirstBox := newCheckboxModule("FASTA query records: prepend first query only", func() bool { return prependOnlyFirstQuery }, func() { prependOnlyFirstQuery = !prependOnlyFirstQuery })
 	outputAllRowsBox := newCheckboxModule("Write all rows, including unchecked rows", func() bool { return writeAllRows }, func() { writeAllRows = !writeAllRows })
-	fastaHeaderValues := []string{"phgo", "original", "minimal"}
-	fastaHeaderOptions := []string{"Use PHgo FASTA headers", "Use original FASTA headers", "Use minimal ID-only headers"}
+	fastaHeaderValues := []string{"phgo", "phgo_lite", "original", "minimal"}
+	fastaHeaderOptions := []string{"Use PHgo FASTA headers", "Use PHgo Lite FASTA headers", "Use original FASTA headers", "Use minimal ID-only headers"}
 	if page.ShowAllRowsFasta {
 		fastaHeaderValues = append(fastaHeaderValues, "display_name")
 		fastaHeaderOptions = append(fastaHeaderOptions, "Use display-name-only headers")

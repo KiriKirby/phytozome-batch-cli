@@ -1778,7 +1778,7 @@ func blastExportSettings(baseName string, outputDir string, settings exportSetti
 		{Name: "Write selected Excel", Value: fmt.Sprintf("%t", settings.WriteExcel), Explanation: "Selected BLAST rows are written to the main workbook when true."},
 		{Name: "Write raw Excel and raw FASTA", Value: fmt.Sprintf("%t", settings.WriteRawExcel), Explanation: "All current BLAST rows are written to _raw.xlsx, and _raw.fasta is also written when FASTA export is enabled."},
 		{Name: "Write peptide FASTA", Value: fmt.Sprintf("%t", settings.WriteText), Explanation: "Peptide sequences are fetched during normal export and written only when true."},
-		{Name: "FASTA header mode", Value: fastaHeaderModeDisplay(settings), Explanation: "Controls whether FASTA records use phgo headers, source-original headers, or only the primary ID."},
+		{Name: "FASTA header mode", Value: fastaHeaderModeDisplay(settings), Explanation: "Controls whether FASTA records use full PHgo, PHgo Lite species|ID2(symbol), source-original, or primary-ID-only headers."},
 		{Name: "Write report PDF", Value: fmt.Sprintf("%t", settings.WriteReport), Explanation: "One PDF report is written for the current export action when true."},
 		{Name: "rowNumbers", Value: availabilityText(len(rowNumbers) > 0), Explanation: "Selected workbook can preserve original review table row identities."},
 		{Name: "filterFlags", Value: availabilityText(len(filterFlags) > 0), Explanation: "Excel row coloring mirrors final filter suggestion flags where supported."},

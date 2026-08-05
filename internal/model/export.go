@@ -13,6 +13,7 @@ type FastaHeaderMode string
 
 const (
 	FastaHeaderModePhgo        FastaHeaderMode = "phgo"
+	FastaHeaderModePhgoLite    FastaHeaderMode = "phgo_lite"
 	FastaHeaderModeOriginal    FastaHeaderMode = "original"
 	FastaHeaderModeMinimal     FastaHeaderMode = "minimal"
 	FastaHeaderModeDisplayName FastaHeaderMode = "display_name"
@@ -24,7 +25,7 @@ func (m FastaHeaderMode) String() string {
 
 func NormalizeFastaHeaderMode(mode FastaHeaderMode, legacyUsePhgo bool) FastaHeaderMode {
 	switch mode {
-	case FastaHeaderModePhgo, FastaHeaderModeOriginal, FastaHeaderModeMinimal, FastaHeaderModeDisplayName:
+	case FastaHeaderModePhgo, FastaHeaderModePhgoLite, FastaHeaderModeOriginal, FastaHeaderModeMinimal, FastaHeaderModeDisplayName:
 		return mode
 	}
 	if legacyUsePhgo {

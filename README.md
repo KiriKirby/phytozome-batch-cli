@@ -136,6 +136,18 @@ The program keeps all runtime artifacts next to the executable so nothing is sca
 
 If you choose an extra folder name during batch BLAST export, that folder is created inside the export directory selected in the system folder picker. The picker opens at the app-local `output/` directory by default and creates it if needed.
 
+## FASTA Header Formats
+
+FASTA export settings provide the full PHgo header, PHgo Lite, original source header, and minimal ID-only header choices. Canvas additionally provides a display-name-only choice.
+
+PHgo Lite is a compact, importable PHgo format:
+
+```text
+>Bd21-3|Bradi3g18960(Bd4CL1)
+```
+
+It uses the available species abbreviation when present, then `ID2`, followed by the symbol in parentheses. If the symbol is empty, `~`, or `~~`, PHgo Lite writes only `>species|ID2`. Both forms are recognized when pasted or imported into BLAST and Canvas. Generated FASTA headers replace whitespace with underscores at the final file-writing boundary, so the written file remains valid single-token FASTA.
+
 ## Session Snapshots
 
 Export settings include `Save session snapshot (.pgo)`. A `.pgo` file stores the current result review state, user row/alias edits, table position/sort state, and cached sequence data needed by later exports so it can be reopened later from `Explore` -> `Open session` and return directly to the saved result table.

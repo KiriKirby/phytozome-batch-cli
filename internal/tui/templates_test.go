@@ -95,6 +95,12 @@ func TestCanvasExportSettingsPageCanHideExcelAndRawOptions(t *testing.T) {
 	}
 }
 
+func TestNormalizeTUIFastaHeaderModeRecognizesPhgoLite(t *testing.T) {
+	if got := normalizeTUIFastaHeaderMode("phgo_lite", false); got != "phgo_lite" {
+		t.Fatalf("PHgo Lite header mode = %q, want phgo_lite", got)
+	}
+}
+
 func TestButtonRowMouseDownDoesNotStealModuleFocus(t *testing.T) {
 	row := buttonRow(buttonSpec{Label: ButtonBack, Shortcut: ShortcutBack, Visible: true})
 	row.SetRect(0, 0, 80, 1)
