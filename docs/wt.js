@@ -7,7 +7,12 @@
   var preview = document.getElementById('preview');
   var suffixTask = document.getElementById('task-suffix');
   var convertTask = document.getElementById('task-convert');
+  var recordsTask = document.getElementById('task-records');
   var suffixOptions = document.getElementById('suffix-options');
+  var recordOptions = document.getElementById('record-options');
+  var headerMatchInput = document.getElementById('header-match-input');
+  var headerMatchList = document.getElementById('header-match-list');
+  var recordKeep = document.getElementById('record-keep');
   var conversionOptions = document.getElementById('conversion-options');
   var sourceFormat = document.getElementById('source-format');
   var targetFormat = document.getElementById('target-format');
@@ -67,8 +72,11 @@
 
   function updateTaskVisibility() {
     var suffixMode = suffixTask.checked;
+    var recordsMode = recordsTask.checked;
     setVisible(suffixOptions, suffixMode);
-    setVisible(conversionOptions, !suffixMode);
+    setVisible(conversionOptions, convertTask.checked);
+    setVisible(recordOptions, recordsMode);
+    setVisible(headerMatchInput, recordsMode);
   }
 
   function updateCustomFormatVisibility() {
@@ -78,13 +86,64 @@
 
   function transformFasta(sourceText) {
     var suffix;
-    if (!suffixTask.checked) {
-      return null;
+    if (suffixTask.checked) {
+      suffix = suffixInput.value;
+      return sourceText.replace(/^(\uFEFF?\s*>[^\r\n]*)(?=\r\n|\r|\n|$)/gm, function (header) {
+        return header + suffix;
+      });
     }
-    suffix = suffixInput.value;
-    return sourceText.replace(/^(\uFEFF?\s*>[^\r\n]*)(?=\r\n|\r|\n|$)/gm, function (header) {
-      return header + suffix;
+    if (recordsTask.checked) {
+      return transformRecords(sourceText);
+    }
+    return null;
+  }
+
+  function matchStrings() {
+    var seen = Object.create(null);
+    return headerMatchList.value.split(/\r\n|\r|\n/).map(function (line) {
+      return line.trim();
+    }).filter(function (line) {
+      var key = line.toLowerCase();
+      if (!line || seen[key]) {
+        return false;
+      }
+      seen[key] = true;
+      return true;
     });
+  }
+
+  function transformRecords(sourceText) {
+    var matches = matchStrings();
+    var headerPattern = /^(\uFEFF?[ \t]*>[^\r\n]*)/gm;
+    var headers = [];
+    var match;
+    var firstHeaderStart;
+    var output = '';
+    var index;
+    var record;
+    var header;
+    var matched;
+    var keep;
+    while ((match = headerPattern.exec(sourceText)) !== null) {
+      headers.push({ start: match.index, text: match[0] });
+    }
+    if (headers.length === 0 || matches.length === 0) {
+      return sourceText;
+    }
+    firstHeaderStart = headers[0].start;
+    output = sourceText.slice(0, firstHeaderStart);
+    for (index = 0; index < headers.length; index += 1) {
+      record = sourceText.slice(headers[index].start, index + 1 < headers.length ? headers[index + 1].start : sourceText.length);
+      header = headers[index].text.toLowerCase();
+      matched = matches.some(function (needle) {
+        return header.indexOf(needle.toLowerCase()) !== -1;
+      });
+      keep = recordKeep.checked ? matched : !matched;
+      if (keep) {
+        output += record;
+      }
+    }
+    return output;
   }
 
   function readFileText(file, success, failure) {
@@ -95,7 +154,7 @@
   }
 
   function requireImplementedTask() {
-    if (!suffixTask.checked) {
+    if (convertTask.checked) {
       window.alert('Format conversion is not available yet.');
       return false;
     }
@@ -278,6 +337,7 @@
     options.disabled = true;
     preview.disabled = true;
     preview.value = '';
+    headerMatchList.value = '';
     updateTaskVisibility();
     updateCustomFormatVisibility();
     resizePreview();
@@ -362,6 +422,7 @@
   }
   suffixTask.addEventListener('change', updateTaskVisibility);
   convertTask.addEventListener('change', updateTaskVisibility);
+  recordsTask.addEventListener('change', updateTaskVisibility);
   sourceFormat.addEventListener('change', updateCustomFormatVisibility);
   targetFormat.addEventListener('change', updateCustomFormatVisibility);
   document.getElementById('reset-suffix').addEventListener('click', function () { suffixInput.value = ''; });

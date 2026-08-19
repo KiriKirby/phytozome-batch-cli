@@ -14,6 +14,15 @@
     resize: none;
     white-space: pre;
   }
+  #header-match-list {
+    box-sizing: border-box;
+    display: block;
+    width: 100%;
+    min-height: 10em;
+    overflow: auto;
+    resize: vertical;
+    white-space: pre;
+  }
 </style>
 </head>
 
@@ -52,7 +61,7 @@
 								<p align="center">&nbsp;</p>
 								<p align="center"><a target="_blank" href="https://greasyfork.org/en/scripts/589022-phy-for-phytozome"><img border="0" src="images/5.jpg" width="500" height="83" alt="Phy for Phytozome"></a></p>
 								<p><b><font size="5" color="#275317">FASTA Header Tools</font></b></p>
-								<p>Edit, rename, and convert FASTA headers in bulk. Add prefixes or suffixes, replace text, and convert between PHGO and other header formats.</p>
+								<p>Edit, rename, filter, and convert FASTA headers in bulk. Add prefixes or suffixes, keep or remove matching records, and convert between PHGO and other header formats.</p>
 								<form id="header-tool">
 									<fieldset style="padding: 2">
 									<legend>Start</legend>
@@ -65,10 +74,20 @@
 									<input id="task-suffix" type="radio" value="suffix" name="task" checked>
 									<label for="task-suffix">Batch Add Suffix</label>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
 									<input id="task-convert" type="radio" value="convert" name="task">
-									<label for="task-convert">Convert Format</label></p>
+									<label for="task-convert">Convert Format</label>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+									<input id="task-records" type="radio" value="records" name="task">
+									<label for="task-records">Batch FASTA Record Filter</label></p>
 									<hr>
 									<p id="suffix-options"><label for="custom-suffix">Custom Suffix:</label>
 									<input id="custom-suffix" type="text" name="suffix" size="20"><input id="reset-suffix" type="button" value="Reset"></p>
+									<fieldset id="record-options" style="padding: 2" hidden>
+									<legend>Record Matching Options</legend>
+									<p>Processing Mode:
+									<input id="record-remove" type="radio" value="remove" name="record-action" checked>
+									<label for="record-remove">Remove mode</label>&nbsp;&nbsp;&nbsp;&nbsp;
+									<input id="record-keep" type="radio" value="keep" name="record-action">
+									<label for="record-keep">Filter mode</label></p>
+									</fieldset>
 									<fieldset id="conversion-options" style="padding: 2" hidden>
 									<legend>Conversion Options</legend>
 									<p>Select Source Format: <select id="source-format" name="source-format"><option value="phgo">PHGO Header</option><option value="custom">Custom Format</option></select></p>
@@ -80,8 +99,12 @@
 									</fieldset>
 									<p><input id="refresh-preview" type="button" value="Refresh Preview"><input id="export-file" type="button" value="Export...">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
 									<input id="reset-tool" type="button" value="Reset"></p>
-									</fieldset>
-									</fieldset>
+								</fieldset>
+								<div id="header-match-input" hidden>
+								<p><label for="header-match-list">Header Match List (one search string per line):</label></p>
+								<p><textarea id="header-match-list" rows="10" wrap="off" aria-label="FASTA header match list"></textarea></p>
+								</div>
+								</fieldset>
 								</form>
 								<p>Preview:</p>
 								<p><textarea id="preview" rows="20" name="preview" wrap="off" readonly disabled aria-label="FASTA preview"></textarea></p>
